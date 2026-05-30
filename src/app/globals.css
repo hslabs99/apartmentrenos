@@ -1,26 +1,56 @@
 @import "tailwindcss";
 
+/* Lightning Experience–inspired tokens (light-first; dark is secondary) */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f3f3f3;
+  --foreground: #080707;
+  --sf-brand: #0176d3;
+  --sf-brand-hover: #014486;
+  --sf-surface: #ffffff;
+  --sf-border: #dddbda;
+  --sf-border-strong: #c9c9c9;
+  --sf-text-secondary: #3e3e3c;
+  --sf-text-weak: #706e6b;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-sf-brand: var(--sf-brand);
+  --color-sf-brand-hover: var(--sf-brand-hover);
+  --color-sf-surface: var(--sf-surface);
+  --color-sf-page: #f3f3f3;
+  --color-sf-border: var(--sf-border);
+  --color-sf-border-strong: var(--sf-border-strong);
+  --color-sf-text: #080707;
+  --color-sf-text-secondary: var(--sf-text-secondary);
+  --color-sf-text-weak: var(--sf-text-weak);
+  --color-sf-destructive: #c23934;
+  --color-sf-destructive-hover: #a61a14;
+  --color-sf-nav-active-bg: #eef4ff;
+  --font-sans: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #1b1b1b;
+    --foreground: #f3f3f3;
+    --sf-surface: #2e2e2e;
+    --sf-border: #5c5c5c;
+    --sf-border-strong: #747474;
+    --sf-text-secondary: #e5e5e5;
+    --sf-text-weak: #c9c9c9;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }

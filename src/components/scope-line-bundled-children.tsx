@@ -1,0 +1,575 @@
+"use client";
+
+import { CascadeColourSelect } from "@/components/cascade-style-colour-fields";
+import {
+  clFieldsGridClass,
+  clObjectNameRowClass,
+  clObjectNameTextClass,
+  clScopeLineStackClass,
+  clScopeMeasureColClass,
+  clScopeNonStdColClass,
+  clScopeSkuColClass,
+  clScopeUomColClass,
+  clSkuFieldClass,
+  clSkuPickerWrapClass,
+  clMeasureFieldClass,
+  clUomFieldClass,
+} from "@/components/cl-checklist-layout";
+import { IconNotes, IconTrash } from "@/components/icons/lightning-icons";
+import { PriceLevelIdSelect } from "@/components/price-level-id-select";
+import { ScopeLineSkuPicker } from "@/components/scope-line-sku-picker";
+import { formatCurrencyInput, parseCurrencyInput } from "@/lib/client/format-money";
+import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
+import type { ScopeLineSkuPick } from "@/lib/client/scope-line-sku-match";
+import {
+  checklistInheritedMeasureForRow,
+  checklistMeasureFieldDisplayString,
+  measuresClose,
+} from "@/lib/checklist-effective-measure";
+import { cascadeLevelFromPriceLevel } from "@/lib/cascades/cascade-level-from-price-level";
+import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
+import { sfRowIconBtnDanger } from "@/lib/sf-row-actions";
+import type { DataSkuPublic } from "@/types/data-sku-public";
+import type { DataSkuSupplierPublic } from "@/types/data-sku-supplier-public";
+import type { PriceLevelPublic } from "@/types/price-level";
+import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
+import type { ProjectAreaPublic } from "@/types/project-area";
+import type { ProjectPublic } from "@/types/project";
+import type { QuoteObjectPublic } from "@/types/quote-object";
+import { WbLabourSiloRowCells } from "@/components/wb-labour-silo-row-cells";
+import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
+import type { DataObjectLabourRatePublic } from "@/types/data-object-labour-rate-public";
+
+const wbHdrLabel =
+  "block text-[10px] font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400";
+
+function parseOptionalNumber(raw: string): number | null {
+  const t = raw.trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+type ChecklistProps = {
+  mode: "checklist";
+  bundledLines: ProjectAreaObjectPublic[];
+  quoteObjects: QuoteObjectPublic[];
+  catalogSkus: DataSkuPublic[];
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
+  priceLevels: PriceLevelPublic[];
+  pa: ProjectAreaPublic;
+  project: ProjectPublic | null;
+  rowSavingId: string | null;
+  clSkuInput: string;
+  clMeasureInput: string;
+  clUomInput: string;
+  inputKey: (row: ProjectAreaObjectPublic, field: string) => string;
+  objectLabel: (row: ProjectAreaObjectPublic, quoteObjects: QuoteObjectPublic[]) => string;
+  onPatchLine: (id: string, body: Record<string, unknown>) => void;
+  onValidationError: (message: string) => void;
+};
+
+export type WorkbenchBundledContext = {
+  wbSelectRow: string;
+  wbInputMeasure: string;
+  wbInputCurrency: string;
+  wbInputLoad: string;
+  wbCellMid: string;
+  wbCellDesc: string;
+  wbCellSku: string;
+  wbCellUom: string;
+  wbCellNum: string;
+  wbCellLoad: string;
+  wbSpacerCell: string;
+  areaObjectBand: string;
+  cascades: CascadeRow[];
+  baseStyleOptions: { out: string[]; seen: Set<string> };
+  marginPct: number;
+  isAdminMode: boolean;
+  paoDeleting: boolean;
+  includeAllSuppliersForLine: (lineId: string) => boolean;
+  setIncludeAllSuppliersForLine: (lineId: string, checked: boolean) => void;
+  inputKey: (row: ProjectAreaObjectPublic, field: string) => string;
+  objectLabel: (row: ProjectAreaObjectPublic, quoteObjects: QuoteObjectPublic[]) => string;
+  lineSourceLabel: (row: ProjectAreaObjectPublic) => string;
+  lineFinalPrice: (row: ProjectAreaObjectPublic, marginPct: number) => number | null;
+  effectiveCascadeStyleForLine: (
+    row: ProjectAreaObjectPublic,
+    pa: ProjectAreaPublic,
+    project: ProjectPublic | null,
+  ) => string;
+  wbLineColourEmptyLabel: (pa: ProjectAreaPublic, project: ProjectPublic | null) => string;
+  formatMoney: (n: number | null | undefined) => string;
+  lineHasNotes: (row: ProjectAreaObjectPublic) => boolean;
+  lineNotesTooltip: (row: ProjectAreaObjectPublic) => string;
+  lineNotesIconBtnClass: (hasNotes: boolean) => string;
+  onOpenLineNotes: (lineId: string, label: string, draft: string) => void;
+  lineNotesCombined: (row: ProjectAreaObjectPublic) => string;
+  onDeleteLine: (lineId: string) => void;
+  onValidationError: (message: string) => void;
+  contractLabourRates: DataLabourRatePublic[];
+  objectLabourRates: DataObjectLabourRatePublic[];
+};
+
+type WorkbenchProps = {
+  mode: "workbench";
+  bundledLines: ProjectAreaObjectPublic[];
+  quoteObjects: QuoteObjectPublic[];
+  catalogSkus: DataSkuPublic[];
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
+  priceLevels: PriceLevelPublic[];
+  pa: ProjectAreaPublic;
+  project: ProjectPublic | null;
+  rowSavingId: string | null;
+  workbench: WorkbenchBundledContext;
+  onPatchLine: (id: string, body: Record<string, unknown>) => void;
+};
+
+type Props = ChecklistProps | WorkbenchProps;
+
+function bundledLabel(
+  row: ProjectAreaObjectPublic,
+  quoteObjects: QuoteObjectPublic[],
+  objectLabel: (row: ProjectAreaObjectPublic, quoteObjects: QuoteObjectPublic[]) => string,
+): string {
+  return `↳ ${objectLabel(row, quoteObjects)}`;
+}
+
+function ChecklistBundledLine({
+  child,
+  quoteObjects,
+  catalogSkus,
+  suppliersBySkuId,
+  priceLevels,
+  pa,
+  project,
+  lineSaving,
+  clSkuInput,
+  clMeasureInput,
+  clUomInput,
+  inputKey,
+  objectLabel,
+  onPatchLine,
+  onValidationError,
+}: {
+  child: ProjectAreaObjectPublic;
+  quoteObjects: QuoteObjectPublic[];
+  catalogSkus: DataSkuPublic[];
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
+  priceLevels: PriceLevelPublic[];
+  pa: ProjectAreaPublic;
+  project: ProjectPublic | null;
+  lineSaving: boolean;
+  clSkuInput: string;
+  clMeasureInput: string;
+  clUomInput: string;
+  inputKey: (row: ProjectAreaObjectPublic, field: string) => string;
+  objectLabel: (row: ProjectAreaObjectPublic, quoteObjects: QuoteObjectPublic[]) => string;
+  onPatchLine: (id: string, body: Record<string, unknown>) => void;
+  onValidationError: (message: string) => void;
+}) {
+  const qObj = quoteObjects.find((o) => o.objectid === child.objectid);
+  const measureDisplay = checklistMeasureFieldDisplayString(child, qObj, pa, project);
+  const measureKey =
+    child.custommeasure != null
+      ? inputKey(child, "bundled-m")
+      : `${inputKey(child, "bundled-m")}-ctx-${pa.aream2 ?? ""}-${project?.projectm2 ?? ""}`;
+
+  return (
+    <div
+      className={`${clScopeLineStackClass} rounded-md border border-dashed border-sf-border/80 bg-sf-page/60 py-2 dark:border-zinc-600 dark:bg-zinc-900/30`}
+    >
+      <div className={clObjectNameRowClass}>
+        <span className={`${clObjectNameTextClass} text-sf-text-secondary dark:text-zinc-400`}>
+          {bundledLabel(child, quoteObjects, objectLabel)}
+        </span>
+        <span className="ml-2 shrink-0 text-[10px] uppercase text-sf-text-weak">Bundled</span>
+      </div>
+      <div className={clFieldsGridClass}>
+        <div className={`${clSkuFieldClass} ${clScopeSkuColClass}`}>
+          <span className={wbHdrLabel}>SKU</span>
+          <div className={clSkuPickerWrapClass}>
+            {qObj ? (
+              <ScopeLineSkuPicker
+                line={child}
+                quoteObject={qObj}
+                catalogSkus={catalogSkus}
+                suppliersBySkuId={suppliersBySkuId}
+                priceLevels={priceLevels}
+                pa={pa}
+                project={project}
+                disabled={lineSaving}
+                selectClassName={clSkuInput}
+                variant="compact"
+                showSupplierPrice={false}
+                shortMatchLabels
+                inlineRow
+                onSelectSku={(pick: ScopeLineSkuPick) => {
+                  onPatchLine(child.id, patchBodyForScopeLineSku(child, pick));
+                }}
+              />
+            ) : (
+              <span className="text-xs text-sf-text-weak">No quote object</span>
+            )}
+          </div>
+        </div>
+        <label className={`${clMeasureFieldClass} ${clScopeMeasureColClass}`}>
+          <span className={wbHdrLabel}>Measure</span>
+          <input
+            key={measureKey}
+            type="text"
+            inputMode="decimal"
+            className={clMeasureInput}
+            defaultValue={measureDisplay}
+            disabled={lineSaving}
+            title="Matches grid measure; shows inherited m²/LM when template uses project or area quantities."
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            onBlur={(e) => {
+              const el = e.target as HTMLInputElement;
+              const raw = el.value.trim();
+              if (raw !== "" && parseOptionalNumber(raw) === null) {
+                onValidationError("Measure must be a valid number (or empty).");
+                el.value = checklistMeasureFieldDisplayString(child, qObj, pa, project);
+                return;
+              }
+              const next = parseOptionalNumber(raw);
+              const stored = child.custommeasure ?? null;
+              const inherited = checklistInheritedMeasureForRow(child, qObj, pa, project);
+              if (raw === "" || next === null) {
+                if (stored !== null) {
+                  onPatchLine(child.id, { custommeasure: null });
+                } else {
+                  el.value = checklistMeasureFieldDisplayString(child, qObj, pa, project);
+                }
+                return;
+              }
+              if (stored !== null) {
+                if (next !== stored) onPatchLine(child.id, { custommeasure: next });
+                return;
+              }
+              if (inherited != null && measuresClose(next, inherited)) return;
+              onPatchLine(child.id, { custommeasure: next });
+            }}
+          />
+        </label>
+        <label className={`${clUomFieldClass} ${clScopeUomColClass}`}>
+          <span className={wbHdrLabel}>UOM</span>
+          <input
+            key={inputKey(child, "bundled-u")}
+            type="text"
+            className={clUomInput}
+            defaultValue={child.customuom}
+            disabled={lineSaving}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            onBlur={(e) => {
+              const next = e.target.value;
+              if (next === child.customuom) return;
+              onPatchLine(child.id, { customuom: next });
+            }}
+          />
+        </label>
+        <div className={`${clScopeNonStdColClass}`} aria-hidden />
+      </div>
+    </div>
+  );
+}
+
+function WorkbenchBundledLine({
+  child,
+  quoteObjects,
+  catalogSkus,
+  suppliersBySkuId,
+  priceLevels,
+  pa,
+  project,
+  lineSaving,
+  wb,
+  onPatchLine,
+}: {
+  child: ProjectAreaObjectPublic;
+  quoteObjects: QuoteObjectPublic[];
+  catalogSkus: DataSkuPublic[];
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
+  priceLevels: PriceLevelPublic[];
+  pa: ProjectAreaPublic;
+  project: ProjectPublic | null;
+  lineSaving: boolean;
+  wb: WorkbenchBundledContext;
+  onPatchLine: (id: string, body: Record<string, unknown>) => void;
+}) {
+  const included = child.included !== false;
+  const qObj = quoteObjects.find((o) => o.objectid === child.objectid);
+  const lf = wb.lineFinalPrice(child, wb.marginPct);
+
+  return (
+    <tr
+      className={`${wb.areaObjectBand} text-sf-text-secondary dark:text-zinc-400`}
+    >
+      <td className={`${wb.wbCellMid} text-center`}>
+        <input
+          type="checkbox"
+          checked={included}
+          disabled={lineSaving}
+          aria-label={`Include bundled “${wb.objectLabel(child, quoteObjects)}” in cost totals`}
+          onChange={(e) => {
+            onPatchLine(child.id, { included: e.target.checked });
+          }}
+          className="size-4 cursor-pointer rounded border-sf-border-strong accent-green-600 focus:ring-2 focus:ring-green-500/40 disabled:cursor-wait disabled:opacity-50 dark:border-zinc-500"
+        />
+      </td>
+      <td className={`${wb.wbCellDesc} pl-6`}>
+        <span className="text-xs font-medium">{bundledLabel(child, quoteObjects, wb.objectLabel)}</span>
+      </td>
+      <td className={`${wb.wbCellMid} truncate text-xs`}>{wb.lineSourceLabel(child)}</td>
+      <td className={wb.wbCellMid}>
+        <PriceLevelIdSelect
+          value={child.pricelevelid ?? null}
+          onChange={(id) => {
+            onPatchLine(child.id, { pricelevelid: id });
+          }}
+          className={wb.wbSelectRow}
+          disabled={lineSaving}
+          emptyLabel="Area default"
+        />
+      </td>
+      <td className={wb.wbCellMid}>
+        <select
+          className={wb.wbSelectRow}
+          disabled={lineSaving}
+          value={child.style ?? ""}
+          onChange={(e) => {
+            const v = e.target.value;
+            onPatchLine(child.id, { style: v ? v : null, colour: null });
+          }}
+        >
+          <option value="">
+            {`Area default${pa.style?.trim() ? ` · ${pa.style.trim()}` : project?.defaultstyle?.trim() ? ` · ${project.defaultstyle.trim()}` : ""}`}
+          </option>
+          {wb.baseStyleOptions.out.map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+          {(() => {
+            const saved = (child.style ?? "").trim();
+            if (!saved || wb.baseStyleOptions.seen.has(saved)) return null;
+            return <option value={saved}>{saved} (saved)</option>;
+          })()}
+        </select>
+      </td>
+      <td className={wb.wbCellMid}>
+        <CascadeColourSelect
+          cascades={wb.cascades}
+          level={cascadeLevelFromPriceLevel(
+            priceLevels,
+            child.pricelevelid ?? pa.pricelevelid ?? project?.defaultpricelevelid,
+            project?.projectfinish,
+          )}
+          styleForFilter={wb.effectiveCascadeStyleForLine(child, pa, project)}
+          colour={child.colour ?? ""}
+          disabled={lineSaving}
+          selectClassName={wb.wbSelectRow}
+          emptyLabel={wb.wbLineColourEmptyLabel(pa, project)}
+          onColourChange={(v) => onPatchLine(child.id, { colour: v ? v : null })}
+        />
+      </td>
+      <td className={wb.wbCellSku}>
+        {qObj ? (
+          <ScopeLineSkuPicker
+            line={child}
+            quoteObject={qObj}
+            catalogSkus={catalogSkus}
+            suppliersBySkuId={suppliersBySkuId}
+            priceLevels={priceLevels}
+            pa={pa}
+            project={project}
+            disabled={lineSaving}
+            selectClassName={wb.wbSelectRow}
+            variant="compact"
+            showSupplierPrice={false}
+            shortMatchLabels
+            inlineRow
+            showIncludeAllSupplierOptions={wb.isAdminMode}
+            includeAllSupplierOptions={wb.includeAllSuppliersForLine(child.id)}
+            onIncludeAllSupplierOptionsChange={(checked) =>
+              wb.setIncludeAllSuppliersForLine(child.id, checked)
+            }
+            onSelectSku={(pick: ScopeLineSkuPick) => {
+              onPatchLine(child.id, patchBodyForScopeLineSku(child, pick));
+            }}
+          />
+        ) : (
+          <span className="text-xs">—</span>
+        )}
+      </td>
+      <td className={wb.wbCellMid}>
+        <input
+          key={wb.inputKey(child, "m")}
+          type="text"
+          inputMode="decimal"
+          className={wb.wbInputMeasure}
+          defaultValue={child.custommeasure ?? ""}
+          disabled={lineSaving}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          onBlur={(e) => {
+            const raw = e.target.value.trim();
+            if (raw !== "" && parseOptionalNumber(raw) === null) {
+              wb.onValidationError("Measure must be a valid number (or empty).");
+              e.target.value = child.custommeasure != null ? String(child.custommeasure) : "";
+              return;
+            }
+            const next = parseOptionalNumber(raw);
+            const prev = child.custommeasure ?? null;
+            if (next === prev) return;
+            onPatchLine(child.id, { custommeasure: next });
+          }}
+        />
+      </td>
+      <td className={wb.wbCellUom}>
+        <input
+          key={wb.inputKey(child, "u")}
+          type="text"
+          className={wb.wbSelectRow}
+          defaultValue={child.customuom}
+          disabled={lineSaving}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          onBlur={(e) => {
+            const next = e.target.value;
+            if (next === child.customuom) return;
+            onPatchLine(child.id, { customuom: next });
+          }}
+        />
+      </td>
+      <td className={wb.wbCellNum}>
+        <input
+          key={wb.inputKey(child, "p")}
+          type="text"
+          inputMode="decimal"
+          className={wb.wbInputCurrency}
+          defaultValue={formatCurrencyInput(child.customumprice)}
+          disabled={lineSaving}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          onBlur={(e) => {
+            const raw = e.target.value.trim();
+            if (raw !== "" && parseCurrencyInput(raw) === null) {
+              wb.onValidationError("Unit price must be a valid amount (or empty).");
+              e.target.value = formatCurrencyInput(child.customumprice);
+              return;
+            }
+            const next = parseCurrencyInput(raw);
+            const prev = child.customumprice ?? null;
+            e.target.value = formatCurrencyInput(next);
+            if (next === prev) return;
+            onPatchLine(child.id, { customumprice: next });
+          }}
+        />
+      </td>
+      <td className={wb.wbCellNum}>{wb.formatMoney(child.totalprice)}</td>
+      <td className={`${wb.wbCellNum} font-medium text-emerald-800 dark:text-emerald-200`}>
+        {lf != null ? wb.formatMoney(lf) : "—"}
+      </td>
+      <WbLabourSiloRowCells
+        row={child}
+        quoteObjects={quoteObjects}
+        contractRates={wb.contractLabourRates}
+        objectLabourRates={wb.objectLabourRates}
+        objectLabel={wb.objectLabel(child, quoteObjects)}
+        saving={lineSaving}
+        wbCellLoad={wb.wbCellLoad}
+        wbInputLoad={wb.wbInputLoad}
+        inputKey={wb.inputKey}
+        onPatch={onPatchLine}
+      />
+      <td className={wb.wbCellMid}>
+        <div className="flex items-center justify-end gap-0.5">
+          <button
+            type="button"
+            className={wb.lineNotesIconBtnClass(wb.lineHasNotes(child))}
+            disabled={lineSaving || wb.paoDeleting}
+            title={wb.lineNotesTooltip(child)}
+            aria-label={`Notes for ${wb.objectLabel(child, quoteObjects)}`}
+            onClick={() =>
+              wb.onOpenLineNotes(child.id, wb.objectLabel(child, quoteObjects), wb.lineNotesCombined(child))
+            }
+          >
+            <IconNotes
+              className={`h-4 w-4 ${wb.lineHasNotes(child) ? "text-sf-destructive dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}`}
+            />
+          </button>
+          <button
+            type="button"
+            onClick={() => wb.onDeleteLine(child.id)}
+            disabled={lineSaving || wb.paoDeleting}
+            className={sfRowIconBtnDanger}
+            aria-label={`Remove ${wb.objectLabel(child, quoteObjects)}`}
+            title="Remove bundled line"
+          >
+            <IconTrash className="h-4 w-4" />
+          </button>
+        </div>
+      </td>
+      <td className={wb.wbSpacerCell} />
+    </tr>
+  );
+}
+
+export function ScopeLineBundledChildren(props: Props) {
+  if (props.bundledLines.length === 0) return null;
+
+  if (props.mode === "checklist") {
+    return (
+      <div className="mt-1 space-y-1 border-l-2 border-emerald-200/80 pl-2 dark:border-emerald-800/60">
+        {props.bundledLines.map((child) => (
+          <ChecklistBundledLine
+            key={child.id}
+            child={child}
+            quoteObjects={props.quoteObjects}
+            catalogSkus={props.catalogSkus}
+            suppliersBySkuId={props.suppliersBySkuId}
+            priceLevels={props.priceLevels}
+            pa={props.pa}
+            project={props.project}
+            lineSaving={props.rowSavingId === child.id}
+            clSkuInput={props.clSkuInput}
+            clMeasureInput={props.clMeasureInput}
+            clUomInput={props.clUomInput}
+            inputKey={props.inputKey}
+            objectLabel={props.objectLabel}
+            onPatchLine={props.onPatchLine}
+            onValidationError={props.onValidationError}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {props.bundledLines.map((child) => (
+        <WorkbenchBundledLine
+          key={child.id}
+          child={child}
+          quoteObjects={props.quoteObjects}
+          catalogSkus={props.catalogSkus}
+          suppliersBySkuId={props.suppliersBySkuId}
+          priceLevels={props.priceLevels}
+          pa={props.pa}
+          project={props.project}
+          lineSaving={props.rowSavingId === child.id}
+          wb={props.workbench}
+          onPatchLine={props.onPatchLine}
+        />
+      ))}
+    </>
+  );
+}

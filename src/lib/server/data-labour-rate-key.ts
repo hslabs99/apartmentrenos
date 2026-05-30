@@ -1,0 +1,1 @@
+export { dataLabourRateKey } from "@/lib/data-labour-rate-key";

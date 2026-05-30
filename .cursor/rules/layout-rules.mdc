@@ -1,0 +1,75 @@
+---
+description: Layout rules — workbench table ONLY. Apply when the user says "layout rules" or edits workbench column widths. Do NOT use for Check List — see checklist-layout-guard.mdc.
+globs: src/components/project-checklist-panel.tsx
+alwaysApply: false
+---
+
+# Layout rules (workbench only)
+
+When the user references **layout rules**, follow this document exactly. Do not improvise layout "improvements."
+
+**Check List (CL) layout is separate.** Never apply these workbench rules to checklist mode (`mode !== "workbench"`). See `.cursor/rules/checklist-layout-guard.mdc`.
+
+## Workbench table — mandatory constraints
+
+1. **Table width:** stay `w-full` (`table-fixed`). Never switch to `w-max` or shrink-to-content unless the user explicitly asks.
+2. **No compact mode:** do not add `wbCellCompact`, `overflow-hidden` on cells, `px-0.5` hacks, or `wbSelectRowCompact` unless the user explicitly asks.
+3. **Column changes:** only change `<colgroup>` widths (and `WB_TABLE_COLS` / spacer cells if column count changes). Do not change unrelated cell classes, SKU column, description, loads, etc. unless listed in the task.
+4. **Reclaimed width:** any width removed from a column is added to the **right spacer column** (20th column). Keep `WB_TABLE_COLS = 20`. Every row type must include the spacer cell (or `colSpan={WB_TABLE_COLS}` for full-width rows).
+5. **Narrowing rule:** when asked to reduce a column by 30%, new width = previous width × 0.7 (round to 2 decimals in `rem`).
+6. **List changes:** after editing, list every `<col>` width you changed and the new spacer width.
+
+## Workbench column registry (current)
+
+Implementation: `project-checklist-panel.tsx` — workbench `<colgroup>` and `wbSpacerCol`.
+
+| # | Column | Width |
+|---|--------|-------|
+| 1 | Incl. | 2.25rem |
+| 2 | Description | 4rem |
+| 3 | Source | 2.63rem |
+| 4 | Elevate | 5.25rem |
+| 5 | Style | 5.25rem |
+| 6 | Colour | 5.95rem |
+| 7 | Product / SKU | 11.5rem |
+| 8 | Measure | 2.3rem |
+| 9 | UOM | 2.75rem |
+| 10 | Unit price | 2.8rem |
+| 11 | Line total | 2.8rem |
+| 12 | Final price | 3.15rem |
+| 13–18 | Gen / Plumb / Elec / PM / Cntr / Ass.Cntr | 2.1rem each |
+| 19 | Notes | 2.75rem |
+| 20 | Spacer (blank) | 8.73rem |
+
+### Columns reduced 30% from baseline (cumulative)
+
+Baseline → current: Source 3.75→2.63; Tier 7.5→5.25; Style 7.5→5.25; Colour 8.5→5.95; Measure 3.25→2.3; Unit price 4→2.8; Line total 4→2.8; Final price 4.5→3.15. Spacer holds all saved width.
+
+## Project header row (column-aligned, workbench)
+
+- First row in workbench `<tbody>`; `wbProjectHdrRow` background (not sky area band).
+- **Project** caption + **project name** (bold) → `colSpan={3}` (Incl. + Description + Source).
+- **Default Elevate** → Elevate col; **Style** / **Colour** → cols 5–6 (`compactField`, `wbSelectRow`).
+- Cols 7–10 (SKU–Unit price) empty.
+- **Project subtotal / Final / Gen–PM–Cntr–Ass.Cntr** → cols 11–18 (same layout as area header totals); cols 19–20 empty.
+
+## Area colours
+
+- **Area header row:** `wbAreaHdrBand` — darker blue (`sky-100` / dark `sky-900/55`).
+- **Object table** (column headers, lines, notes): `wbAreaObjectBand` — lighter blue (`sky-50` / dark `sky-950/30`).
+
+## Area header row (column-aligned)
+
+- Use **20 `<td>` cells** (same as object rows). **Outer border only** via `wbAreaHdrCellOutline*` (top/left/right/bottom on perimeter; no vertical rules between cells).
+- Field placement: **Area** caption + **area name** (plain text, no link) → `colSpan={2}` (Incl. + Description); **Area m²** → col 3 (Source); **Elevate** → col 4; **Style override** → col 5 (Style); **Colour override** → col 6 (Colour); cols 7–10 empty; **subtotal / final / loads** → cols 11–18; cols 19–20 empty.
+- Column header row (`thBaseWb`): uppercase + `pl-2.5`; project/area field labels use `wbHdrLabel` (same).
+- Header dropdowns use `wbSelectRow` (column width), not `wbSelectTier` / wide colour.
+
+## Area footer (notes / questions)
+
+- Same section title style (`wbAreaSectionTitle`), full-width `textarea`, `rows={2}`, shared `wbAreaFieldTextarea`.
+- Do not move back into area header unless asked.
+
+## Object line notes
+
+- Notes column: icon only (green empty / red has notes), hover `title` = note text, click = modal. Not an inline textarea in the row.

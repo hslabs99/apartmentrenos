@@ -14,13 +14,40 @@ import type { ProjectListItem } from "@/types/project";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-async function readApiResponse<T>(res: Response): Promise<T> {
+type ApiResponse<T> = {
+  ok: boolean;
+  status: number;
+  contentType: string;
+  json?: T;
+  text?: string;
+};
+
+async function readApiResponse<T>(res: Response): Promise<ApiResponse<T>> {
   const contentType = res.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
-    return (await res.json()) as T;
+    try {
+      const json = (await res.json()) as T;
+      return { ok: res.ok, status: res.status, contentType, json };
+    } catch {
+      // fall through to text
+    }
   }
-  const text = await res.text();
-  throw new Error(text.slice(0, 200) || `HTTP ${res.status}`);
+  const text = await res.text().catch(() => "");
+  return { ok: res.ok, status: res.status, contentType, text };
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init?: RequestInit & { timeoutMs?: number },
+): Promise<Response> {
+  const timeoutMs = init?.timeoutMs ?? 15000;
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 function ProjectTileOverflowMenu({
@@ -147,6 +174,15 @@ export function ProjectsListPanel() {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [debugLast, setDebugLast] = useState<{
+    whenIso: string;
+    endpoint: string;
+    status?: number;
+    contentType?: string;
+    bodySnippet?: string;
+    online: boolean;
+  } | null>(null);
+  const debugLastRef = useRef<typeof debugLast>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
@@ -155,12 +191,52 @@ export function ProjectsListPanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/projects");
-      const data = await readApiResponse<{ projects?: ProjectListItem[]; error?: string }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Failed to load projects");
-      setProjects(data.projects ?? []);
+      const endpoint = "/api/projects";
+      const initialDebug = {
+        whenIso: new Date().toISOString(),
+        endpoint,
+        online: typeof navigator !== "undefined" ? navigator.onLine : true,
+      };
+      debugLastRef.current = initialDebug;
+      setDebugLast(initialDebug);
+      const res = await fetchWithTimeout(endpoint, { timeoutMs: 15000 });
+      const parsed = await readApiResponse<{ projects?: ProjectListItem[]; error?: string }>(res);
+      const json = parsed.json;
+      const bodySnippet =
+        typeof json === "object" && json && "error" in (json as Record<string, unknown>)
+          ? String((json as { error?: unknown }).error ?? "").slice(0, 400)
+          : (parsed.text ?? "").slice(0, 400);
+      setDebugLast((prev) => {
+        const next = prev
+          ? {
+              ...prev,
+              status: parsed.status,
+              contentType: parsed.contentType,
+              bodySnippet: bodySnippet || undefined,
+            }
+          : prev;
+        debugLastRef.current = next;
+        return next;
+      });
+
+      if (!parsed.ok) {
+        throw new Error(
+          typeof json?.error === "string"
+            ? json.error
+            : bodySnippet
+              ? `HTTP ${parsed.status}: ${bodySnippet}`
+              : `HTTP ${parsed.status}`,
+        );
+      }
+      setProjects(json?.projects ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load projects");
+      const msg = e instanceof Error ? e.message : "Failed to load projects";
+      console.error("[Projects] load failed", {
+        message: msg,
+        debugLast: debugLastRef.current,
+        online: typeof navigator !== "undefined" ? navigator.onLine : undefined,
+      });
+      setError(msg);
       setProjects([]);
     } finally {
       setLoading(false);
@@ -176,9 +252,39 @@ export function ProjectsListPanel() {
     setDeletingId(deleteConfirmId);
     setError(null);
     try {
-      const res = await fetch(`/api/projects/${deleteConfirmId}`, { method: "DELETE" });
-      const data = await readApiResponse<{ error?: string }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Delete failed");
+      const endpoint = `/api/projects/${deleteConfirmId}`;
+      setDebugLast({
+        whenIso: new Date().toISOString(),
+        endpoint,
+        online: typeof navigator !== "undefined" ? navigator.onLine : true,
+      });
+      const res = await fetchWithTimeout(endpoint, { method: "DELETE", timeoutMs: 15000 });
+      const parsed = await readApiResponse<{ error?: string }>(res);
+      const json = parsed.json;
+      const bodySnippet =
+        typeof json?.error === "string"
+          ? json.error.slice(0, 400)
+          : (parsed.text ?? "").slice(0, 400);
+      setDebugLast((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: parsed.status,
+              contentType: parsed.contentType,
+              bodySnippet: bodySnippet || undefined,
+            }
+          : prev,
+      );
+
+      if (!parsed.ok) {
+        throw new Error(
+          typeof json?.error === "string"
+            ? json.error
+            : bodySnippet
+              ? `HTTP ${parsed.status}: ${bodySnippet}`
+              : `HTTP ${parsed.status}`,
+        );
+      }
       setDeleteConfirmId(null);
       await load();
     } catch (e) {
@@ -216,6 +322,21 @@ export function ProjectsListPanel() {
           role="alert"
         >
           {error}
+          {debugLast ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer select-none text-xs text-red-900/80 dark:text-red-100/80">
+                Debug details
+              </summary>
+              <pre className="mt-2 whitespace-pre-wrap rounded bg-black/5 p-2 text-xs text-red-950/90 dark:bg-white/5 dark:text-red-100/90">
+{`when: ${debugLast.whenIso}
+endpoint: ${debugLast.endpoint}
+online: ${String(debugLast.online)}
+status: ${debugLast.status ?? "—"}
+content-type: ${debugLast.contentType ?? "—"}
+body: ${debugLast.bodySnippet ?? "—"}`}
+              </pre>
+            </details>
+          ) : null}
         </div>
       ) : null}
 
@@ -261,10 +382,10 @@ export function ProjectsListPanel() {
                   Check List
                 </Link>
                 <Link
-                  href={`/projects/project/areas?id=${p.id}`}
+                  href={`/projects/project/workbench?id=${p.id}`}
                   className="inline-flex min-h-8 min-w-[44px] items-center justify-center rounded border border-sf-border bg-sf-surface px-3 py-1.5 text-sm font-normal text-sf-text shadow-sm hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
                 >
-                  Areas ({p.areaCount})
+                  Workbench ({p.areaCount})
                 </Link>
               </div>
             </article>

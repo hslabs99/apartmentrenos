@@ -1,0 +1,138 @@
+"use client";
+
+import type { ImportLogPublic, ImportLogStatus } from "@/types/import-log-types";
+
+type Props = {
+  log: ImportLogPublic;
+  statusOverride?: ImportLogStatus | "running";
+};
+
+function statusLabel(status: ImportLogStatus | "running"): string {
+  switch (status) {
+    case "success":
+      return "Import succeeded";
+    case "partial":
+      return "Import completed with issues";
+    case "failed":
+      return "Import failed";
+    case "running":
+      return "Import in progress…";
+    default:
+      return status;
+  }
+}
+
+function statusBorder(status: ImportLogStatus | "running"): string {
+  switch (status) {
+    case "success":
+      return "border-green-300 bg-green-50 dark:border-green-800 dark:bg-green-950/30";
+    case "partial":
+      return "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30";
+    case "failed":
+      return "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30";
+    default:
+      return "border-sf-border bg-sf-page dark:border-zinc-700 dark:bg-zinc-900/50";
+  }
+}
+
+export function ImportSummaryBanner({ log, statusOverride }: Props) {
+  const status = statusOverride ?? log.status;
+  const { summary } = log;
+
+  return (
+    <section
+      className={`rounded-lg border p-4 md:p-5 ${statusBorder(status)}`}
+      aria-live="polite"
+    >
+      <p className="text-base font-semibold text-sf-text dark:text-zinc-100">
+        {statusLabel(status)}
+      </p>
+      <p className="mt-1 text-sm text-sf-text-secondary dark:text-zinc-300">
+        Connected to sheet:{" "}
+        <strong className="text-sf-text dark:text-zinc-100">{log.tabTitle}</strong>
+        {log.gid ? (
+          <span className="text-sf-text-weak dark:text-zinc-500"> (gid {log.gid})</span>
+        ) : null}
+      </p>
+
+      <ul className="mt-4 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+        <li className="rounded bg-white/60 px-3 py-2 dark:bg-zinc-950/40">
+          <span className="block text-xs uppercase tracking-wide text-sf-text-weak">
+            Rows found
+          </span>
+          <span className="tabular-nums text-lg font-semibold">{summary.rowsFound}</span>
+        </li>
+        <li className="rounded bg-white/60 px-3 py-2 dark:bg-zinc-950/40">
+          <span className="block text-xs uppercase tracking-wide text-sf-text-weak">
+            Blank rows
+          </span>
+          <span className="tabular-nums text-lg font-semibold">{summary.blankRows}</span>
+        </li>
+        <li className="rounded bg-white/60 px-3 py-2 dark:bg-zinc-950/40">
+          <span className="block text-xs uppercase tracking-wide text-sf-text-weak">
+            Appended
+          </span>
+          <span className="tabular-nums text-lg font-semibold text-green-800 dark:text-green-400">
+            {summary.productsAppended}
+          </span>
+        </li>
+        <li className="rounded bg-white/60 px-3 py-2 dark:bg-zinc-950/40">
+          <span className="block text-xs uppercase tracking-wide text-sf-text-weak">
+            Updated
+          </span>
+          <span className="tabular-nums text-lg font-semibold text-blue-800 dark:text-blue-400">
+            {summary.productsUpdated}
+          </span>
+        </li>
+        <li className="rounded bg-white/60 px-3 py-2 dark:bg-zinc-950/40">
+          <span className="block text-xs uppercase tracking-wide text-sf-text-weak">
+            Suppliers
+          </span>
+          <span className="tabular-nums text-lg font-semibold text-green-800 dark:text-green-400">
+            {summary.suppliersImported}
+          </span>
+        </li>
+        <li className="rounded bg-white/60 px-3 py-2 dark:bg-zinc-950/40">
+          <span className="block text-xs uppercase tracking-wide text-sf-text-weak">
+            Error rows
+          </span>
+          <span className="tabular-nums text-lg font-semibold text-amber-800 dark:text-amber-300">
+            {summary.errorRows}
+          </span>
+        </li>
+        <li className="rounded bg-white/60 px-3 py-2 dark:bg-zinc-950/40">
+          <span className="block text-xs uppercase tracking-wide text-sf-text-weak">
+            Header row
+          </span>
+          <span className="tabular-nums text-lg font-semibold">{summary.headerRow}</span>
+        </li>
+        <li className="rounded bg-white/60 px-3 py-2 dark:bg-zinc-950/40">
+          <span className="block text-xs uppercase tracking-wide text-sf-text-weak">
+            API rows
+          </span>
+          <span className="tabular-nums text-lg font-semibold">{summary.apiRowsReturned}</span>
+        </li>
+      </ul>
+
+      <p className="mt-3 text-sm text-sf-text-secondary dark:text-zinc-400">
+        Found <strong>{summary.rowsFound}</strong> sheet row(s) — skipped{" "}
+        <strong>{summary.blankRows}</strong> blank. Products:{" "}
+        <strong className="text-green-800 dark:text-green-400">{summary.productsAppended}</strong>{" "}
+        appended,{" "}
+        <strong className="text-blue-800 dark:text-blue-400">{summary.productsUpdated}</strong>{" "}
+        updated,{" "}
+        <strong className="text-green-800 dark:text-green-400">{summary.suppliersImported}</strong>{" "}
+        supplier row(s) written.{" "}
+        <strong className="text-amber-800 dark:text-amber-300">{summary.errorRows}</strong> data
+        error(s). Replaced <strong>{log.deletedPrior}</strong> prior supplier row(s) for updated
+        products.
+      </p>
+
+      {log.errorMessage ? (
+        <p className="mt-2 text-sm font-medium text-red-800 dark:text-red-300">
+          {log.errorMessage}
+        </p>
+      ) : null}
+    </section>
+  );
+}

@@ -1,0 +1,43 @@
+---
+description: Checklist (CL) layout guard — never change CL layout unless the user explicitly asks. Apply when editing project-checklist-panel, cl-checklist-layout, or any task that might touch checklist UI.
+globs: src/components/cl-checklist-layout.ts,src/components/project-checklist-panel.tsx,src/components/scope-line-bundled-children.tsx,src/app/(app)/projects/project/checklist/**
+alwaysApply: true
+---
+
+# Checklist layout guard
+
+**Do not edit Check List (CL) layout unless the user explicitly instructs you to.**
+
+This applies even when the task is about workbench, admin full-width, quote objects, scope builder, bundled SKUs, or shared components.
+
+## Forbidden without explicit CL layout instruction
+
+- Changing CL grid columns, row structure, field order, widths, padding, or alignment
+- Editing `src/components/cl-checklist-layout.ts`
+- Changing CL markup/classes in `project-checklist-panel.tsx` where `mode !== "workbench"`
+- Changing CL rendering in `scope-line-bundled-children.tsx` (`mode="checklist"`)
+- Refactoring, “cleaning up”, or “improving” CL layout while doing another task
+- Copying admin/workbench full-width or table patterns into checklist mode
+
+## Allowed without a CL layout request
+
+- CL **data** logic (save, fetch, scope answers, line patches) if the task requires it — **no className / layout / grid changes**
+- Workbench layout changes (`mode === "workbench"`) when the user asks about workbench or says **layout rules** (see `layout-rules.mdc`)
+- Bug fixes that are clearly non-visual (API, types, validation) with zero layout diff
+
+## When the user *does* ask for CL layout changes
+
+1. Treat **`src/components/cl-checklist-layout.ts`** as the single source of truth for CL row layout.
+2. Change **only** what they specify — row by row, field by field. Do not “fix” adjacent CL layout.
+3. Do **not** change workbench table layout in the same pass unless they ask.
+4. After edits, say exactly which CL files and sections changed.
+
+## Trigger phrases (CL layout is in scope)
+
+Only then may you edit CL layout:
+
+- “checklist layout”, “CL layout”, “check list layout”
+- Explicit row/column instructions on the checklist page (e.g. “in CL reduce Non Std button height”)
+- “layout rules checklist” or user points at `cl-checklist-layout.ts`
+
+If unclear, ask before touching any CL layout code.

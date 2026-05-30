@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "projectareaobjects",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "projectid", "order": "ASCENDING" },
+        { "fieldPath": "projectAreaDocId", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
