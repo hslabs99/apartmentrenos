@@ -16,9 +16,12 @@ import {
   getQuoteObjectNumericIdFromDoc,
 } from "@/lib/server/resolve-ids";
 import {
+  customMeasureForNewProjectLine,
+  effectiveMeasureForLinePricing,
   effectiveMeasurementForQuoteLine,
   normalizeLoadValue,
   quoteTemplatePricingForPriceLevel,
+  resolveProjectLineCustomUom,
 } from "@/lib/server/quote-object-doc";
 import {
   applyProjectLineLabourHours,
@@ -256,19 +259,24 @@ export async function POST(req: NextRequest) {
     const d = parsed.data;
     const style = d.style !== undefined && d.style !== null ? String(d.style).trim() : "";
     const colour = d.colour !== undefined && d.colour !== null ? String(d.colour).trim() : "";
+    const measureCtx = {
+      areaM2,
+      apartmentTotalM2: projDims.apartmentTotalM2,
+      apartmentHardM2: projDims.apartmentHardM2,
+      apartmentSoftM2: projDims.apartmentSoftM2,
+    };
     const inheritedMeasure = effectiveMeasurementForQuoteLine(
       quoteData,
       template.measurement,
-      {
-        areaM2,
-        apartmentTotalM2: projDims.apartmentTotalM2,
-        apartmentHardM2: projDims.apartmentHardM2,
-        apartmentSoftM2: projDims.apartmentSoftM2,
-      },
+      measureCtx,
     );
-    let custommeasure =
-      d.custommeasure !== undefined ? d.custommeasure : inheritedMeasure;
-    let customuom = d.customuom !== undefined ? d.customuom : template.customuom;
+    let custommeasure = customMeasureForNewProjectLine(
+      quoteData,
+      template.measurement,
+      measureCtx,
+      d.custommeasure,
+    );
+    let customuom = resolveProjectLineCustomUom(template.customuom, null, d.customuom);
     let customumprice =
       d.customumprice !== undefined ? d.customumprice : template.customumprice;
 
@@ -282,21 +290,32 @@ export async function POST(req: NextRequest) {
     if (materializedSku.skuId) {
       if (materializedSku.supplierPriceExcGst != null && d.customumprice === undefined) {
         customumprice = materializedSku.supplierPriceExcGst;
-        if (custommeasure == null) {
-          custommeasure = inheritedMeasure ?? 1;
-        }
       }
-      if (materializedSku.uom && d.customuom === undefined) {
-        customuom = materializedSku.uom;
+      if (d.customuom === undefined) {
+        customuom = resolveProjectLineCustomUom(template.customuom, materializedSku.uom);
       }
     }
+
+    const measureForPricing = effectiveMeasureForLinePricing(
+      quoteData,
+      template.measurement,
+      measureCtx,
+      custommeasure,
+    );
 
     const tooltip = readTooltipFromQuoteObjectData(quoteData);
     let totalprice: number | null;
     if (d.totalprice !== undefined) {
       totalprice = d.totalprice;
-    } else if (custommeasure != null && customumprice != null) {
-      totalprice = custommeasure * customumprice;
+    } else if (measureForPricing != null && customumprice != null) {
+      totalprice = measureForPricing * customumprice;
+    } else if (
+      materializedSku.skuId &&
+      customumprice != null &&
+      measureForPricing == null &&
+      custommeasure == null
+    ) {
+      totalprice = (inheritedMeasure ?? 1) * customumprice;
     } else {
       totalprice = template.totalprice;
     }
@@ -312,11 +331,15 @@ export async function POST(req: NextRequest) {
         templateOverrides[k] = normalizeLoadValue(d[bodyKey] as number | null);
       }
     }
+    const skuProductForLabour = d.skuId?.trim()
+      ? (d.skuProduct?.trim() || null)
+      : materializedSku.skuProduct?.trim() || null;
     const { hours: labourHours } = applyProjectLineLabourHours({
       objectName,
+      skuProduct: skuProductForLabour,
       quoteTemplate: quoteData,
       objectLabourRates,
-      custommeasure,
+      custommeasure: measureForPricing,
       lineUom: customuom,
       templateOverrides,
     });
@@ -340,6 +363,7 @@ export async function POST(req: NextRequest) {
         labourHours: labourHoursToFirestore(labourHours),
       }),
       linesource: isBundled ? "bundled" : "manual",
+      ...(objectName ? { objectname: objectName } : {}),
       tooltip,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),

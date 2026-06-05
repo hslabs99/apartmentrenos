@@ -164,9 +164,20 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       if (d[k] !== undefined) update[k] = normalizeLoadValue(d[k]);
     }
 
+    if (d.skuId !== undefined) {
+      const id = d.skuId === null ? "" : String(d.skuId).trim();
+      update.skuId = id ? id : FieldValue.delete();
+    }
+    if (d.skuProduct !== undefined) {
+      const p = d.skuProduct === null ? "" : String(d.skuProduct).trim();
+      update.skuProduct = p ? p : FieldValue.delete();
+    }
+
     const measureOrUomChanged =
       d.custommeasure !== undefined || d.customuom !== undefined;
-    if (measureOrUomChanged) {
+    const skuLabourInputsChanged =
+      d.skuId !== undefined || d.skuProduct !== undefined;
+    if (measureOrUomChanged || skuLabourInputsChanged) {
       const objectid = integerObjectId(existing.objectid);
       const q = objectid !== undefined ? quoteByObjectId.get(objectid) : undefined;
       const objectName = q ? String(q.objectname ?? "").trim() : "";
@@ -178,6 +189,14 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         d.custommeasure !== undefined
           ? custommeasure ?? null
           : numOrNull(existing.custommeasure) ?? null;
+      const effectiveSkuProduct =
+        d.skuProduct !== undefined
+          ? d.skuProduct === null
+            ? null
+            : String(d.skuProduct).trim() || null
+          : d.skuId !== undefined && !String(d.skuId ?? "").trim()
+            ? null
+            : String(existing.skuProduct ?? "").trim() || null;
       const objectLabourRates = await loadAllObjectLabourRates(db);
       const { patch: lookupPatch } = recalcLookupLabourHoursOnLine(
         existing,
@@ -185,16 +204,9 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         objectLabourRates,
         effectiveMeasure,
         lineUom,
+        effectiveSkuProduct,
       );
       Object.assign(update, lookupPatch);
-    }
-    if (d.skuId !== undefined) {
-      const id = d.skuId === null ? "" : String(d.skuId).trim();
-      update.skuId = id ? id : FieldValue.delete();
-    }
-    if (d.skuProduct !== undefined) {
-      const p = d.skuProduct === null ? "" : String(d.skuProduct).trim();
-      update.skuProduct = p ? p : FieldValue.delete();
     }
     if (d.supplierOption !== undefined) {
       if (d.supplierOption != null && isValidSupplierOption(d.supplierOption)) {

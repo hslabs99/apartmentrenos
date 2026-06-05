@@ -3,6 +3,10 @@ import {
   effectiveStyleColourForLine,
   type ScopeLineSkuPick,
 } from "@/lib/client/scope-line-sku-match";
+import {
+  adjustedSupplierPriceExcGst,
+  type SupplierDiscountByKey,
+} from "@/lib/client/supplier-discount-price";
 import { filterDataSkusWithCascadeFallback } from "@/lib/sku/match-data-sku-filters";
 import { appendSlotsFromDataSku, type DataSkuAppendSlotRef } from "@/lib/sku/data-sku-append-slots";
 import { normalizeSkuPart } from "@/lib/sku/normalize-sku-part";
@@ -12,6 +16,7 @@ import {
 } from "@/lib/sku/supplier-option";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { DataSkuSupplierPublic } from "@/types/data-sku-supplier-public";
+import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
 import type { PriceLevelPublic } from "@/types/price-level";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import type { ProjectAreaPublic } from "@/types/project-area";
@@ -29,13 +34,19 @@ export type ResolvedAppendChild = {
 function pickFromSkuAndSupplier(
   sku: DataSkuPublic,
   sup: DataSkuSupplierPublic,
+  supplierDiscountByKey: SupplierDiscountByKey,
 ): ScopeLineSkuPick {
+  const { priceExcGst, discountPctApplied } = adjustedSupplierPriceExcGst(
+    sup,
+    supplierDiscountByKey,
+  );
   return {
     skuId: sku.skuId,
     product: sku.product?.trim() ?? "",
     supplierOption: sup.supplierOption,
     supplier: sup.supplier.trim(),
-    priceExcGst: sup.priceExcGst,
+    priceExcGst,
+    discountPctApplied,
   };
 }
 
@@ -43,6 +54,7 @@ function preferredSupplierPick(
   sku: DataSkuPublic,
   suppliers: DataSkuSupplierPublic[],
   preferredOption: number | null,
+  supplierDiscountByKey: SupplierDiscountByKey,
 ): ScopeLineSkuPick | null {
   if (suppliers.length === 0) return null;
   let sup: DataSkuSupplierPublic | undefined;
@@ -51,7 +63,7 @@ function preferredSupplierPick(
   }
   sup ??= suppliers.find((s) => s.supplierOption === PREFERRED_SUPPLIER_OPTION);
   sup ??= suppliers[0];
-  return sup ? pickFromSkuAndSupplier(sku, sup) : null;
+  return sup ? pickFromSkuAndSupplier(sku, sup, supplierDiscountByKey) : null;
 }
 
 export function findQuoteObjectForAppend(
@@ -82,11 +94,20 @@ export function resolveAppendChildSkuPicks(args: {
   pa: ProjectAreaPublic;
   project: ProjectPublic | null;
   priceLevels: PriceLevelPublic[];
+  cascades?: CascadeRow[];
   quoteObjects: QuoteObjectPublic[];
   preferredSupplierOption: number | null;
+  supplierDiscountByKey?: SupplierDiscountByKey;
 }): ResolvedAppendChild[] {
+  const supplierDiscountByKey = args.supplierDiscountByKey ?? new Map();
   const { style, colour } = effectiveStyleColourForLine(args.pa, args.project, args.line);
-  const elevateLevel = effectiveElevateLevelForLine(args.priceLevels, args.line, args.pa, args.project);
+  const elevateLevel = effectiveElevateLevelForLine(
+    args.priceLevels,
+    args.line,
+    args.pa,
+    args.project,
+    args.cascades,
+  );
   const category = args.parentCategory.trim();
   const currentOnly = args.catalogSkus.filter((s) => s.isCurrent !== false);
   const slots = appendSlotsFromDataSku(args.parentSku);
@@ -107,6 +128,7 @@ export function resolveAppendChildSkuPicks(args: {
           sku,
           args.suppliersBySkuId[sku.skuId] ?? [],
           args.preferredSupplierOption,
+          supplierDiscountByKey,
         )
       : null;
     const qo = findQuoteObjectForAppend(args.quoteObjects, category, slot.productType);

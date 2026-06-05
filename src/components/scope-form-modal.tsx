@@ -9,6 +9,12 @@ import {
 } from "@/lib/client/scope-form-draft";
 import { readApiJson } from "@/lib/client/read-api-json";
 import {
+  DEFAULT_SCOPE_TOOL_TYPE,
+  SCOPE_TOOL_TYPES,
+  scopeToolTypeLabel,
+  type ScopeToolType,
+} from "@/lib/scope-tools";
+import {
   DEFAULT_SYSTEM_SCOPE_TYPE,
   isSystemScopeObjectId,
   SYSTEM_SCOPE_TYPES,
@@ -82,6 +88,9 @@ export function ScopeFormModal({
   const [systemScopeDraft, setSystemScopeDraft] = useState(false);
   const [systemScopeTypeDraft, setSystemScopeTypeDraft] =
     useState<SystemScopeType>(DEFAULT_SYSTEM_SCOPE_TYPE);
+  const [exposeToolDraft, setExposeToolDraft] = useState(false);
+  const [scopeToolTypeDraft, setScopeToolTypeDraft] =
+    useState<ScopeToolType>(DEFAULT_SCOPE_TOOL_TYPE);
   const formInitializedForRef = useRef<string | null>(null);
 
   const activeScope = scopeDocId?.trim() ? fetchedScope : scope;
@@ -243,11 +252,16 @@ export function ScopeFormModal({
         answerid: crypto.randomUUID(),
         label: "Yes",
         attachedQuoteObjectIds: [] as string[],
+        attachedObjectTools: {},
+        attachedObjectShowAll: {},
+        attachedObjectNoCharge: {},
       };
       setDraftAnswers([first]);
       setSelectedAnswerId(first.answerid);
       setSystemScopeDraft(false);
       setSystemScopeTypeDraft(DEFAULT_SYSTEM_SCOPE_TYPE);
+      setExposeToolDraft(false);
+      setScopeToolTypeDraft(DEFAULT_SCOPE_TOOL_TYPE);
       void loadQuoteObjects().then(() => setFormReady(true));
       return;
     }
@@ -272,6 +286,8 @@ export function ScopeFormModal({
     setQuestion(activeScope.question);
     setSystemScopeDraft(activeScope.systemScope === true);
     setSystemScopeTypeDraft(activeScope.systemScopeType ?? DEFAULT_SYSTEM_SCOPE_TYPE);
+    setExposeToolDraft(activeScope.exposeTool === true);
+    setScopeToolTypeDraft(activeScope.scopeToolType ?? DEFAULT_SCOPE_TOOL_TYPE);
 
     if (activeScope.kind === "header") {
       setDraftAnswers([]);
@@ -325,7 +341,14 @@ export function ScopeFormModal({
     const id = crypto.randomUUID();
     setDraftAnswers((prev) => [
       ...prev,
-      { answerid: id, label: `Option ${prev.length + 1}`, attachedQuoteObjectIds: [] },
+      {
+        answerid: id,
+        label: `Option ${prev.length + 1}`,
+        attachedQuoteObjectIds: [],
+        attachedObjectTools: {},
+        attachedObjectShowAll: {},
+        attachedObjectNoCharge: {},
+      },
     ]);
     setSelectedAnswerId(id);
   }
@@ -347,7 +370,56 @@ export function ScopeFormModal({
 
   function setAnswerQuoteObjectIds(answerid: string, ids: string[]) {
     setDraftAnswers((prev) =>
-      prev.map((a) => (a.answerid === answerid ? { ...a, attachedQuoteObjectIds: ids } : a)),
+      prev.map((a) => {
+        if (a.answerid !== answerid) return a;
+        const idSet = new Set(ids);
+        const attachedObjectTools: Partial<Record<string, ScopeToolType>> = {};
+        for (const [key, tool] of Object.entries(a.attachedObjectTools)) {
+          if (idSet.has(key)) attachedObjectTools[key] = tool;
+        }
+        const attachedObjectShowAll: Partial<Record<string, boolean>> = {};
+        const attachedObjectNoCharge: Partial<Record<string, boolean>> = {};
+        for (const [key, flag] of Object.entries(a.attachedObjectShowAll)) {
+          if (idSet.has(key) && flag) attachedObjectShowAll[key] = true;
+        }
+        for (const [key, flag] of Object.entries(a.attachedObjectNoCharge)) {
+          if (idSet.has(key) && flag) attachedObjectNoCharge[key] = true;
+        }
+        return {
+          ...a,
+          attachedQuoteObjectIds: ids,
+          attachedObjectTools,
+          attachedObjectShowAll,
+          attachedObjectNoCharge,
+        };
+      }),
+    );
+  }
+
+  function setAnswerObjectTools(
+    answerid: string,
+    tools: Partial<Record<string, ScopeToolType>>,
+  ) {
+    setDraftAnswers((prev) =>
+      prev.map((a) => (a.answerid === answerid ? { ...a, attachedObjectTools: tools } : a)),
+    );
+  }
+
+  function setAnswerObjectShowAll(
+    answerid: string,
+    showAll: Partial<Record<string, boolean>>,
+  ) {
+    setDraftAnswers((prev) =>
+      prev.map((a) => (a.answerid === answerid ? { ...a, attachedObjectShowAll: showAll } : a)),
+    );
+  }
+
+  function setAnswerObjectNoCharge(
+    answerid: string,
+    noCharge: Partial<Record<string, boolean>>,
+  ) {
+    setDraftAnswers((prev) =>
+      prev.map((a) => (a.answerid === answerid ? { ...a, attachedObjectNoCharge: noCharge } : a)),
     );
   }
 
@@ -367,6 +439,10 @@ export function ScopeFormModal({
     }
     if (!isSectionMarkerForm && systemScopeDraft && !systemScopeTypeDraft) {
       setError("Select a system scope type.");
+      return;
+    }
+    if (!isSectionMarkerForm && exposeToolDraft && !scopeToolTypeDraft) {
+      setError("Select a tool.");
       return;
     }
     setSaving(true);
@@ -434,6 +510,8 @@ export function ScopeFormModal({
           answers: draftToPayload(draftAnswers, quoteById),
           systemScope: systemScopeDraft,
           systemScopeType: systemScopeDraft ? systemScopeTypeDraft : null,
+          exposeTool: exposeToolDraft,
+          scopeToolType: exposeToolDraft ? scopeToolTypeDraft : null,
         };
         if (tagAllAreasDraft) {
           payload.tagAllAreas = true;
@@ -743,6 +821,44 @@ export function ScopeFormModal({
             ) : null}
 
             {!isSectionMarkerForm ? (
+              <div className="space-y-3 rounded-lg border border-sf-border bg-sf-page/40 p-4 dark:border-zinc-700 dark:bg-zinc-900/40">
+                <label className="flex cursor-pointer items-start gap-2 text-sm text-sf-text dark:text-zinc-200">
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4 rounded border-sf-border-strong"
+                    checked={exposeToolDraft}
+                    onChange={(e) => setExposeToolDraft(e.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">Expose tool</span>
+                    <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                      After a scope is answered on the checklist, show a calculator the user can open.
+                    </span>
+                  </span>
+                </label>
+                {exposeToolDraft ? (
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
+                      Tool
+                    </span>
+                    <select
+                      required
+                      value={scopeToolTypeDraft}
+                      onChange={(e) => setScopeToolTypeDraft(e.target.value as ScopeToolType)}
+                      className={inputClass}
+                    >
+                      {SCOPE_TOOL_TYPES.map((type) => (
+                        <option key={type} value={type}>
+                          {scopeToolTypeLabel(type)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+            ) : null}
+
+            {!isSectionMarkerForm ? (
               <div className="grid gap-4 border-t border-sf-border pt-4 dark:border-zinc-700 lg:grid-cols-[minmax(200px,260px)_1fr]">
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -802,8 +918,13 @@ export function ScopeFormModal({
                 <div className="min-w-0">
                   <h3 className="mb-2 text-base font-semibold">Attached quote objects</h3>
                   <p className="mb-3 text-xs text-sf-text-weak dark:text-zinc-400">
-                    Expand each object type (+/−), then multi-select quote objects. Selected names
-                    appear at the top. Every row from Setup → Quote Objects is listed.
+                    Expand each object type (+/−), then multi-select quote objects. Drag selected
+                    objects to set checklist order. Use Show All on an object to create one row per
+                    matching SKU instead of a dropdown. Use No Charge to import the line at $0.
+                    For each selected object you can attach a
+                    calculator (e.g. benchtop m² on the benchtop). On the checklist, that icon
+                    appears on the SKU row and can fill the measure field.
+                    Every row from Setup → Quote Objects is listed.
                     {systemScopeDraft
                       ? ` With System scope on, attach ${systemScopeObjectId(systemScopeTypeDraft)} from the System group.`
                       : null}{" "}
@@ -822,7 +943,19 @@ export function ScopeFormModal({
                       quoteObjects={quoteObjects}
                       systemScopeType={systemScopeDraft ? systemScopeTypeDraft : null}
                       selectedIds={selectedAnswer.attachedQuoteObjectIds}
+                      objectTools={selectedAnswer.attachedObjectTools}
+                      objectShowAll={selectedAnswer.attachedObjectShowAll}
+                      objectNoCharge={selectedAnswer.attachedObjectNoCharge}
                       onChange={(ids) => setAnswerQuoteObjectIds(selectedAnswer.answerid, ids)}
+                      onObjectToolsChange={(tools) =>
+                        setAnswerObjectTools(selectedAnswer.answerid, tools)
+                      }
+                      onObjectShowAllChange={(showAll) =>
+                        setAnswerObjectShowAll(selectedAnswer.answerid, showAll)
+                      }
+                      onObjectNoChargeChange={(noCharge) =>
+                        setAnswerObjectNoCharge(selectedAnswer.answerid, noCharge)
+                      }
                       disabled={saving}
                       inputClassName={inputClass}
                     />

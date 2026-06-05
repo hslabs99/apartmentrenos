@@ -1,7 +1,7 @@
 "use client";
 
+import { CascadeElevateSelect } from "@/components/cascade-elevate-select";
 import { CascadeStyleColourFields } from "@/components/cascade-style-colour-fields";
-import { PriceLevelIdSelect } from "@/components/price-level-id-select";
 import { useCascades } from "@/lib/client/use-cascades";
 import { usePriceLevels } from "@/lib/client/use-price-levels";
 import { cascadeLevelFromPriceLevel } from "@/lib/cascades/cascade-level-from-price-level";
@@ -9,6 +9,8 @@ import { cascadeLevelFromPriceLevel } from "@/lib/cascades/cascade-level-from-pr
 type Props = {
   priceLevelId: number | null;
   onPriceLevelIdChange: (id: number | null) => void;
+  projectFinish?: string;
+  onProjectFinishChange?: (value: string) => void;
   style: string;
   colour: string;
   onStyleChange: (value: string) => void;
@@ -24,6 +26,8 @@ type Props = {
 export function ProjectDefaultTierFields({
   priceLevelId,
   onPriceLevelIdChange,
+  projectFinish = "",
+  onProjectFinishChange,
   style,
   colour,
   onStyleChange,
@@ -38,10 +42,16 @@ export function ProjectDefaultTierFields({
   const { levels: priceLevels, loading: priceLevelsLoading } = usePriceLevels();
   const { cascades } = useCascades();
 
-  const cascadeLevel = cascadeLevelFromPriceLevel(priceLevels, priceLevelId, "");
+  const cascadeLevel = cascadeLevelFromPriceLevel(
+    priceLevels,
+    priceLevelId,
+    projectFinish,
+    cascades,
+  );
 
-  function handlePriceLevelChange(id: number | null) {
-    onPriceLevelIdChange(id);
+  function handleElevateChange(next: { priceLevelId: number | null; projectFinish: string }) {
+    onPriceLevelIdChange(next.priceLevelId);
+    onProjectFinishChange?.(next.projectFinish);
     onStyleChange("");
     onColourChange("");
   }
@@ -55,9 +65,12 @@ export function ProjectDefaultTierFields({
             <span className="ml-1 text-red-600 dark:text-red-400">*</span>
           ) : null}
         </span>
-        <PriceLevelIdSelect
-          value={priceLevelId}
-          onChange={handlePriceLevelChange}
+        <CascadeElevateSelect
+          cascades={cascades}
+          priceLevels={priceLevels}
+          priceLevelId={priceLevelId}
+          projectFinish={projectFinish}
+          onChange={handleElevateChange}
           className={priceLevelClassName}
           disabled={disabled || priceLevelsLoading}
           emptyLabel={priceLevelRequired ? "Select tier (required)" : "Not set"}

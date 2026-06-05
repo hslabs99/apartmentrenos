@@ -44,6 +44,9 @@ import type { ProjectPublic } from "@/types/project";
 
 import type { QuoteObjectPublic } from "@/types/quote-object";
 
+import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
+import type { SupplierDiscountByKey } from "@/lib/client/supplier-discount-price";
+
 import { useEffect, useMemo, useRef } from "react";
 
 
@@ -59,6 +62,10 @@ type Props = {
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
 
   priceLevels: PriceLevelPublic[];
+
+  cascades?: CascadeRow[];
+
+  supplierDiscountByKey?: SupplierDiscountByKey;
 
   pa: ProjectAreaPublic;
 
@@ -82,9 +89,14 @@ type Props = {
 
   autoApplySingleMatch?: boolean;
 
-  /** When set with autoApplySingleMatch, only auto-apply if the line has no SKU yet (workbench). */
-
+  /**
+   * With autoApplySingleMatch: do not switch to a different SKU when the line already has one,
+   * but still apply when the same SKU is missing unit price.
+   */
   autoApplyOnlyWhenEmptySku?: boolean;
+
+  /** When the line’s SKU matches the active pick but unit price is unset, persist price (workbench). */
+  syncUnitPriceFromPick?: boolean;
 
   /** Omit "SKU" prefix on match labels (workbench table). */
 
@@ -102,9 +114,19 @@ type Props = {
 
   showIncludeAllSupplierOptions?: boolean;
 
+  /** When set, only this catalog SKU is offered (Show All scope lines). */
+  lockToSkuId?: string | null;
+
 };
 
 
+
+/** Workbench SKU dropdown / price line: `$1,234.56 (Supplier)`. */
+function scopeLineSkuPickPriceLabel(pick: ScopeLineSkuPick): string | null {
+  if (pick.priceExcGst == null) return null;
+  const supplier = pick.supplier.trim() || "—";
+  return `$${formatMoney(pick.priceExcGst)} (${supplier})`;
+}
 
 function SkuPriceLine({
 
@@ -120,7 +142,8 @@ function SkuPriceLine({
 
 }) {
 
-  if (pick.priceExcGst == null) return null;
+  const priceLabel = scopeLineSkuPickPriceLabel(pick);
+  if (!priceLabel) return null;
 
   const cls =
 
@@ -134,19 +157,7 @@ function SkuPriceLine({
 
     <span className={cls}>
 
-      {formatMoney(pick.priceExcGst)} ex GST
-
-      {pick.supplier ? (
-
-        <span className="font-normal text-sf-text-secondary dark:text-zinc-400">
-
-          {" "}
-
-          · {pick.supplier}
-
-        </span>
-
-      ) : null}
+      {priceLabel} ex GST
 
     </span>
 
@@ -168,6 +179,10 @@ export function ScopeLineSkuPicker({
 
   priceLevels,
 
+  cascades = [],
+
+  supplierDiscountByKey = new Map(),
+
   pa,
 
   project,
@@ -186,6 +201,8 @@ export function ScopeLineSkuPicker({
 
   autoApplyOnlyWhenEmptySku = false,
 
+  syncUnitPriceFromPick = false,
+
   shortMatchLabels = false,
 
   inlineRow = false,
@@ -196,27 +213,36 @@ export function ScopeLineSkuPicker({
 
   showIncludeAllSupplierOptions = false,
 
+  lockToSkuId = null,
+
 }: Props) {
 
   const filters = useMemo(() => {
 
     const { style, colour } = effectiveStyleColourForLine(pa, project, line);
 
-    const elevateLevel = effectiveElevateLevelForLine(priceLevels, line, pa, project);
+    const elevateLevel = effectiveElevateLevelForLine(
+      priceLevels,
+      line,
+      pa,
+      project,
+      cascades,
+    );
 
     return { style, colour, elevateLevel };
 
-  }, [line, pa, project, priceLevels]);
+  }, [line, pa, project, priceLevels, cascades]);
 
 
 
-  const catalogMatches = useMemo(
-
-    () => matchingSkusForScopeLine(catalogSkus, quoteObject, filters),
-
-    [catalogSkus, quoteObject, filters],
-
-  );
+  const catalogMatches = useMemo(() => {
+    let matches = matchingSkusForScopeLine(catalogSkus, quoteObject, filters);
+    const locked = lockToSkuId?.trim();
+    if (locked) {
+      matches = matches.filter((m) => m.skuId === locked);
+    }
+    return matches;
+  }, [catalogSkus, quoteObject, filters, lockToSkuId]);
 
 
 
@@ -225,18 +251,14 @@ export function ScopeLineSkuPicker({
     () =>
 
       buildScopeLineSkuPicks(
-
         catalogMatches,
-
         suppliersBySkuId,
-
         includeAllSupplierOptions,
-
         line,
-
+        supplierDiscountByKey,
       ),
 
-    [catalogMatches, suppliersBySkuId, includeAllSupplierOptions, line],
+    [catalogMatches, suppliersBySkuId, includeAllSupplierOptions, line, supplierDiscountByKey],
 
   );
 
@@ -252,17 +274,23 @@ export function ScopeLineSkuPicker({
   onSelectSkuRef.current = onSelectSku;
   /** One auto-apply per line + single-match identity (reset when match changes). */
   const autoApplyAttemptRef = useRef<string | null>(null);
+  const syncPriceAttemptRef = useRef<string | null>(null);
 
   useEffect(() => {
     autoApplyAttemptRef.current = null;
+    syncPriceAttemptRef.current = null;
   }, [line.id, singlePickKey]);
 
   useEffect(() => {
     if (!autoApplySingleMatch || disabled || picks.length !== 1) return;
-    if (autoApplyOnlyWhenEmptySku && (line.skuId ?? "").trim()) return;
 
     const only = picks[0]!;
     if (scopeLineMatchesSkuPick(line, only)) return;
+
+    if (autoApplyOnlyWhenEmptySku) {
+      const existingSku = (line.skuId ?? "").trim();
+      if (existingSku && existingSku !== only.skuId) return;
+    }
 
     const attemptKey = `${line.id}|${singlePickKey}`;
     if (autoApplyAttemptRef.current === attemptKey) return;
@@ -279,6 +307,32 @@ export function ScopeLineSkuPicker({
     line.supplierOption,
     line.customumprice,
     picks.length,
+  ]);
+
+  useEffect(() => {
+    if (!syncUnitPriceFromPick || disabled || picks.length === 0) return;
+    const encoded = activeScopeLineSkuPickValue(line, picks);
+    if (!encoded) return;
+    const decoded = decodeScopeLineSkuPickValue(encoded);
+    if (!decoded) return;
+    const hit = picks.find(
+      (p) => p.skuId === decoded.skuId && p.supplierOption === decoded.supplierOption,
+    );
+    if (!hit || scopeLineMatchesSkuPick(line, hit)) return;
+
+    const attemptKey = `${line.id}|sync|${encoded}|${hit.priceExcGst ?? ""}`;
+    if (syncPriceAttemptRef.current === attemptKey) return;
+
+    syncPriceAttemptRef.current = attemptKey;
+    onSelectSkuRef.current(hit);
+  }, [
+    syncUnitPriceFromPick,
+    disabled,
+    line.id,
+    line.skuId,
+    line.supplierOption,
+    line.customumprice,
+    picks,
   ]);
 
 
@@ -309,9 +363,8 @@ export function ScopeLineSkuPicker({
     }
     const base = scopeLineSkuPickLabel(pick);
     if (!showSupplierPrice) return base;
-    return pick.priceExcGst != null
-      ? `${base} · ${formatMoney(pick.priceExcGst)} ex GST`
-      : base;
+    const priceLabel = scopeLineSkuPickPriceLabel(pick);
+    return priceLabel ? `${base} · ${priceLabel}` : base;
   };
 
 
@@ -332,7 +385,7 @@ export function ScopeLineSkuPicker({
 
     return (
 
-      <span className={labelClass}>
+      <span className={`block w-full min-w-0 truncate ${labelClass}`}>
 
         {shortMatchLabels ? "No matching SKU" : "SKU: No matching SKU"}
 
@@ -352,11 +405,28 @@ export function ScopeLineSkuPicker({
 
 
 
+  const skuLocked = Boolean(lockToSkuId?.trim());
+
+  if (skuLocked && picks.length === 1) {
+    const only = picks[0]!;
+    const lockedLabel = optionLabel(only);
+    const lockedClass = inlineRow
+      ? `${selectClassName} min-w-0 flex-1 truncate font-normal leading-tight text-sf-text dark:text-zinc-100`
+      : `block min-w-0 flex-1 truncate text-xs leading-tight text-sf-text dark:text-zinc-100`;
+    return (
+      <div className="flex h-full w-full min-w-0 items-center">
+        <span className={lockedClass} title={lockedLabel}>
+          {lockedLabel}
+        </span>
+      </div>
+    );
+  }
+
   if (inlineRow) {
 
     return (
 
-      <div className="flex min-w-0 items-center gap-1">
+      <div className="flex h-full w-full min-w-0 items-center gap-1">
 
         {showIncludeAllSupplierOptions ? (
 
@@ -410,7 +480,7 @@ export function ScopeLineSkuPicker({
 
         <select
 
-          className={`min-w-0 flex-1 ${selectClassName}`}
+          className={`h-full min-w-0 flex-1 ${selectClassName}`}
 
           disabled={disabled}
 
@@ -474,9 +544,9 @@ export function ScopeLineSkuPicker({
 
     return (
 
-      <div className="min-w-0 truncate">
+      <div className="flex h-full w-full min-w-0 items-center">
 
-        <span className={`${labelClass} truncate`}>
+        <span className={`block min-w-0 flex-1 truncate ${labelClass}`}>
 
           {shortMatchLabels ? skuOptionLabel(skuRow) : `SKU: ${skuOptionLabel(skuRow)}`}
 
@@ -500,7 +570,7 @@ export function ScopeLineSkuPicker({
 
     <label
 
-      className={`flex min-w-0 flex-col justify-center gap-0.5 ${variant === "block" ? "" : "max-w-full"}`}
+      className={`flex w-full min-w-0 flex-col justify-center gap-0.5 ${variant === "block" ? "" : "max-w-full"}`}
 
     >
 

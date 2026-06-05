@@ -62,6 +62,11 @@ export const WB_LABOUR_SILO_HEADERS: { key: LabourSiloKey; label: string; title:
     { key: "plasteringHours", label: "Plast", title: "Plastering (hours)" },
   ];
 
+/** Workbench columns: lookup silos only (Gen/PM/Paint/Plast live on quote objects). */
+export const WB_WORKBENCH_LABOUR_SILO_HEADERS = WB_LABOUR_SILO_HEADERS.filter((h) =>
+  (LOOKUP_LABOUR_SILO_KEYS as readonly LabourSiloKey[]).includes(h.key),
+);
+
 export function emptyLabourHours(): LabourHours {
   return {
     constructionAssistantHours: null,
@@ -87,7 +92,7 @@ export function formatLabourHours(n: number | null | undefined): string {
 }
 
 export const OBJECT_LABOUR_DUPLICATE_TOOLTIP =
-  "Multiple labour rows match this object name; using the first match.";
+  "Warning: more than one Object Labour Rate row matches this line after Product Type and SKU product rules. The dollar amount uses the first match only.";
 
 export const LABOUR_RATE_MISSING_TOOLTIP =
-  "Hours are set but no contract labour rate exists for this silo in Labour Rates.";
+  "Warning: this line has labour hours but there is no hourly contract rate for this trade in Labour Rates (Import Master Prices → Labour Rates tab). The cost cannot be calculated until a rate exists.";

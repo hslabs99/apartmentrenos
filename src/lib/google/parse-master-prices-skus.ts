@@ -1,5 +1,6 @@
 import { buildSkuImportFromSheetRows } from "@/lib/google/build-sku-import-from-sheet";
 import { normalizeSupplierOption } from "@/lib/sku/supplier-option";
+import { normalizeProductKeyPart } from "@/lib/sku/product-key";
 import { MASTER_PRICES_SKU_TAB_TITLE } from "@/lib/google/master-prices-spreadsheet";
 import type { ParsedSheetRow } from "@/lib/google/parsed-sheet-row";
 import { truncateAppendSpec } from "@/lib/sku/data-sku-append-slots";
@@ -7,7 +8,7 @@ import type { DataSku } from "@/types/data-sku";
 import type { DataSkuSupplier } from "@/types/data-sku-supplier";
 import type { ImportLogAudit, ImportLogRowSample } from "@/types/import-log-types";
 
-/** Column layout for Products_SKU_ALL, Products_Building, and Products_Labour (row 5 headers). */
+/** Column layout for Products_SKU_ALL, Products_Building, and Products_Painting (row 5 headers). */
 /** Preferred header row when auto-detect is ambiguous (1-based row 5). */
 export const SKU_HEADER_ROW_1_BASED = 5;
 
@@ -16,8 +17,9 @@ export const SKU_DATA_START_ROW_1_BASED = 6;
 
 const HEADER_SCAN_MAX_ROWS = 25;
 const MAX_SKIPPED_SAMPLES = 150;
+const MAX_CUSTOM_ELEVATE_SAMPLES_STORED = 500;
 
-type SheetFieldKey = keyof Omit<ParsedSheetRow, "sheetRowNumber">;
+type SheetFieldKey = keyof Omit<ParsedSheetRow, "sheetRowNumber" | "productKeySourceRowNumber">;
 
 const HEADER_ALIASES: Record<string, SheetFieldKey> = {
   category: "category",
@@ -99,6 +101,99 @@ function isRowEmpty(cells: unknown[]): boolean {
   return cells.every((c) => parseText(c) === "");
 }
 
+function hasCategoryProductTypeProduct(
+  cells: unknown[],
+  fieldToColIndex: Map<SheetFieldKey, number>,
+): boolean {
+  const category = parseText(cells[fieldToColIndex.get("category") ?? 0]);
+  const productType = parseText(cells[fieldToColIndex.get("productType") ?? 1]);
+  const product = parseText(cells[fieldToColIndex.get("product") ?? 2]);
+  return category !== "" && productType !== "" && product !== "";
+}
+
+export type ParseMasterPricesSkusOptions = {
+  sheetGridRowCount?: number | null;
+  /** Skip rows missing Category, Product Type, or Product (columns A–C) without error. */
+  requireCategoryProductTypeProduct?: boolean;
+  /** Carry cols A–F down from the last non-empty value (multi-supplier continuation rows). */
+  fillDownProductKey?: boolean;
+};
+
+const PRODUCT_KEY_FIELD_KEYS = [
+  "category",
+  "productType",
+  "product",
+  "elevateLevel",
+  "style",
+  "colourOptions",
+] as const satisfies readonly SheetFieldKey[];
+
+type ProductKeyCarry = Record<(typeof PRODUCT_KEY_FIELD_KEYS)[number], string>;
+
+function emptyProductKeyCarry(): ProductKeyCarry {
+  return {
+    category: "",
+    productType: "",
+    product: "",
+    elevateLevel: "",
+    style: "",
+    colourOptions: "",
+  };
+}
+
+function hasLocalProductKeyAnchor(record: ParsedSheetRow): boolean {
+  return (
+    record.category.trim() !== "" &&
+    record.productType.trim() !== "" &&
+    record.product.trim() !== ""
+  );
+}
+
+/** New product line when any populated A–C cell differs from the carried key (avoids bleeding prior product). */
+function shouldResetCarryForNewProductLine(
+  record: ParsedSheetRow,
+  carry: ProductKeyCarry,
+): boolean {
+  const checks: (keyof Pick<ProductKeyCarry, "category" | "productType" | "product">)[] = [
+    "category",
+    "productType",
+    "product",
+  ];
+  for (const field of checks) {
+    const incoming = record[field].trim();
+    if (!incoming) continue;
+    const held = carry[field].trim();
+    if (held && normalizeProductKeyPart(incoming) !== normalizeProductKeyPart(held)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function applyProductKeyFillDown(record: ParsedSheetRow, carry: ProductKeyCarry): void {
+  for (const field of PRODUCT_KEY_FIELD_KEYS) {
+    const trimmed = record[field].trim();
+    if (trimmed) {
+      carry[field] = record[field];
+    } else if (carry[field]) {
+      record[field] = carry[field];
+    }
+  }
+}
+
+/** Column D — skipped entirely on data_skus import. */
+function isCustomElevateLevel(raw: string): boolean {
+  return raw.trim().toLowerCase() === "custom";
+}
+
+function readElevateLevelCell(
+  cells: unknown[],
+  fieldToColIndex: Map<SheetFieldKey, number>,
+): string {
+  const colIndex = fieldToColIndex.get("elevateLevel") ?? 3;
+  return parseText(cells[colIndex]);
+}
+
 function scoreHeaderRow(cells: unknown[]): number {
   let score = 0;
   for (const cell of cells) {
@@ -150,6 +245,7 @@ export function findHeaderRowIndex(values: unknown[][]): number {
 function emptyParsedRow(sheetRowNumber: number): ParsedSheetRow {
   return {
     sheetRowNumber,
+    productKeySourceRowNumber: sheetRowNumber,
     category: "",
     productType: "",
     product: "",
@@ -194,7 +290,7 @@ export type ParseMasterPricesSkusResult = {
  */
 export function parseMasterPricesSkuRows(
   values: unknown[][],
-  sheetMeta?: { sheetGridRowCount: number | null },
+  options?: ParseMasterPricesSkusOptions,
 ): ParseMasterPricesSkusResult {
   const warnings: string[] = [];
   const skippedRowSamples: ImportLogRowSample[] = [];
@@ -206,9 +302,10 @@ export function parseMasterPricesSkuRows(
       detectedHeaderLabels: [],
       mappedFieldNames: [],
       apiRowsReturned: 0,
-      sheetGridRowCount: sheetMeta?.sheetGridRowCount ?? null,
+      sheetGridRowCount: options?.sheetGridRowCount ?? null,
       totalDataRowsScanned: 0,
       blankRowsSkipped: 0,
+      customElevateRowsSkipped: 0,
       nonBlankRows: 0,
       importedRows: 0,
       productsImported: 0,
@@ -219,6 +316,7 @@ export function parseMasterPricesSkuRows(
       unmappedHeaders: [],
       warnings: ["No rows returned from sheet."],
       skippedRowSamples: [],
+      customElevateSkippedSamples: [],
       dataErrors: [],
     };
     return {
@@ -295,15 +393,23 @@ export function parseMasterPricesSkuRows(
 
   const sheetRows: ParsedSheetRow[] = [];
   let blankRowsSkipped = 0;
+  let customElevateRowsSkipped = 0;
   let nonBlankRows = 0;
   let emptySamplesLogged = 0;
+  const customElevateSkippedSamples: ImportLogRowSample[] = [];
   const MAX_EMPTY_SAMPLES = 25;
+  const productKeyCarry = emptyProductKeyCarry();
+  let productKeyOriginRow: number | null = null;
 
   for (let i = headerRowIndex + 1; i < values.length; i++) {
     const cells = values[i] ?? [];
     const sheetRowNumber = i + 1;
 
     if (isRowEmpty(cells)) {
+      if (options?.fillDownProductKey) {
+        Object.assign(productKeyCarry, emptyProductKeyCarry());
+        productKeyOriginRow = null;
+      }
       blankRowsSkipped += 1;
       if (
         emptySamplesLogged < MAX_EMPTY_SAMPLES &&
@@ -317,6 +423,48 @@ export function parseMasterPricesSkuRows(
           sku: null,
           category: null,
           product: null,
+        });
+      }
+      continue;
+    }
+
+    if (isCustomElevateLevel(readElevateLevelCell(cells, fieldToColIndex))) {
+      customElevateRowsSkipped += 1;
+      const sample: ImportLogRowSample = {
+        sheetRowNumber,
+        status: "skipped_custom_elevate",
+        reason: "Elevate Level (column D) is Custom — row skipped.",
+        sku: null,
+        category: parseText(cells[fieldToColIndex.get("category") ?? 0]) || null,
+        product: parseText(cells[fieldToColIndex.get("product") ?? 2]) || null,
+      };
+      if (customElevateSkippedSamples.length < MAX_CUSTOM_ELEVATE_SAMPLES_STORED) {
+        customElevateSkippedSamples.push(sample);
+      }
+      if (skippedRowSamples.length < MAX_SKIPPED_SAMPLES) {
+        skippedRowSamples.push(sample);
+      }
+      continue;
+    }
+
+    if (
+      options?.requireCategoryProductTypeProduct &&
+      !hasCategoryProductTypeProduct(cells, fieldToColIndex)
+    ) {
+      blankRowsSkipped += 1;
+      if (
+        emptySamplesLogged < MAX_EMPTY_SAMPLES &&
+        skippedRowSamples.length < MAX_SKIPPED_SAMPLES
+      ) {
+        emptySamplesLogged += 1;
+        skippedRowSamples.push({
+          sheetRowNumber,
+          status: "skipped_empty",
+          reason:
+            "Missing Category, Product Type, or Product (columns A–C) — row skipped.",
+          sku: null,
+          category: parseText(cells[fieldToColIndex.get("category") ?? 0]) || null,
+          product: parseText(cells[fieldToColIndex.get("product") ?? 2]) || null,
         });
       }
       continue;
@@ -342,6 +490,18 @@ export function parseMasterPricesSkuRows(
       }
     });
 
+    if (options?.fillDownProductKey) {
+      if (shouldResetCarryForNewProductLine(record, productKeyCarry)) {
+        Object.assign(productKeyCarry, emptyProductKeyCarry());
+        productKeyOriginRow = null;
+      }
+      if (hasLocalProductKeyAnchor(record)) {
+        productKeyOriginRow = sheetRowNumber;
+      }
+      applyProductKeyFillDown(record, productKeyCarry);
+      record.productKeySourceRowNumber = productKeyOriginRow ?? sheetRowNumber;
+    }
+
     sheetRows.push(record);
   }
 
@@ -354,6 +514,12 @@ export function parseMasterPricesSkuRows(
     MAX_SKIPPED_SAMPLES,
   );
 
+  if (customElevateRowsSkipped > 0) {
+    warnings.push(
+      `${customElevateRowsSkipped} row(s) skipped — Elevate Level (column D) is Custom.`,
+    );
+  }
+
   if (built.dataErrors.length > 0) {
     warnings.push(
       `${built.dataErrors.length} data error(s) — duplicate supplier options and other issues must be fixed in the spreadsheet.`,
@@ -361,7 +527,7 @@ export function parseMasterPricesSkuRows(
   }
 
   const totalDataRowsScanned = values.length - headerRowIndex - 1;
-  const sheetGridRowCount = sheetMeta?.sheetGridRowCount ?? null;
+  const sheetGridRowCount = options?.sheetGridRowCount ?? null;
 
   if (
     sheetGridRowCount != null &&
@@ -384,6 +550,7 @@ export function parseMasterPricesSkuRows(
     sheetGridRowCount,
     totalDataRowsScanned,
     blankRowsSkipped,
+    customElevateRowsSkipped,
     nonBlankRows,
     importedRows,
     productsImported: built.products.length,
@@ -394,6 +561,7 @@ export function parseMasterPricesSkuRows(
     unmappedHeaders,
     warnings: [...warnings, ...unmappedHeaders.map((h) => `Unmapped column header: ${h}`)],
     skippedRowSamples: allSkippedSamples,
+    customElevateSkippedSamples,
     dataErrors: built.dataErrors,
   };
 

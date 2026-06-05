@@ -2,6 +2,7 @@
 
 import { LabTypeLabourRatesPanel } from "@/components/lab-type-labour-rates-panel";
 import { LabourRatesPanel } from "@/components/labour-rates-panel";
+import { ProductContractorRatesPanel } from "@/components/product-contractor-rates-panel";
 import { SupplierDiscountsPanel } from "@/components/supplier-discounts-panel";
 import { SystemLookupsPanel } from "@/components/system-lookups-panel";
 import { SalesStaffPanel } from "@/components/sales-staff-panel";
@@ -12,6 +13,7 @@ import { useState } from "react";
 type SystemTab =
   | "sales-staff"
   | "labour-rates"
+  | "product-contractor-rates"
   | "lab-type-labour-rates"
   | "supplier-discounts"
   | "lookups"
@@ -48,6 +50,15 @@ export function SystemPanel() {
             className={sfUnderlineTabClass(tab === "labour-rates")}
           >
             Labour Rates
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "product-contractor-rates"}
+            onClick={() => setTab("product-contractor-rates")}
+            className={sfUnderlineTabClass(tab === "product-contractor-rates")}
+          >
+            Contractor Rates
           </button>
           <button
             type="button"
@@ -90,6 +101,7 @@ export function SystemPanel() {
 
       {tab === "sales-staff" ? <SalesStaffPanel /> : null}
       {tab === "labour-rates" ? <LabourRatesPanel /> : null}
+      {tab === "product-contractor-rates" ? <ProductContractorRatesPanel /> : null}
       {tab === "lab-type-labour-rates" ? <LabTypeLabourRatesPanel /> : null}
       {tab === "supplier-discounts" ? <SupplierDiscountsPanel /> : null}
       {tab === "lookups" ? <SystemLookupsPanel /> : null}

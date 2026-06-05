@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { isProjectAreasMetaDocument } from "@/lib/firestore/projectareas-collection";
+import { deleteProjectAreaInstanceData } from "@/lib/server/project-area-line-backfill";
 import { repriceProjectAreaLinesForEffectiveTier } from "@/lib/server/reprice-project-area-lines";
 import { projectAreaDocToPublic } from "@/lib/server/project-area-to-public";
 
@@ -145,19 +146,12 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
     if (!snap.exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const data = snap.data() as DocumentData;
     const projectid = Number(data.projectid ?? NaN);
-    if (Number.isInteger(projectid)) {
-      const linked = await db
-        .collection("projectareaobjects")
-        .where("projectid", "==", projectid)
-        .where("projectAreaDocId", "==", id)
-        .get();
-      if (!linked.empty) {
-        const batch = db.batch();
-        linked.docs.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
-      }
-    }
-    await ref.delete();
+    const areaid = Number(data.areaid ?? NaN);
+    await deleteProjectAreaInstanceData(db, {
+      projectid,
+      projectAreaDocId: id,
+      areaid,
+    });
     return NextResponse.json({ ok: true });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to delete project area";

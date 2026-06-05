@@ -15,6 +15,7 @@ import {
   renumberScopesForAreaDocId,
 } from "@/lib/server/template-sort-order";
 import type { ScopePublic } from "@/types/scope";
+import { normalizeScopeToolFields } from "@/lib/scope-tools";
 import { normalizeScopeAnswers, normalizeSystemScopeFields, scopePatchSchema } from "../scope-validation";
 
 export const runtime = "nodejs";
@@ -156,6 +157,8 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       update.answers = [];
       update.systemScope = false;
       update.systemScopeType = null;
+      update.exposeTool = false;
+      update.scopeToolType = null;
     } else {
       update.kind = "question";
       if (parsed.data.answers !== undefined) {
@@ -177,6 +180,15 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         });
         update.systemScope = systemScope;
         update.systemScopeType = systemScopeType;
+      }
+
+      if (parsed.data.exposeTool !== undefined || parsed.data.scopeToolType !== undefined) {
+        const { exposeTool, scopeToolType } = normalizeScopeToolFields({
+          exposeTool: parsed.data.exposeTool,
+          scopeToolType: parsed.data.scopeToolType,
+        });
+        update.exposeTool = exposeTool;
+        update.scopeToolType = scopeToolType;
       }
 
       let finalAnswerCount = 0;

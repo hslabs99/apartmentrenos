@@ -3,7 +3,14 @@
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { IconPencil, IconTrash } from "@/components/icons/lightning-icons";
 import { ReorderArrows } from "@/components/reorder-arrows";
+import {
+  ScopeFormModal,
+  scopeFormModeForScope,
+  type ScopeFormMode,
+} from "@/components/scope-form-modal";
+import { readApiJson } from "@/lib/client/read-api-json";
 import { useTemplateReorder } from "@/lib/client/use-template-reorder";
+import { sortOrderInArea } from "@/lib/scope-areas";
 import { sfTabStripClass, sfUnderlineTabClass } from "@/lib/sf-tabs";
 import {
   sfDataSurface,
@@ -17,10 +24,35 @@ import type { AreaQuestionPublic } from "@/types/area-question";
 import type { AreaObjectPublic } from "@/types/area-object";
 import type { LookupPublic } from "@/types/lookup";
 import type { QuoteObjectPublic } from "@/types/quote-object";
-import { useCallback, useEffect, useState } from "react";
+import type { ScopePublic } from "@/types/scope";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Mode = "idle" | "create" | "edit";
-type EditTab = "details" | "objects" | "questions";
+type EditTab = "details" | "objects" | "questions" | "scopes";
+type AreaScopeFormMode = "idle" | ScopeFormMode;
+
+function scopeAreaGroupKey(s: ScopePublic, contextAreaDocId: string | null): string {
+  if (contextAreaDocId) return `ctx:${contextAreaDocId}`;
+  const id = String(s.areaDocId ?? "").trim();
+  if (id) return `d:${id}`;
+  return `a:${Number(s.areaid)}`;
+}
+
+function scopeReorderEdges(
+  rows: ScopePublic[],
+  idx: number,
+  contextAreaDocId: string | null,
+): { disabledUp: boolean; disabledDown: boolean } {
+  const cur = rows[idx];
+  if (!cur) return { disabledUp: true, disabledDown: true };
+  const k = scopeAreaGroupKey(cur, contextAreaDocId);
+  const prev = idx > 0 ? rows[idx - 1] : null;
+  const next = idx < rows.length - 1 ? rows[idx + 1] : null;
+  return {
+    disabledUp: !prev || scopeAreaGroupKey(prev, contextAreaDocId) !== k,
+    disabledDown: !next || scopeAreaGroupKey(next, contextAreaDocId) !== k,
+  };
+}
 
 function numToInput(v: number | null | undefined): string {
   if (v === null || v === undefined) return "";
@@ -83,6 +115,11 @@ export function AreasPanel() {
   const [aqActive, setAqActive] = useState(true);
   const [tradeLookups, setTradeLookups] = useState<LookupPublic[]>([]);
   const [tradeLookupsLoading, setTradeLookupsLoading] = useState(false);
+  const [areaObjectCounts, setAreaObjectCounts] = useState<Record<number, number>>({});
+  const [scopes, setScopes] = useState<ScopePublic[]>([]);
+  const [scopeFormMode, setScopeFormMode] = useState<AreaScopeFormMode>("idle");
+  const [scopeEditingId, setScopeEditingId] = useState<string | null>(null);
+  const [selectedScopeRowId, setSelectedScopeRowId] = useState<string | null>(null);
 
   const quoteObjectsSortedByName = useCallback(() => {
     return [...quoteObjects].sort((a, b) =>
@@ -97,14 +134,42 @@ export function AreasPanel() {
       const res = await fetch("/api/areas");
       const data = (await res.json()) as { areas?: AreaPublic[]; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to load areas");
-      setAreas(data.areas ?? []);
+      const list = data.areas ?? [];
+      setAreas(list);
       setError(null);
+      return list;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load areas");
       setAreas([]);
+      return [];
     } finally {
       if (!skipPage) setLoading(false);
     }
+  }, []);
+
+  const loadAreaObjectCounts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/areaobjects?catalog=1");
+      const data = (await res.json()) as {
+        catalog?: { areaid: number }[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? "Failed to load area object counts");
+      const counts: Record<number, number> = {};
+      for (const row of data.catalog ?? []) {
+        counts[row.areaid] = (counts[row.areaid] ?? 0) + 1;
+      }
+      setAreaObjectCounts(counts);
+    } catch {
+      setAreaObjectCounts({});
+    }
+  }, []);
+
+  const loadScopes = useCallback(async () => {
+    const res = await fetch("/api/scopes");
+    const data = await readApiJson<{ scopes?: ScopePublic[]; error?: string }>(res);
+    if (!res.ok) throw new Error(data.error ?? "Failed to load scopes");
+    setScopes(data.scopes ?? []);
   }, []);
 
   const loadQuoteObjects = useCallback(async () => {
@@ -180,12 +245,54 @@ export function AreasPanel() {
     if (displayAreaid != null) await loadAreaObjects(displayAreaid);
   }, [displayAreaid, loadAreaObjects]);
 
-  const reorderAreas = useTemplateReorder("/api/areas/reorder", load, (msg) => setError(msg));
+  const reorderAreas = useTemplateReorder(
+    "/api/areas/reorder",
+    () => void load(),
+    (msg) => setError(msg),
+  );
 
   const reorderAreaObjects = useTemplateReorder(
     "/api/areaobjects/reorder",
     reloadAreaObjectsForEdit,
     (msg) => setError(msg),
+  );
+
+  const getScopeReorderExtraBody = useCallback(() => {
+    return editingId ? { contextAreaDocId: editingId } : {};
+  }, [editingId]);
+
+  const scopeReorder = useTemplateReorder(
+    "/api/scopes/reorder",
+    () => void loadScopes(),
+    (msg) => setError(msg),
+    { getExtraBody: getScopeReorderExtraBody },
+  );
+
+  const areaScopeCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const s of scopes) {
+      for (const docId of s.areaDocIds ?? []) {
+        counts[docId] = (counts[docId] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }, [scopes]);
+
+  const scopesForSelectedArea = useMemo(() => {
+    if (!editingId) return [];
+    return scopes
+      .filter((s) => s.areaDocIds.includes(editingId))
+      .sort((a, b) => {
+        const ao = sortOrderInArea(a, editingId);
+        const bo = sortOrderInArea(b, editingId);
+        if (ao !== bo) return ao - bo;
+        return (a.scopeid ?? 0) - (b.scopeid ?? 0) || a.id.localeCompare(b.id);
+      });
+  }, [scopes, editingId]);
+
+  const editingScope = useMemo(
+    () => (scopeEditingId ? scopes.find((s) => s.id === scopeEditingId) ?? null : null),
+    [scopeEditingId, scopes],
   );
 
   useEffect(() => {
@@ -211,7 +318,12 @@ export function AreasPanel() {
           setAreas([]);
           return;
         }
-        await Promise.all([load({ skipPageLoading: true }), loadQuoteObjects()]);
+        await Promise.all([
+          load({ skipPageLoading: true }),
+          loadQuoteObjects(),
+          loadAreaObjectCounts(),
+          loadScopes(),
+        ]);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Initialization failed");
         setAreas([]);
@@ -220,7 +332,22 @@ export function AreasPanel() {
       }
     }
     void bootstrapThenLoad();
-  }, [load, loadQuoteObjects]);
+  }, [load, loadQuoteObjects, loadAreaObjectCounts, loadScopes]);
+
+  function closeScopeForm() {
+    setScopeFormMode("idle");
+    setScopeEditingId(null);
+  }
+
+  function openScopeEdit(s: ScopePublic) {
+    setScopeEditingId(s.id);
+    setScopeFormMode(scopeFormModeForScope(s));
+  }
+
+  function openScopeCreate() {
+    setScopeEditingId(null);
+    setScopeFormMode("create");
+  }
 
   function openCreate() {
     setEditingId(null);
@@ -245,10 +372,12 @@ export function AreasPanel() {
     setAqTradeLookupIds([]);
     setAqSortOrderStr("");
     setAqActive(true);
+    closeScopeForm();
     setMode("create");
   }
 
-  async function openEdit(a: AreaPublic) {
+  async function selectArea(a: AreaPublic) {
+    closeScopeForm();
     setEditTab("details");
     setShowAddObjectForm(false);
     setAoEditingId(null);
@@ -279,9 +408,7 @@ export function AreasPanel() {
     setMode("edit");
   }
 
-  function closeForm() {
-    setMode("idle");
-    setEditingId(null);
+  function resetDetailForms() {
     setEditTab("details");
     setShowAddObjectForm(false);
     setAoEditingId(null);
@@ -299,6 +426,20 @@ export function AreasPanel() {
     setAqActive(true);
   }
 
+  function closeCreate() {
+    setMode("idle");
+    setEditingId(null);
+    setDisplayAreaid(null);
+    setAreaname("");
+    setAreadescription("");
+    setAreametersStr("");
+    setIsDefault(false);
+    setAreaObjects([]);
+    setAreaQuestions([]);
+    resetDetailForms();
+    closeScopeForm();
+  }
+
   function buildPayload(): Record<string, unknown> {
     return {
       areaname,
@@ -314,6 +455,7 @@ export function AreasPanel() {
     setError(null);
     try {
       const payload = buildPayload();
+      let createdDocId: string | undefined;
       if (mode === "create") {
         const res = await fetch("/api/areas", {
           method: "POST",
@@ -333,6 +475,7 @@ export function AreasPanel() {
               : JSON.stringify(data.details ?? data);
           throw new Error(msg);
         }
+        createdDocId = data.id;
       } else if (mode === "edit" && editingId) {
         const res = await fetch(`/api/areas/${editingId}`, {
           method: "PATCH",
@@ -348,8 +491,21 @@ export function AreasPanel() {
           throw new Error(msg);
         }
       }
-      closeForm();
-      await load();
+      const list = await load();
+      await loadAreaObjectCounts();
+      if (mode === "create" && createdDocId) {
+        const created = list.find((a) => a.id === createdDocId);
+        if (created) await selectArea(created);
+      } else if (mode === "edit" && editingId) {
+        const updated = list.find((a) => a.id === editingId);
+        if (updated) {
+          setAreaname(updated.areaname);
+          setAreadescription(updated.areadescription);
+          setAreametersStr(numToInput(updated.areameters));
+          setIsDefault(updated.default);
+          setDisplayAreaid(updated.areaid ?? null);
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -366,8 +522,16 @@ export function AreasPanel() {
       const data = (await res.json()) as { error?: string };
       if (!res.ok)
         throw new Error(typeof data.error === "string" ? data.error : "Delete failed");
+      const removedId = deleteId;
       setDeleteId(null);
+      if (removedId === editingId) {
+        setMode("idle");
+        setEditingId(null);
+        setDisplayAreaid(null);
+        resetDetailForms();
+      }
       await load();
+      await loadAreaObjectCounts();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
     } finally {
@@ -376,6 +540,11 @@ export function AreasPanel() {
   }
 
   const currentAreaId = displayAreaid;
+
+  const selectedArea = useMemo(
+    () => (editingId ? areas.find((a) => a.id === editingId) ?? null : null),
+    [areas, editingId],
+  );
 
   function openAreaObjectCreate() {
     setAoEditingId(null);
@@ -455,6 +624,7 @@ export function AreasPanel() {
       }
       closeAreaObjectForm();
       await loadAreaObjects(currentAreaId);
+      await loadAreaObjectCounts();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save area object");
     } finally {
@@ -474,6 +644,7 @@ export function AreasPanel() {
       }
       setAoDeleteId(null);
       await loadAreaObjects(currentAreaId);
+      await loadAreaObjectCounts();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete area object");
     } finally {
@@ -586,9 +757,9 @@ export function AreasPanel() {
         <div className="min-w-0 space-y-1">
           <h2 className={sfSectionHeading}>Areas</h2>
           <p className={sfSectionLead}>
-            Define standard project areas and defaults. Use the arrow buttons beside each area name
-            (or row focus + arrow keys) to set the order areas appear when adding them to a project. In
-            Edit area, the same controls reorder default objects (seed order on new project areas).
+            Define standard project areas and defaults. Select an area on the left to edit details,
+            default objects, questions, and scopes on the right. Use the arrow buttons beside each area name
+            (or row focus + arrow keys) to set the order areas appear when adding them to a project.
           </p>
         </div>
         <button type="button" onClick={openCreate} className={sfPrimaryToolbarButton}>
@@ -608,7 +779,7 @@ export function AreasPanel() {
       <div className={sfDataSurface}>
         {loading ? (
           <p className="p-6 text-sf-text-secondary dark:text-zinc-400">Loading…</p>
-        ) : areas.length === 0 ? (
+        ) : areas.length === 0 && mode !== "create" ? (
           <p className="p-6 text-sf-text-secondary dark:text-zinc-400">
             No areas yet. Add one to create the{" "}
             <code className="rounded bg-sf-page px-1 font-mono text-sm dark:bg-zinc-800">
@@ -617,129 +788,216 @@ export function AreasPanel() {
             collection in Firestore.
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[620px] text-left text-sm md:text-base">
-              <thead className="border-b border-sf-border bg-sf-page dark:border-zinc-700 dark:bg-zinc-900">
-                <tr>
-                  <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Area name</th>
-                  <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Description</th>
-                  <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Meters</th>
-                  <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Default</th>
-                  <th className="px-4 py-3 text-right font-semibold md:px-5 md:py-4">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {areas.map((a, i) => (
-                  <tr
-                    key={a.id}
-                    tabIndex={0}
-                    onKeyDown={(e) => reorderAreas.onRowKeyDown(a.id, e)}
-                    aria-label={`${a.areaname}. Arrow keys also reorder.`}
-                    className="border-b border-sf-border last:border-0 outline-none focus-visible:bg-sf-page focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sf-brand/40 dark:border-zinc-700/80 dark:focus-visible:bg-zinc-800/40 dark:focus-visible:ring-sf-brand/40"
-                  >
-                    <td className="px-4 py-3 font-medium md:px-5 md:py-3.5">
-                      <div className="flex w-full min-w-0 items-center justify-between gap-3">
-                        <span className="min-w-0">{a.areaname}</span>
-                        <ReorderArrows
-                          itemLabel={a.areaname}
-                          onUp={() => void reorderAreas.moveRow(a.id, "up")}
-                          onDown={() => void reorderAreas.moveRow(a.id, "down")}
-                          disabledUp={i === 0}
-                          disabledDown={i === areas.length - 1}
-                        />
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 md:px-5 md:py-3.5">{a.areadescription || "—"}</td>
-                    <td className="px-4 py-3 md:px-5 md:py-3.5">
-                      {a.areameters ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 md:px-5 md:py-3.5">{a.default ? "Yes" : "No"}</td>
-                    <td className="px-4 py-3 text-right md:px-5 md:py-3.5">
-                      <div className="flex justify-end gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => openEdit(a)}
-                          className={sfRowIconBtn}
-                          aria-label="Edit area"
-                        >
-                          <IconPencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeleteId(a.id)}
-                          className={sfRowIconBtnDanger}
-                          aria-label="Delete area"
-                        >
-                          <IconTrash className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+          <div className="flex min-h-[28rem] flex-col gap-0 lg:flex-row">
+            <aside className="shrink-0 border-b border-sf-border p-4 dark:border-zinc-700 lg:w-[28rem] lg:border-b-0 lg:border-r">
+              {areas.length === 0 ? (
+                <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
+                  No areas yet.
+                </p>
+              ) : (
+                <table className="w-full table-fixed text-left text-sm">
+                    <thead className="border-b border-sf-border bg-sf-page dark:border-zinc-700 dark:bg-zinc-900">
+                      <tr>
+                        <th className="px-2 py-2 font-semibold">Area name</th>
+                        <th className="w-16 px-1 py-2 text-right text-xs font-semibold tabular-nums">
+                          Objects
+                        </th>
+                        <th className="w-16 px-1 py-2 text-right text-xs font-semibold tabular-nums">
+                          Scopes
+                        </th>
+                        <th className="w-14 px-1 py-2 text-right text-xs font-semibold tabular-nums">
+                          M²
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {areas.map((a, i) => {
+                        const active = mode === "edit" && editingId === a.id;
+                        const objectCount =
+                          a.areaid != null ? (areaObjectCounts[a.areaid] ?? 0) : "—";
+                        const scopeCount = areaScopeCounts[a.id] ?? 0;
+                        return (
+                          <tr
+                            key={a.id}
+                            tabIndex={0}
+                            onClick={() => void selectArea(a)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                void selectArea(a);
+                                return;
+                              }
+                              reorderAreas.onRowKeyDown(a.id, e);
+                            }}
+                            aria-label={`${a.areaname}. Click to view details. Arrow keys also reorder.`}
+                            aria-current={active ? "true" : undefined}
+                            className={`cursor-pointer border-b border-sf-border last:border-0 outline-none dark:border-zinc-700/80 ${
+                              active
+                                ? "bg-sf-brand/10 dark:bg-sf-brand/20"
+                                : "hover:bg-sf-page/80 dark:hover:bg-zinc-800/50"
+                            } focus-visible:bg-sf-page focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sf-brand/40 dark:focus-visible:bg-zinc-800/40 dark:focus-visible:ring-sf-brand/40`}
+                          >
+                            <td className="px-2 py-2 font-medium">
+                              <div className="flex w-full min-w-0 items-center justify-between gap-1">
+                                <span className="min-w-0 truncate">{a.areaname}</span>
+                                <div onClick={(e) => e.stopPropagation()}>
+                                  <ReorderArrows
+                                    dense
+                                    itemLabel={a.areaname}
+                                    onUp={() => void reorderAreas.moveRow(a.id, "up")}
+                                    onDown={() => void reorderAreas.moveRow(a.id, "down")}
+                                    disabledUp={i === 0}
+                                    disabledDown={i === areas.length - 1}
+                                  />
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-1 py-2 text-right tabular-nums">{objectCount}</td>
+                            <td className="px-1 py-2 text-right tabular-nums">{scopeCount}</td>
+                            <td className="px-1 py-2 text-right tabular-nums">
+                              {a.areameters ?? "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+              )}
+            </aside>
 
-      {(mode === "create" || mode === "edit") && (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="area-form-title"
-          onClick={closeForm}
-        >
-          <div
-            className="max-h-[92dvh] w-full overflow-y-auto rounded-t-lg border border-sf-border bg-sf-surface shadow-xl dark:border-zinc-700 dark:bg-zinc-900 sm:max-w-3xl sm:rounded-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="border-b border-sf-border px-5 py-4 dark:border-zinc-700">
-              <h2 id="area-form-title" className="text-lg font-semibold md:text-xl">
-                {mode === "create" ? "New area" : "Edit area"}
-              </h2>
-            </div>
-            <form onSubmit={submitForm} className="space-y-4 px-5 py-5">
-              {mode === "edit" ? (
-                <div className={sfTabStripClass} role="tablist" aria-label="Edit area tabs">
-                  <button
-                    type="button"
-                    className={sfUnderlineTabClass(editTab === "details")}
-                    role="tab"
-                    aria-selected={editTab === "details"}
-                    onClick={() => setEditTab("details")}
-                  >
-                    Details
-                  </button>
-                  <button
-                    type="button"
-                    className={sfUnderlineTabClass(editTab === "objects")}
-                    role="tab"
-                    aria-selected={editTab === "objects"}
-                    onClick={() => setEditTab("objects")}
-                  >
-                    Objects
-                  </button>
-                  <button
-                    type="button"
-                    className={sfUnderlineTabClass(editTab === "questions")}
-                    role="tab"
-                    aria-selected={editTab === "questions"}
-                    onClick={() => {
-                      setEditTab("questions");
-                      if (currentAreaId != null) {
-                        void Promise.all([reloadAreaQuestionsForEdit(), loadTrades()]);
-                      }
-                    }}
-                  >
-                    Questions
-                  </button>
-                </div>
-              ) : null}
+            <div className="min-w-0 flex-1 p-4 sm:p-5">
+              {mode === "create" ? (
+                <form onSubmit={submitForm} className="space-y-4">
+                  <h2 className="text-lg font-semibold md:text-xl">New area</h2>
+                  <div className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
+                      Area ID
+                    </span>
+                    <input
+                      readOnly
+                      value="— (assigned on save)"
+                      className={`${inputClass} bg-sf-page dark:bg-zinc-900`}
+                    />
+                  </div>
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
+                      Area name
+                    </span>
+                    <input
+                      required
+                      value={areaname}
+                      onChange={(e) => setAreaname(e.target.value)}
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
+                      Description
+                    </span>
+                    <input
+                      value={areadescription}
+                      onChange={(e) => setAreadescription(e.target.value)}
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
+                      Area meters
+                    </span>
+                    <input
+                      value={areametersStr}
+                      onChange={(e) => setAreametersStr(e.target.value)}
+                      inputMode="decimal"
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={isDefault}
+                      onChange={(e) => setIsDefault(e.target.checked)}
+                      className="h-5 w-5 rounded border-sf-border-strong"
+                    />
+                    <span className="text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
+                      Default area
+                    </span>
+                  </label>
+                  <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={closeCreate}
+                      className="min-h-12 rounded-lg border border-sf-border-strong px-4 py-3 text-base font-medium dark:border-zinc-600"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="min-h-12 rounded-lg bg-sf-brand px-5 py-3 text-base font-medium text-white disabled:opacity-50"
+                    >
+                      {saving ? "Saving…" : "Create"}
+                    </button>
+                  </div>
+                </form>
+              ) : mode === "edit" && selectedArea ? (
+                <form onSubmit={submitForm} className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="text-lg font-semibold md:text-xl">{selectedArea.areaname}</h2>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteId(selectedArea.id)}
+                      className={sfRowIconBtnDanger}
+                      aria-label="Delete area"
+                    >
+                      <IconTrash className="h-4 w-4" />
+                    </button>
+                  </div>
 
-              {mode !== "edit" || editTab === "details" ? (
+                  <div className={sfTabStripClass} role="tablist" aria-label="Area sections">
+                    <button
+                      type="button"
+                      className={sfUnderlineTabClass(editTab === "details")}
+                      role="tab"
+                      aria-selected={editTab === "details"}
+                      onClick={() => setEditTab("details")}
+                    >
+                      Details
+                    </button>
+                    <button
+                      type="button"
+                      className={sfUnderlineTabClass(editTab === "objects")}
+                      role="tab"
+                      aria-selected={editTab === "objects"}
+                      onClick={() => setEditTab("objects")}
+                    >
+                      Objects
+                    </button>
+                    <button
+                      type="button"
+                      className={sfUnderlineTabClass(editTab === "questions")}
+                      role="tab"
+                      aria-selected={editTab === "questions"}
+                      onClick={() => {
+                        setEditTab("questions");
+                        if (currentAreaId != null) {
+                          void Promise.all([reloadAreaQuestionsForEdit(), loadTrades()]);
+                        }
+                      }}
+                    >
+                      Questions
+                    </button>
+                    <button
+                      type="button"
+                      className={sfUnderlineTabClass(editTab === "scopes")}
+                      role="tab"
+                      aria-selected={editTab === "scopes"}
+                      onClick={() => setEditTab("scopes")}
+                    >
+                      Scopes
+                    </button>
+                  </div>
+
+              {editTab === "details" ? (
                 <>
                   <div className="block">
                     <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
@@ -797,7 +1055,7 @@ export function AreasPanel() {
                 </>
               ) : null}
 
-              {mode === "edit" && editTab !== "details" ? (
+              {editTab !== "details" ? (
                 <div className="space-y-3 rounded-xl border border-sf-border p-4 dark:border-zinc-700">
 
                   {editTab === "objects" ? (
@@ -982,7 +1240,7 @@ export function AreasPanel() {
                         </>
                       )}
                     </>
-                  ) : (
+                  ) : editTab === "questions" ? (
                     <>
                       <div>
                         <h3 className="text-base font-semibold">Area Questions</h3>
@@ -1158,30 +1416,170 @@ export function AreasPanel() {
                         </>
                       )}
                     </>
-                  )}
+                  ) : editTab === "scopes" ? (
+                    <>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="text-base font-semibold">Scopes in this area</h3>
+                          <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
+                            Scope questions tagged for this template area (same list as Setup → Scopes
+                            when filtered by area). Use ↑ ↓ to set order within this area.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={openScopeCreate}
+                          className="min-h-11 shrink-0 rounded-lg bg-sf-brand px-4 py-2 text-sm font-medium text-white"
+                        >
+                          Add scope
+                        </button>
+                      </div>
+
+                      <div className="overflow-x-auto rounded-lg border border-sf-border dark:border-zinc-700">
+                        {scopesForSelectedArea.length === 0 ? (
+                          <p className="p-3 text-sm text-sf-text-secondary dark:text-zinc-400">
+                            No scopes tagged for this area yet.
+                          </p>
+                        ) : (
+                          <table className="w-full min-w-[640px] text-left text-sm">
+                            <thead className="border-b border-sf-border bg-sf-page dark:border-zinc-700 dark:bg-zinc-900">
+                              <tr>
+                                <th className="px-3 py-2 font-semibold">Scope ID</th>
+                                <th className="px-3 py-2 font-semibold">Type</th>
+                                <th className="px-3 py-2 font-semibold">Question</th>
+                                <th className="px-3 py-2 font-semibold">Answers</th>
+                                <th className="px-3 py-2 text-right font-semibold">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {scopesForSelectedArea.map((s, idx) => {
+                                const qLabel = (s.question ?? "").trim() || `Scope ${s.scopeid ?? ""}`;
+                                const edges = scopeReorderEdges(
+                                  scopesForSelectedArea,
+                                  idx,
+                                  editingId,
+                                );
+                                return (
+                                  <tr
+                                    key={s.id}
+                                    tabIndex={0}
+                                    role="row"
+                                    aria-selected={selectedScopeRowId === s.id}
+                                    onClick={() =>
+                                      setSelectedScopeRowId((cur) => (cur === s.id ? null : s.id))
+                                    }
+                                    onKeyDown={(e) => scopeReorder.onRowKeyDown(s.id, e)}
+                                    aria-label={`${qLabel}. Arrow keys also reorder.`}
+                                    className={`cursor-pointer border-b border-sf-border last:border-0 outline-none focus-visible:bg-sf-page focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sf-brand/40 dark:border-zinc-700/80 dark:focus-visible:bg-zinc-800/40 dark:focus-visible:ring-sf-brand/40 ${
+                                      selectedScopeRowId === s.id
+                                        ? "bg-teal-50/70 dark:bg-teal-950/35"
+                                        : ""
+                                    }`}
+                                  >
+                                    <td className="px-3 py-2 font-mono text-sm">
+                                      {s.scopeid ?? "—"}
+                                    </td>
+                                    <td className="px-3 py-2 text-sm">
+                                      {s.kind === "header" ? (
+                                        <span className="rounded-md bg-zinc-200 px-2 py-0.5 text-xs font-medium text-sf-text dark:bg-zinc-700 dark:text-zinc-100">
+                                          Header
+                                        </span>
+                                      ) : s.kind === "footer" ? (
+                                        <span className="rounded-md bg-teal-200/90 px-2 py-0.5 text-xs font-medium text-teal-950 dark:bg-teal-900/80 dark:text-teal-100">
+                                          Footer
+                                        </span>
+                                      ) : (
+                                        <span className="text-sf-text-secondary dark:text-zinc-400">
+                                          Question
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="max-w-md px-3 py-2" title={s.question}>
+                                      <div
+                                        className="flex w-full min-w-0 items-center justify-between gap-3"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <span className="min-w-0 truncate">{s.question || "—"}</span>
+                                        <ReorderArrows
+                                          dense
+                                          itemLabel={qLabel}
+                                          onUp={() => void scopeReorder.moveRow(s.id, "up")}
+                                          onDown={() => void scopeReorder.moveRow(s.id, "down")}
+                                          disabledUp={edges.disabledUp}
+                                          disabledDown={edges.disabledDown}
+                                        />
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      {s.kind === "header" || s.kind === "footer"
+                                        ? "—"
+                                        : s.answers.length}
+                                    </td>
+                                    <td className="px-3 py-2 text-right">
+                                      <div
+                                        className="flex justify-end gap-1.5"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() => openScopeEdit(s)}
+                                          className={sfRowIconBtn}
+                                          aria-label="Edit scope"
+                                        >
+                                          <IconPencil className="h-4 w-4" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               ) : null}
 
-              <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={closeForm}
-                  className="min-h-12 rounded-lg border border-sf-border-strong px-4 py-3 text-base font-medium dark:border-zinc-600"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="min-h-12 rounded-lg bg-sf-brand px-5 py-3 text-base font-medium text-white disabled:opacity-50"
-                >
-                  {saving ? "Saving…" : mode === "create" ? "Create" : "Save"}
-                </button>
-              </div>
-            </form>
+                  <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="min-h-12 rounded-lg bg-sf-brand px-5 py-3 text-base font-medium text-white disabled:opacity-50"
+                    >
+                      {saving ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <p className="py-8 text-sm text-sf-text-secondary dark:text-zinc-400">
+                  Select an area from the list to view details, objects, questions, and scopes — or add
+                  a new area.
+                </p>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
+
+      {scopeFormMode !== "idle" ? (
+        <ScopeFormModal
+          open
+          mode={scopeFormMode}
+          scope={editingScope}
+          areas={areas}
+          quoteObjects={quoteObjects}
+          scopes={scopes}
+          selectedScopeRowId={selectedScopeRowId}
+          defaultAreaDocIds={editingId ? [editingId] : []}
+          onClose={closeScopeForm}
+          onSaved={async () => {
+            await loadScopes();
+            setSelectedScopeRowId(null);
+          }}
+        />
+      ) : null}
 
       <ConfirmDialog
         open={Boolean(aoDeleteId)}

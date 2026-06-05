@@ -12,6 +12,7 @@ const DELETE_BATCH_SIZE = 500;
 
 export type ImportLabourRatesResult = {
   tabTitle: string;
+  gid: number;
   range: string;
   headerRow1Based: number;
   dataStartRow1Based: number;
@@ -81,6 +82,7 @@ export async function runImportLabourRates(db: Firestore): Promise<ImportLabourR
 
   return {
     tabTitle: fetched.tabTitle,
+    gid: fetched.gid,
     range: fetched.range,
     headerRow1Based: fetched.headerRow1Based,
     dataStartRow1Based: LABOUR_RATES_DATA_START_ROW_1_BASED,

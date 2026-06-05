@@ -3,6 +3,7 @@ import type { DataSkuSupplierPublic } from "@/types/data-sku-supplier-public";
 
 export type PrimarySupplierSummary = {
   supplier: string;
+  priceIncGst: number | null;
   priceExcGst: number | null;
   /** Lowest supplier option on file for this SKU (1 preferred; 2, 3, … as fallback). */
   supplierOption: number;
@@ -27,6 +28,7 @@ export function buildPrimarySupplierBySkuId(
     if (!best) continue;
     out[skuId] = {
       supplier: best.supplier.trim(),
+      priceIncGst: best.priceIncGst,
       priceExcGst: best.priceExcGst,
       supplierOption: best.supplierOption,
     };

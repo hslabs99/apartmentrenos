@@ -1,3 +1,5 @@
+import { isScopeToolType } from "@/lib/scope-tools";
+import type { ScopeToolType } from "@/lib/scope-tools";
 import {
   isSystemScopeType,
   normalizeSystemScopeFields,
@@ -5,6 +7,30 @@ import {
 import { z } from "zod";
 
 const systemScopeTypeSchema = z.string().min(1).max(64).nullable().optional();
+const scopeToolTypeSchema = z.string().min(1).max(64).nullable().optional();
+
+function refineScopeToolFields(
+  data: { exposeTool?: boolean; scopeToolType?: string | null },
+  ctx: z.RefinementCtx,
+  pathPrefix: "" | "scopeToolType" = "",
+) {
+  if (data.exposeTool === true) {
+    const raw = typeof data.scopeToolType === "string" ? data.scopeToolType.trim() : "";
+    if (!raw || !isScopeToolType(raw)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select a tool",
+        path: pathPrefix ? [pathPrefix] : ["scopeToolType"],
+      });
+    }
+  } else if (data.scopeToolType != null && data.scopeToolType !== "") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "scopeToolType requires exposeTool to be true",
+      path: pathPrefix ? [pathPrefix] : ["scopeToolType"],
+    });
+  }
+}
 
 function refineSystemScopeFields(
   data: { systemScope?: boolean; systemScopeType?: string | null },
@@ -38,6 +64,9 @@ export const scopeAnswerSchema = z.object({
   attachedQuoteObjectIds: z.array(z.string().min(1).max(128)).optional().default([]),
   attachedObjectNames: z.array(z.string().min(1).max(255)).optional().default([]),
   attachedCategories: z.array(z.string().min(1).max(120)).optional().default([]),
+  attachedObjectTools: z.record(z.string().min(1).max(128), z.string().min(1).max(64)).optional(),
+  attachedObjectShowAll: z.record(z.string().min(1).max(128), z.boolean()).optional(),
+  attachedObjectNoCharge: z.record(z.string().min(1).max(128), z.boolean()).optional(),
 });
 
 export const scopeWriteSchema = z
@@ -59,9 +88,12 @@ export const scopeWriteSchema = z
     insertAfterScopeDocId: z.string().min(1).optional(),
     systemScope: z.boolean().optional(),
     systemScopeType: systemScopeTypeSchema,
+    exposeTool: z.boolean().optional(),
+    scopeToolType: scopeToolTypeSchema,
   })
   .superRefine((data, ctx) => {
     refineSystemScopeFields(data, ctx);
+    refineScopeToolFields(data, ctx);
     const k = data.kind ?? "question";
     const hasSingle = Boolean(data.areaDocId?.trim());
     const hasMulti = (data.areaDocIds?.length ?? 0) > 0;
@@ -127,6 +159,8 @@ export const scopePatchSchema = z
     answers: z.array(scopeAnswerSchema).optional(),
     systemScope: z.boolean().optional(),
     systemScopeType: systemScopeTypeSchema,
+    exposeTool: z.boolean().optional(),
+    scopeToolType: scopeToolTypeSchema,
   })
   .superRefine((data, ctx) => {
     if (data.systemScope !== undefined || data.systemScopeType !== undefined) {
@@ -134,6 +168,15 @@ export const scopePatchSchema = z
         {
           systemScope: data.systemScope ?? false,
           systemScopeType: data.systemScopeType ?? null,
+        },
+        ctx,
+      );
+    }
+    if (data.exposeTool !== undefined || data.scopeToolType !== undefined) {
+      refineScopeToolFields(
+        {
+          exposeTool: data.exposeTool ?? false,
+          scopeToolType: data.scopeToolType ?? null,
         },
         ctx,
       );
@@ -179,18 +222,70 @@ function normalizeObjectNameList(names: string[]): string[] {
   return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 }
 
+function normalizeAttachedObjectTools(
+  raw: Record<string, string> | undefined,
+  attachedIds: string[],
+): Record<string, ScopeToolType> {
+  if (!raw || typeof raw !== "object") return {};
+  const allowed = new Set(attachedIds);
+  const out: Record<string, ScopeToolType> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const id = key.trim();
+    const tool = typeof value === "string" ? value.trim() : "";
+    if (!id || !allowed.has(id) || !isScopeToolType(tool)) continue;
+    out[id] = tool;
+  }
+  return out;
+}
+
+function normalizeAttachedObjectFlags(
+  raw: Record<string, boolean> | undefined,
+  attachedIds: string[],
+): Record<string, boolean> {
+  if (!raw || typeof raw !== "object") return {};
+  const allowed = new Set(attachedIds);
+  const out: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const id = key.trim();
+    if (!id || !allowed.has(id) || value !== true) continue;
+    out[id] = true;
+  }
+  return out;
+}
+
 export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
   answerid: string;
   label: string;
   attachedQuoteObjectIds: string[];
   attachedObjectNames: string[];
   attachedCategories: string[];
+  attachedObjectTools: Record<string, ScopeToolType>;
+  attachedObjectShowAll: Record<string, boolean>;
+  attachedObjectNoCharge: Record<string, boolean>;
 }[] {
-  return answers.map((a) => ({
-    answerid: a.answerid,
-    label: a.label,
-    attachedQuoteObjectIds: normalizeIdList(a.attachedQuoteObjectIds ?? []),
-    attachedObjectNames: normalizeObjectNameList(a.attachedObjectNames ?? []),
-    attachedCategories: normalizeCategoryList(a.attachedCategories ?? []),
-  }));
+  return answers.map((a) => {
+    const attachedQuoteObjectIds = normalizeIdList(a.attachedQuoteObjectIds ?? []);
+    const attachedObjectTools = normalizeAttachedObjectTools(
+      a.attachedObjectTools,
+      attachedQuoteObjectIds,
+    );
+    const attachedObjectShowAll = normalizeAttachedObjectFlags(
+      a.attachedObjectShowAll,
+      attachedQuoteObjectIds,
+    );
+    const attachedObjectNoCharge = normalizeAttachedObjectFlags(
+      a.attachedObjectNoCharge,
+      attachedQuoteObjectIds,
+    );
+    return {
+      answerid: a.answerid,
+      label: a.label,
+      attachedQuoteObjectIds,
+      attachedObjectNames: normalizeObjectNameList(a.attachedObjectNames ?? []),
+      attachedCategories: normalizeCategoryList(a.attachedCategories ?? []),
+      attachedObjectTools,
+      attachedObjectShowAll,
+      attachedObjectNoCharge,
+    };
+  });
 }

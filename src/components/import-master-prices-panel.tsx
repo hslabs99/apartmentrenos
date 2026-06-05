@@ -4,6 +4,8 @@ import {
   MASTER_PRICES_BUILDING_TAB_TITLE,
   MASTER_PRICES_CASCADES_TAB_TITLE,
   MASTER_PRICES_LABOUR_TAB_TITLE,
+  MASTER_PRICES_CONTRACTOR_RATES_TAB_TITLE,
+  MASTER_PRICES_PAINTING_TAB_TITLE,
   MASTER_PRICES_LISTS_TAB_TITLE,
   MASTER_PRICES_SKU_TAB_TITLE,
   MASTER_PRICES_INCREMENTAL_LABOUR_PRODUCTS_TAB_TITLE,
@@ -34,6 +36,7 @@ import {
 } from "@/lib/google/blinds-prices-spreadsheet";
 import { PriceBookTestingPanel } from "@/components/price-book-testing-panel";
 import { ImportLogAuditPanel } from "@/components/import-log-audit-panel";
+import { ImportLogIndexPanel } from "@/components/import-log-index-panel";
 import { ImportSummaryBanner } from "@/components/import-summary-banner";
 import { sfTabStripClass, sfUnderlineTabClass } from "@/lib/sf-tabs";
 import { SKU_DATA_START_ROW_1_BASED, SKU_HEADER_ROW_1_BASED } from "@/lib/google/parse-master-prices-skus";
@@ -84,13 +87,34 @@ type ImportTabInfo = {
   gid: number;
   url: string;
   gridRowCount: number | null;
+  importProductCount: number | null;
+  importSupplierCount: number | null;
+  importNonBlankRows: number | null;
 };
+
+function formatSkuTabImportCounts(tab: ImportTabInfo): string | null {
+  if (tab.importProductCount == null) return null;
+  const products = tab.importProductCount;
+  const suppliers = tab.importSupplierCount ?? 0;
+  if (suppliers > 0) {
+    return `~${products} product(s) · ~${suppliers} supplier row(s)`;
+  }
+  return `~${products} product(s)`;
+}
 
 const DATA_SKUS_IMPORT_ENDPOINTS: Record<DataSkusImportSource, string> = {
   sku_all: "/api/import-master-prices/import-data-skus",
   building: "/api/import-master-prices/import-data-skus-building",
-  labour: "/api/import-master-prices/import-data-skus-labour",
+  painting: "/api/import-master-prices/import-data-skus-painting",
 };
+
+const DATA_SKUS_SOURCE_LABEL: Record<DataSkusImportSource, string> = {
+  sku_all: MASTER_PRICES_SKU_TAB_TITLE,
+  building: MASTER_PRICES_BUILDING_TAB_TITLE,
+  painting: MASTER_PRICES_PAINTING_TAB_TITLE,
+};
+
+type SkuImportBatchMode = "single" | "start" | "continue";
 
 function phaseLabel(phase: ImportDataSkusProgress["phase"]): string {
   switch (phase) {
@@ -168,7 +192,16 @@ export function ImportMasterPricesPanel() {
     created: number;
     skippedExisting: number;
     skippedIncomplete: number;
+    removedDataObjects: number;
+    quoteObjectsCreated: number;
+    quoteObjectsUpdated: number;
+    removedQuoteObjects: number;
   } | null>(null);
+  /** Prepare Objects: drop data_objects not derived from current data_skus. */
+  const [removeDataObjectsNotInSkus, setRemoveDataObjectsNotInSkus] = useState(false);
+  /** Prepare Objects: drop SKU-pipeline quote_objects with no matching data_objects row. */
+  const [removeQuoteObjectsNotInDataObjects, setRemoveQuoteObjectsNotInDataObjects] =
+    useState(false);
   const [prepareError, setPrepareError] = useState<string | null>(null);
   const [clearingObjects, setClearingObjects] = useState(false);
   const [clearObjectsConfirmOpen, setClearObjectsConfirmOpen] = useState(false);
@@ -194,6 +227,20 @@ export function ImportMasterPricesPanel() {
     parseErrors: string[];
   } | null>(null);
   const [importLabourRatesError, setImportLabourRatesError] = useState<string | null>(null);
+  const [importingProductContractorRates, setImportingProductContractorRates] = useState(false);
+  const [importProductContractorRatesResult, setImportProductContractorRatesResult] = useState<{
+    tabTitle: string;
+    range: string;
+    headerRow1Based: number;
+    dataStartRow1Based: number;
+    parsed: number;
+    written: number;
+    deletedPrior: number;
+    parseErrors: string[];
+  } | null>(null);
+  const [importProductContractorRatesError, setImportProductContractorRatesError] = useState<
+    string | null
+  >(null);
   const [importingCascades, setImportingCascades] = useState(false);
   const [importCascadesResult, setImportCascadesResult] = useState<{
     tabTitle: string;
@@ -228,8 +275,8 @@ export function ImportMasterPricesPanel() {
     headerRow1Based: number;
     dataStartRow1Based: number;
     parsed: number;
-    created: number;
-    updated: number;
+    written: number;
+    deletedPrior: number;
     parseErrors: string[];
   } | null>(null);
   const [importObjectLabourRatesError, setImportObjectLabourRatesError] = useState<string | null>(
@@ -250,17 +297,43 @@ export function ImportMasterPricesPanel() {
   );
   /** After full SKU import: delete data_skus left with isCurrent=false (not on sheet). */
   const [removeProductsNotInSheet, setRemoveProductsNotInSheet] = useState(false);
+  const [importSkuAllSelected, setImportSkuAllSelected] = useState(true);
+  const [importBuildingSelected, setImportBuildingSelected] = useState(false);
+  const [importPaintingSelected, setImportPaintingSelected] = useState(false);
+  const [importLabourRatesSelected, setImportLabourRatesSelected] = useState(false);
+  const [importProductContractorRatesSelected, setImportProductContractorRatesSelected] =
+    useState(false);
+  const [importCascadesSelected, setImportCascadesSelected] = useState(false);
+  const [importSupplierDiscountsSelected, setImportSupplierDiscountsSelected] = useState(false);
+  const [importListsSelected, setImportListsSelected] = useState(false);
+  const [importIncrementalLabourSelected, setImportIncrementalLabourSelected] = useState(false);
+  const [listsTabInfo, setListsTabInfo] = useState<ImportTabInfo | null>(null);
+  const [listsTabError, setListsTabError] = useState<string | null>(null);
   const importing = activeImportSource != null;
+  const importBusy =
+    importing ||
+    importingLists ||
+    importingCascades ||
+    importingLabourRates ||
+    importingProductContractorRates ||
+    importingSupplierDiscounts ||
+    importingObjectLabourRates;
   const [importProgress, setImportProgress] = useState<ImportDataSkusProgress | null>(null);
   const [importLog, setImportLog] = useState<ImportDataSkusProgress[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
-  const [savedImportLog, setSavedImportLog] = useState<ImportLogPublic | null>(null);
-  const [recentLogs, setRecentLogs] = useState<ImportLogPublic[]>([]);
+  const [sessionImportLogs, setSessionImportLogs] = useState<ImportLogPublic[]>([]);
+  const [selectedImportLogId, setSelectedImportLogId] = useState<string | null>(null);
+  /** Imports after this page load — excludes historical Firestore logs from earlier sessions. */
+  const importSessionStartedAtRef = useRef(new Date().toISOString());
   const [importTabInfo, setImportTabInfo] = useState<ImportTabInfo | null>(null);
   const [buildingTabInfo, setBuildingTabInfo] = useState<ImportTabInfo | null>(null);
   const [buildingTabError, setBuildingTabError] = useState<string | null>(null);
   const [labourTabInfo, setLabourTabInfo] = useState<ImportTabInfo | null>(null);
   const [labourTabError, setLabourTabError] = useState<string | null>(null);
+  const [contractorRatesTabInfo, setContractorRatesTabInfo] = useState<ImportTabInfo | null>(null);
+  const [contractorRatesTabError, setContractorRatesTabError] = useState<string | null>(null);
+  const [paintingTabInfo, setPaintingTabInfo] = useState<ImportTabInfo | null>(null);
+  const [paintingTabError, setPaintingTabError] = useState<string | null>(null);
   const [cascadesTabInfo, setCascadesTabInfo] = useState<ImportTabInfo | null>(null);
   const [cascadesTabError, setCascadesTabError] = useState<string | null>(null);
   const [supplierDiscountsTabInfo, setSupplierDiscountsTabInfo] = useState<ImportTabInfo | null>(
@@ -280,10 +353,16 @@ export function ImportMasterPricesPanel() {
         buildingError?: string | null;
         labour?: ImportTabInfo | null;
         labourError?: string | null;
+        contractorRates?: ImportTabInfo | null;
+        contractorRatesError?: string | null;
+        painting?: ImportTabInfo | null;
+        paintingError?: string | null;
         cascades?: ImportTabInfo | null;
         cascadesError?: string | null;
         supplierDiscounts?: ImportTabInfo | null;
         supplierDiscountsError?: string | null;
+        lists?: ImportTabInfo | null;
+        listsError?: string | null;
         incrementalLabourProducts?: ImportTabInfo | null;
         incrementalLabourProductsError?: string | null;
         error?: string;
@@ -295,10 +374,16 @@ export function ImportMasterPricesPanel() {
         setBuildingTabError(null);
         setLabourTabInfo(null);
         setLabourTabError(null);
+        setContractorRatesTabInfo(null);
+        setContractorRatesTabError(null);
+        setPaintingTabInfo(null);
+        setPaintingTabError(null);
         setCascadesTabInfo(null);
         setCascadesTabError(null);
         setSupplierDiscountsTabInfo(null);
         setSupplierDiscountsTabError(null);
+        setListsTabInfo(null);
+        setListsTabError(null);
         setIncrementalLabourProductsTabInfo(null);
         setIncrementalLabourProductsTabError(null);
         return;
@@ -309,10 +394,16 @@ export function ImportMasterPricesPanel() {
       setBuildingTabError(data.buildingError ?? null);
       setLabourTabInfo(data.labour ?? null);
       setLabourTabError(data.labourError ?? null);
+      setContractorRatesTabInfo(data.contractorRates ?? null);
+      setContractorRatesTabError(data.contractorRatesError ?? null);
+      setPaintingTabInfo(data.painting ?? null);
+      setPaintingTabError(data.paintingError ?? null);
       setCascadesTabInfo(data.cascades ?? null);
       setCascadesTabError(data.cascadesError ?? null);
       setSupplierDiscountsTabInfo(data.supplierDiscounts ?? null);
       setSupplierDiscountsTabError(data.supplierDiscountsError ?? null);
+      setListsTabInfo(data.lists ?? null);
+      setListsTabError(data.listsError ?? null);
       setIncrementalLabourProductsTabInfo(data.incrementalLabourProducts ?? null);
       setIncrementalLabourProductsTabError(data.incrementalLabourProductsError ?? null);
     } catch (e) {
@@ -322,40 +413,75 @@ export function ImportMasterPricesPanel() {
       setBuildingTabError(null);
       setLabourTabInfo(null);
       setLabourTabError(null);
+      setContractorRatesTabInfo(null);
+      setContractorRatesTabError(null);
+      setPaintingTabInfo(null);
+      setPaintingTabError(null);
       setCascadesTabInfo(null);
       setCascadesTabError(null);
       setSupplierDiscountsTabInfo(null);
       setSupplierDiscountsTabError(null);
+      setListsTabInfo(null);
+      setListsTabError(null);
       setIncrementalLabourProductsTabInfo(null);
       setIncrementalLabourProductsTabError(null);
     }
   }, []);
 
-  const loadImportLogs = useCallback(async (importRunId?: string) => {
-    try {
-      if (importRunId) {
-        const res = await fetch(
-          `/api/import-master-prices/import-log?importRunId=${encodeURIComponent(importRunId)}`,
-        );
-        const data = await readApiJson<{ log: ImportLogPublic | null }>(res);
-        if (data.log) {
-          setSavedImportLog(data.log);
-          return data.log;
-        }
+  const upsertSessionImportLog = useCallback((log: ImportLogPublic) => {
+    setSessionImportLogs((prev) => {
+      const index = prev.findIndex((entry) => entry.importRunId === log.importRunId);
+      if (index >= 0) {
+        const next = [...prev];
+        next[index] = log;
+        return next;
       }
-      const listRes = await fetch("/api/import-master-prices/import-log?limit=10");
-      const listData = await readApiJson<{ logs: ImportLogPublic[] }>(listRes);
-      setRecentLogs(listData.logs ?? []);
-      return null;
-    } catch {
-      return null;
-    }
+      return [...prev, log];
+    });
   }, []);
 
+  const loadImportLogs = useCallback(
+    async (importRunId?: string) => {
+      try {
+        if (importRunId) {
+          const res = await fetch(
+            `/api/import-master-prices/import-log?importRunId=${encodeURIComponent(importRunId)}`,
+          );
+          const data = await readApiJson<{ log: ImportLogPublic | null }>(res);
+          if (data.log) {
+            upsertSessionImportLog(data.log);
+            setSelectedImportLogId(data.log.importRunId);
+            return data.log;
+          }
+        }
+        const listRes = await fetch("/api/import-master-prices/import-log?limit=20");
+        const listData = await readApiJson<{ logs: ImportLogPublic[] }>(listRes);
+        const sessionStart = importSessionStartedAtRef.current;
+        const sessionLogs = (listData.logs ?? []).filter(
+          (log) => log.completedAt && log.completedAt >= sessionStart,
+        );
+        if (sessionLogs.length > 0) {
+          setSessionImportLogs((prev) => {
+            const byId = new Map(prev.map((entry) => [entry.importRunId, entry]));
+            for (const log of sessionLogs) {
+              byId.set(log.importRunId, log);
+            }
+            return [...byId.values()].sort((a, b) =>
+              (b.completedAt || "").localeCompare(a.completedAt || ""),
+            );
+          });
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    },
+    [upsertSessionImportLog],
+  );
+
   useEffect(() => {
-    void loadImportLogs();
     void loadImportTab();
-  }, [loadImportLogs, loadImportTab]);
+  }, [loadImportTab]);
 
   const runTest = useCallback(async () => {
     setTestLoading(true);
@@ -387,7 +513,18 @@ export function ImportMasterPricesPanel() {
     });
   }, []);
 
-  const runImportLists = useCallback(async () => {
+  const resolveImportRunLog = useCallback(
+    async (importRunId?: string | null) => {
+      if (importRunId) {
+        await loadImportLogs(importRunId);
+        return;
+      }
+      await loadImportLogs();
+    },
+    [loadImportLogs],
+  );
+
+  const runImportLists = useCallback(async (): Promise<boolean> => {
     setImportingLists(true);
     setImportListsError(null);
     setImportListsResult(null);
@@ -396,6 +533,7 @@ export function ImportMasterPricesPanel() {
       const data = await readApiJson<{
         ok?: boolean;
         error?: string;
+        importRunId?: string;
         tabTitle?: string;
         styles?: {
           range?: string;
@@ -416,7 +554,11 @@ export function ImportMasterPricesPanel() {
           updated?: number;
         };
       }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Import lists failed");
+      if (!res.ok) {
+        await resolveImportRunLog(data.importRunId);
+        throw new Error(data.error ?? "Import lists failed");
+      }
+      await resolveImportRunLog(data.importRunId);
       setImportListsResult({
         tabTitle: data.tabTitle ?? MASTER_PRICES_LISTS_TAB_TITLE,
         styles: {
@@ -439,14 +581,16 @@ export function ImportMasterPricesPanel() {
         },
       });
       clearLookupsCache();
+      return true;
     } catch (e) {
       setImportListsError(e instanceof Error ? e.message : "Import lists failed");
+      return false;
     } finally {
       setImportingLists(false);
     }
-  }, []);
+  }, [resolveImportRunLog]);
 
-  const runImportLabourRates = useCallback(async () => {
+  const runImportLabourRates = useCallback(async (): Promise<boolean> => {
     setImportingLabourRates(true);
     setImportLabourRatesError(null);
     setImportLabourRatesResult(null);
@@ -459,6 +603,7 @@ export function ImportMasterPricesPanel() {
       const data = await readApiJson<{
         ok?: boolean;
         error?: string;
+        importRunId?: string;
         tabTitle?: string;
         range?: string;
         headerRow1Based?: number;
@@ -468,7 +613,11 @@ export function ImportMasterPricesPanel() {
         deletedPrior?: number;
         parseErrors?: string[];
       }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Import labour rates failed");
+      if (!res.ok) {
+        await resolveImportRunLog(data.importRunId);
+        throw new Error(data.error ?? "Import labour rates failed");
+      }
+      await resolveImportRunLog(data.importRunId);
       setImportLabourRatesResult({
         tabTitle: data.tabTitle ?? MASTER_PRICES_LABOUR_TAB_TITLE,
         range: data.range ?? "A1:E",
@@ -479,14 +628,63 @@ export function ImportMasterPricesPanel() {
         deletedPrior: data.deletedPrior ?? 0,
         parseErrors: data.parseErrors ?? [],
       });
+      return true;
     } catch (e) {
       setImportLabourRatesError(
         e instanceof Error ? e.message : "Import labour rates failed",
       );
+      return false;
     } finally {
       setImportingLabourRates(false);
     }
-  }, []);
+  }, [resolveImportRunLog]);
+
+  const runImportProductContractorRates = useCallback(async (): Promise<boolean> => {
+    setImportingProductContractorRates(true);
+    setImportProductContractorRatesError(null);
+    setImportProductContractorRatesResult(null);
+    try {
+      const res = await fetch("/api/import-master-prices/import-product-contractor-rates", {
+        method: "POST",
+      });
+      const data = await readApiJson<{
+        ok?: boolean;
+        error?: string;
+        importRunId?: string;
+        tabTitle?: string;
+        range?: string;
+        headerRow1Based?: number;
+        dataStartRow1Based?: number;
+        parsed?: number;
+        written?: number;
+        deletedPrior?: number;
+        parseErrors?: string[];
+      }>(res);
+      if (!res.ok) {
+        await resolveImportRunLog(data.importRunId);
+        throw new Error(data.error ?? "Import product contractor rates failed");
+      }
+      await resolveImportRunLog(data.importRunId);
+      setImportProductContractorRatesResult({
+        tabTitle: data.tabTitle ?? MASTER_PRICES_CONTRACTOR_RATES_TAB_TITLE,
+        range: data.range ?? "A1:H",
+        headerRow1Based: data.headerRow1Based ?? 5,
+        dataStartRow1Based: data.dataStartRow1Based ?? 6,
+        parsed: data.parsed ?? 0,
+        written: data.written ?? 0,
+        deletedPrior: data.deletedPrior ?? 0,
+        parseErrors: data.parseErrors ?? [],
+      });
+      return true;
+    } catch (e) {
+      setImportProductContractorRatesError(
+        e instanceof Error ? e.message : "Import product contractor rates failed",
+      );
+      return false;
+    } finally {
+      setImportingProductContractorRates(false);
+    }
+  }, [resolveImportRunLog]);
 
   const runTestBlinds = useCallback(async () => {
     setTestingBlinds(true);
@@ -612,7 +810,7 @@ export function ImportMasterPricesPanel() {
     }
   }, []);
 
-  const runImportSupplierDiscounts = useCallback(async () => {
+  const runImportSupplierDiscounts = useCallback(async (): Promise<boolean> => {
     setImportingSupplierDiscounts(true);
     setImportSupplierDiscountsError(null);
     setImportSupplierDiscountsResult(null);
@@ -623,6 +821,7 @@ export function ImportMasterPricesPanel() {
       const data = await readApiJson<{
         ok?: boolean;
         error?: string;
+        importRunId?: string;
         tabTitle?: string;
         range?: string;
         headerRow1Based?: number;
@@ -635,7 +834,11 @@ export function ImportMasterPricesPanel() {
         deletedRangesPrior?: number;
         parseErrors?: string[];
       }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Import supplier discounts failed");
+      if (!res.ok) {
+        await resolveImportRunLog(data.importRunId);
+        throw new Error(data.error ?? "Import supplier discounts failed");
+      }
+      await resolveImportRunLog(data.importRunId);
       setImportSupplierDiscountsResult({
         tabTitle: data.tabTitle ?? MASTER_PRICES_SUPPLIER_DISCOUNTS_TAB_TITLE,
         range: data.range ?? "A1:G19",
@@ -649,21 +852,21 @@ export function ImportMasterPricesPanel() {
         deletedRangesPrior: data.deletedRangesPrior ?? 0,
         parseErrors: data.parseErrors ?? [],
       });
+      return true;
     } catch (e) {
       setImportSupplierDiscountsError(
         e instanceof Error ? e.message : "Import supplier discounts failed",
       );
+      return false;
     } finally {
       setImportingSupplierDiscounts(false);
     }
-  }, []);
+  }, [resolveImportRunLog]);
 
-  const runImportObjectLabourRates = useCallback(async () => {
+  const runImportObjectLabourRates = useCallback(async (): Promise<boolean> => {
     setImportingObjectLabourRates(true);
     setImportObjectLabourRatesError(null);
     setImportObjectLabourRatesResult(null);
-    setImportLabourRatesError(null);
-    setImportLabourRatesResult(null);
     try {
       const res = await fetch("/api/import-master-prices/import-object-labour-rates", {
         method: "POST",
@@ -671,36 +874,43 @@ export function ImportMasterPricesPanel() {
       const data = await readApiJson<{
         ok?: boolean;
         error?: string;
+        importRunId?: string;
         tabTitle?: string;
         range?: string;
         headerRow1Based?: number;
         dataStartRow1Based?: number;
         parsed?: number;
-        created?: number;
-        updated?: number;
+        written?: number;
+        deletedPrior?: number;
         parseErrors?: string[];
       }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Import incremental labour products failed");
+      if (!res.ok) {
+        await resolveImportRunLog(data.importRunId);
+        throw new Error(data.error ?? "Import incremental labour products failed");
+      }
+      await resolveImportRunLog(data.importRunId);
       setImportObjectLabourRatesResult({
         tabTitle: data.tabTitle ?? MASTER_PRICES_INCREMENTAL_LABOUR_PRODUCTS_TAB_TITLE,
         range: data.range ?? "A3:I150",
         headerRow1Based: data.headerRow1Based ?? 3,
         dataStartRow1Based: data.dataStartRow1Based ?? 4,
         parsed: data.parsed ?? 0,
-        created: data.created ?? 0,
-        updated: data.updated ?? 0,
+        written: data.written ?? 0,
+        deletedPrior: data.deletedPrior ?? 0,
         parseErrors: data.parseErrors ?? [],
       });
+      return true;
     } catch (e) {
       setImportObjectLabourRatesError(
         e instanceof Error ? e.message : "Import incremental labour products failed",
       );
+      return false;
     } finally {
       setImportingObjectLabourRates(false);
     }
-  }, []);
+  }, [resolveImportRunLog]);
 
-  const runImportCascades = useCallback(async () => {
+  const runImportCascades = useCallback(async (): Promise<boolean> => {
     setImportingCascades(true);
     setImportCascadesError(null);
     setImportCascadesResult(null);
@@ -709,6 +919,7 @@ export function ImportMasterPricesPanel() {
       const data = await readApiJson<{
         ok?: boolean;
         error?: string;
+        importRunId?: string;
         tabTitle?: string;
         range?: string;
         headerRow1Based?: number;
@@ -716,7 +927,11 @@ export function ImportMasterPricesPanel() {
         written?: number;
         deletedPrior?: number;
       }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Import cascades failed");
+      if (!res.ok) {
+        await resolveImportRunLog(data.importRunId);
+        throw new Error(data.error ?? "Import cascades failed");
+      }
+      await resolveImportRunLog(data.importRunId);
       setImportCascadesResult({
         tabTitle: data.tabTitle ?? MASTER_PRICES_CASCADES_TAB_TITLE,
         range: data.range ?? "A1:C50",
@@ -726,12 +941,14 @@ export function ImportMasterPricesPanel() {
         deletedPrior: data.deletedPrior ?? 0,
       });
       setCascadesRefreshKey((k) => k + 1);
+      return true;
     } catch (e) {
       setImportCascadesError(e instanceof Error ? e.message : "Import cascades failed");
+      return false;
     } finally {
       setImportingCascades(false);
     }
-  }, []);
+  }, [resolveImportRunLog]);
 
   const runClearDataObjects = useCallback(async () => {
     setClearingObjects(true);
@@ -757,13 +974,24 @@ export function ImportMasterPricesPanel() {
     setPrepareError(null);
     setPrepareResult(null);
     try {
-      const res = await fetch("/api/data-objects/prepare", { method: "POST" });
+      const res = await fetch("/api/data-objects/prepare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          removeDataObjectsNotInSkus,
+          removeQuoteObjectsNotInDataObjects,
+        }),
+      });
       const data = await readApiJson<{
         ok?: boolean;
         distinctFromSkus?: number;
         created?: number;
         skippedExisting?: number;
         skippedIncomplete?: number;
+        removedDataObjects?: number;
+        quoteObjectsCreated?: number;
+        quoteObjectsUpdated?: number;
+        removedQuoteObjects?: number;
         error?: string;
       }>(res);
       if (!res.ok) throw new Error(data.error ?? "Prepare objects failed");
@@ -772,6 +1000,10 @@ export function ImportMasterPricesPanel() {
         created: data.created ?? 0,
         skippedExisting: data.skippedExisting ?? 0,
         skippedIncomplete: data.skippedIncomplete ?? 0,
+        removedDataObjects: data.removedDataObjects ?? 0,
+        quoteObjectsCreated: data.quoteObjectsCreated ?? 0,
+        quoteObjectsUpdated: data.quoteObjectsUpdated ?? 0,
+        removedQuoteObjects: data.removedQuoteObjects ?? 0,
       });
       setDataObjectsRefreshKey((k) => k + 1);
       setPageTab("data-objects");
@@ -780,23 +1012,42 @@ export function ImportMasterPricesPanel() {
     } finally {
       setPreparingObjects(false);
     }
-  }, []);
+  }, [removeDataObjectsNotInSkus, removeQuoteObjectsNotInDataObjects]);
 
-  const runImport = useCallback(async (source: DataSkusImportSource) => {
-    setPageTab("import");
-    setActiveImportSource(source);
-    setImportError(null);
-    setImportProgress(null);
-    setImportLog([]);
-    scrollToImportTop();
-    const endpoint = DATA_SKUS_IMPORT_ENDPOINTS[source];
-    try {
+  const runImport = useCallback(
+    async (
+      source: DataSkusImportSource,
+      options?: { batchMode?: SkuImportBatchMode },
+    ): Promise<boolean> => {
+      const batchMode = options?.batchMode ?? "single";
+      setPageTab("import");
+      setActiveImportSource(source);
+      setImportError(null);
+      setImportProgress(null);
+      if (batchMode === "single" || batchMode === "start") {
+        setImportLog([]);
+        if (batchMode === "start") {
+          setSessionImportLogs([]);
+          setSelectedImportLogId(null);
+        }
+      } else {
+        setImportLog((prev) => [
+          ...prev,
+          {
+            phase: "fetching_sheet",
+            message: `——— ${DATA_SKUS_SOURCE_LABEL[source]} ———`,
+            percent: 0,
+          },
+        ]);
+      }
+      scrollToImportTop();
+      const endpoint = DATA_SKUS_IMPORT_ENDPOINTS[source];
+      try {
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          removeProductsNotInSheet:
-            removeProductsNotInSheet && source === "sku_all",
+          removeProductsNotInSheet,
         }),
       });
       if (!res.ok) {
@@ -817,22 +1068,153 @@ export function ImportMasterPricesPanel() {
         }
       });
       const finalEvent = streamEvents[streamEvents.length - 1] ?? null;
-      const fallback = finalEvent ? importLogFromProgress(finalEvent) : null;
-      if (fallback) setSavedImportLog(fallback);
-      const runId = finalEvent?.importRunId;
-      if (runId) {
-        const fromDb = await loadImportLogs(runId);
-        if (!fromDb && fallback) setSavedImportLog(fallback);
+      if (finalEvent?.phase === "error") {
+        const errorFallback = finalEvent.audit
+          ? importLogFromProgress(finalEvent)
+          : null;
+        const runId = finalEvent.importRunId;
+        if (runId) {
+          await loadImportLogs(runId);
+        } else if (errorFallback) {
+          upsertSessionImportLog(errorFallback);
+          setSelectedImportLogId(errorFallback.importRunId);
+        }
+        await loadImportLogs();
+        return false;
       }
+      const fallback = finalEvent ? importLogFromProgress(finalEvent) : null;
+      const runId = finalEvent?.importRunId;
+      let resolvedLog: ImportLogPublic | null = null;
+      if (runId) {
+        resolvedLog = (await loadImportLogs(runId)) ?? null;
+      }
+      if (!resolvedLog && fallback) {
+        upsertSessionImportLog(fallback);
+        setSelectedImportLogId(fallback.importRunId);
+        resolvedLog = fallback;
+      }
+      await loadImportLogs();
       setDataRefreshKey((k) => k + 1);
+      return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setImportError(msg);
       appendLog({ phase: "error", message: msg, percent: 0, error: msg });
+      return false;
     } finally {
       setActiveImportSource(null);
     }
-  }, [appendLog, loadImportLogs, removeProductsNotInSheet, scrollToImportTop]);
+  },
+    [
+      appendLog,
+      loadImportLogs,
+      removeProductsNotInSheet,
+      scrollToImportTop,
+      upsertSessionImportLog,
+    ],
+  );
+
+  const runImportSkuData = useCallback(async () => {
+    const sources: DataSkusImportSource[] = [];
+    if (importSkuAllSelected) sources.push("sku_all");
+    if (importBuildingSelected) sources.push("building");
+    if (importPaintingSelected) sources.push("painting");
+    if (sources.length === 0) {
+      setImportError("Select at least one SKU source to import.");
+      scrollToImportTop();
+      return;
+    }
+    for (let i = 0; i < sources.length; i++) {
+      const ok = await runImport(sources[i], {
+        batchMode: i === 0 ? "start" : "continue",
+      });
+      if (!ok) break;
+    }
+  }, [
+    importSkuAllSelected,
+    importBuildingSelected,
+    importPaintingSelected,
+    runImport,
+    scrollToImportTop,
+  ]);
+
+  const runImportSupportingData = useCallback(async () => {
+    const tasks: { selected: boolean; ready: boolean; run: () => Promise<boolean> }[] = [
+      {
+        selected: importLabourRatesSelected,
+        ready: Boolean(labourTabInfo),
+        run: runImportLabourRates,
+      },
+      {
+        selected: importProductContractorRatesSelected,
+        ready: Boolean(contractorRatesTabInfo),
+        run: runImportProductContractorRates,
+      },
+      {
+        selected: importCascadesSelected,
+        ready: Boolean(cascadesTabInfo),
+        run: runImportCascades,
+      },
+      {
+        selected: importSupplierDiscountsSelected,
+        ready: Boolean(supplierDiscountsTabInfo),
+        run: runImportSupplierDiscounts,
+      },
+      {
+        selected: importListsSelected,
+        ready: Boolean(listsTabInfo),
+        run: runImportLists,
+      },
+      {
+        selected: importIncrementalLabourSelected,
+        ready: Boolean(incrementalLabourProductsTabInfo),
+        run: runImportObjectLabourRates,
+      },
+    ];
+    const selected = tasks.filter((t) => t.selected);
+    if (selected.length === 0) {
+      setImportError("Select at least one supporting data source to import.");
+      scrollToImportTop();
+      return;
+    }
+    const notReady = selected.filter((t) => !t.ready);
+    if (notReady.length > 0) {
+      setImportError("One or more selected supporting imports are unavailable (tab not found).");
+      scrollToImportTop();
+      return;
+    }
+    setImportError(null);
+    setPageTab("import");
+    setImportProgress(null);
+    setImportLog([]);
+    setSessionImportLogs([]);
+    setSelectedImportLogId(null);
+    scrollToImportTop();
+    for (const task of selected) {
+      const ok = await task.run();
+      if (!ok) break;
+    }
+  }, [
+    importLabourRatesSelected,
+    importProductContractorRatesSelected,
+    importCascadesSelected,
+    importSupplierDiscountsSelected,
+    importListsSelected,
+    importIncrementalLabourSelected,
+    labourTabInfo,
+    contractorRatesTabInfo,
+    cascadesTabInfo,
+    supplierDiscountsTabInfo,
+    listsTabInfo,
+    incrementalLabourProductsTabInfo,
+    runImportLabourRates,
+    runImportProductContractorRates,
+    runImportCascades,
+    runImportSupplierDiscounts,
+    runImportLists,
+    runImportObjectLabourRates,
+    scrollToImportTop,
+  ]);
 
   const testSuccess = testResult?.ok === true ? testResult : null;
   const testFailure = testResult?.ok === false ? testResult : null;
@@ -840,8 +1222,13 @@ export function ImportMasterPricesPanel() {
   const importFailed = importProgress?.phase === "error" || Boolean(importError);
 
   const displayLog =
-    savedImportLog ??
+    sessionImportLogs.find((log) => log.importRunId === selectedImportLogId) ??
+    sessionImportLogs[0] ??
     (importProgress ? importLogFromProgress(importProgress) : null);
+
+  const sessionImportLogsSorted = [...sessionImportLogs].sort((a, b) =>
+    (a.completedAt || "").localeCompare(b.completedAt || ""),
+  );
 
   const summaryStatus = displayLog?.status
     ? displayLog.status
@@ -860,9 +1247,9 @@ export function ImportMasterPricesPanel() {
           Import Master Prices
         </h1>
         <p className={sfSectionLead}>
-          Import from <strong>{MASTER_PRICES_SKU_TAB_TITLE}</strong> or{" "}
-          <strong>{MASTER_PRICES_BUILDING_TAB_TITLE}</strong> into{" "}
-          <code className="text-xs">data_skus</code>, or browse imported data with filters.
+          Select SKU tabs and supporting data to import, then run <strong>Prepare Objects</strong> to
+          build <code className="text-xs">data_objects</code> from{" "}
+          <code className="text-xs">data_skus</code>.
         </p>
       </header>
 
@@ -951,151 +1338,543 @@ export function ImportMasterPricesPanel() {
         <>
       <div ref={importAnchorRef} className="scroll-mt-4" />
       <section className={`${sfDataSurface} flex flex-col gap-4 p-4 md:p-5`}>
-        <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">
-          Import to data_skus + data_sku_suppliers
-        </h2>
         {importTabError ? (
           <p className="text-sm text-red-800 dark:text-red-300">{importTabError}</p>
         ) : null}
-        {importTabInfo ? (
-          <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
-            <strong>{MASTER_PRICES_SKU_TAB_TITLE}</strong>: {importTabInfo.tabTitle}
-            {importTabInfo.gridRowCount != null ? (
-              <span> · ~{importTabInfo.gridRowCount} grid rows</span>
-            ) : null}
-          </p>
-        ) : null}
-        {buildingTabError ? (
-          <p className="text-sm text-amber-800 dark:text-amber-200">{buildingTabError}</p>
-        ) : buildingTabInfo ? (
-          <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
-            <strong>{MASTER_PRICES_BUILDING_TAB_TITLE}</strong>: {buildingTabInfo.tabTitle}
-            {buildingTabInfo.gridRowCount != null ? (
-              <span> · ~{buildingTabInfo.gridRowCount} grid rows</span>
-            ) : null}
-            <span className="block text-xs text-sf-text-weak dark:text-zinc-500">
-              Building import upserts matching keys only; it does not mark the full catalog
-              not-current.
-            </span>
-          </p>
-        ) : null}
-        {labourTabError ? (
-          <p className="text-sm text-amber-800 dark:text-amber-200">{labourTabError}</p>
-        ) : labourTabInfo ? (
-          <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
-            <strong>{MASTER_PRICES_LABOUR_TAB_TITLE}</strong>: {labourTabInfo.tabTitle}
-            {labourTabInfo.gridRowCount != null ? (
-              <span> · ~{labourTabInfo.gridRowCount} grid rows</span>
-            ) : null}
-            <span className="block text-xs text-sf-text-weak dark:text-zinc-500">
-              <strong>Import Labour SKUs</strong> upserts full SKU rows into{" "}
-              <code className="text-xs">data_skus</code>.{" "}
-              <strong>Import $ Labour Rates</strong> replaces{" "}
-              <code className="text-xs">data_labourrates</code> (columns A–E, row 5 headers).
-              Not the same as the <strong>Incremental Labour - Products</strong> tab below.
-            </span>
-          </p>
-        ) : null}
-        {cascadesTabError ? (
-          <p className="text-sm text-amber-800 dark:text-amber-200">{cascadesTabError}</p>
-        ) : cascadesTabInfo ? (
-          <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
-            <strong>{MASTER_PRICES_CASCADES_TAB_TITLE}</strong>: {cascadesTabInfo.tabTitle}
-            {cascadesTabInfo.gridRowCount != null ? (
-              <span> · ~{cascadesTabInfo.gridRowCount} grid rows</span>
-            ) : null}
-            <span className="block text-xs text-sf-text-weak dark:text-zinc-500">
-              Replaces the full <code className="text-xs">cascades</code> collection (Level, Style,
-              Colour from A1:C50).
-            </span>
-          </p>
-        ) : null}
-        {supplierDiscountsTabError ? (
-          <p className="text-sm text-amber-800 dark:text-amber-200">{supplierDiscountsTabError}</p>
-        ) : supplierDiscountsTabInfo ? (
-          <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
-            <strong>{MASTER_PRICES_SUPPLIER_DISCOUNTS_TAB_TITLE}</strong>:{" "}
-            {supplierDiscountsTabInfo.tabTitle}
-            {supplierDiscountsTabInfo.gridRowCount != null ? (
-              <span> · ~{supplierDiscountsTabInfo.gridRowCount} grid rows</span>
-            ) : null}
-            <span className="block text-xs text-sf-text-weak dark:text-zinc-500">
-              Replaces <code className="text-xs">data_supplier_discount_ranges</code> (4 rows) and{" "}
-              <code className="text-xs">data_supplier_discounts</code> (row 2 headers, data row 3+).
-            </span>
-          </p>
-        ) : null}
-        {incrementalLabourProductsTabError ? (
-          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
-            <strong>Incremental Labour - Products</strong> tab not found:{" "}
-            {incrementalLabourProductsTabError}
-          </div>
-        ) : null}
+
         <section className="flex flex-col gap-3 rounded-lg border-2 border-sf-brand/30 bg-sf-page px-4 py-4 dark:border-[#58a9f5]/30 dark:bg-zinc-900/60">
-          <h3 className="text-sm font-semibold text-sf-text dark:text-zinc-100">
-            Incremental Labour - Products →{" "}
-            <code className="text-xs font-normal">data_objectlabourrates</code>
-          </h3>
-          {incrementalLabourProductsTabInfo ? (
-            <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
-              Tab <strong>{incrementalLabourProductsTabInfo.tabTitle}</strong>
-              {incrementalLabourProductsTabInfo.gridRowCount != null ? (
-                <span> · ~{incrementalLabourProductsTabInfo.gridRowCount} grid rows</span>
-              ) : null}
-              <span className="mt-1 block text-xs text-sf-text-weak dark:text-zinc-500">
-                A3:I150 · header row 3 · data row 4+. Upsert by Category + Product Type + Product
-                (blank Product uses Product Type). Does not touch{" "}
-                <code className="text-xs">data_labourrates</code> or{" "}
-                <code className="text-xs">data_skus</code>.
+          <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">
+            SKU data → <code className="text-xs font-normal">data_skus</code>
+          </h2>
+          <p className="text-xs text-sf-text-weak dark:text-zinc-500">
+            Populates product rows and suppliers. Run <strong>Prepare Objects</strong> afterward to
+            build <code className="text-xs">data_objects</code>.
+          </p>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={importSkuAllSelected}
+              disabled={importBusy || testLoading || preparingObjects || clearingObjects}
+              onChange={(e) => setImportSkuAllSelected(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">
+                SKU (all) — full catalog upsert
               </span>
-            </p>
-          ) : (
-            <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
-              Resolve the worksheet <strong>Incremental Labour - Products</strong> to enable import.
-            </p>
-          )}
-          <div className="flex flex-wrap gap-3">
-            {incrementalLabourProductsTabInfo?.url ? (
-              <a
-                href={incrementalLabourProductsTabInfo.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
-              >
-                Open Incremental Labour - Products
-              </a>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => void runImportObjectLabourRates()}
+              {importTabInfo ? (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab <strong>{importTabInfo.tabTitle}</strong>
+                  {formatSkuTabImportCounts(importTabInfo) ? (
+                    <span> · {formatSkuTabImportCounts(importTabInfo)}</span>
+                  ) : null}
+                  {importTabInfo.url ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a
+                        href={importTabInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                      >
+                        Open tab
+                      </a>
+                    </>
+                  ) : null}
+                </span>
+              ) : null}
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={importBuildingSelected}
               disabled={
-                importing ||
+                importBusy ||
                 testLoading ||
                 preparingObjects ||
-                importingLists ||
-                importingCascades ||
-                importingLabourRates ||
-                importingSupplierDiscounts ||
-                importingObjectLabourRates ||
-                !incrementalLabourProductsTabInfo
+                clearingObjects ||
+                !buildingTabInfo
+              }
+              onChange={(e) => setImportBuildingSelected(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">Building</span>
+              {buildingTabError ? (
+                <span className="mt-0.5 block text-xs text-amber-800 dark:text-amber-200">
+                  {buildingTabError}
+                </span>
+              ) : buildingTabInfo ? (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab <strong>{buildingTabInfo.tabTitle}</strong>
+                  {formatSkuTabImportCounts(buildingTabInfo) ? (
+                    <span> · {formatSkuTabImportCounts(buildingTabInfo)}</span>
+                  ) : null}
+                  · upserts matching keys only
+                  {buildingTabInfo.url ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a
+                        href={buildingTabInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                      >
+                        Open tab
+                      </a>
+                    </>
+                  ) : null}
+                </span>
+              ) : (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab not found
+                </span>
+              )}
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={importPaintingSelected}
+              disabled={
+                importBusy ||
+                testLoading ||
+                preparingObjects ||
+                clearingObjects ||
+                !paintingTabInfo
+              }
+              onChange={(e) => setImportPaintingSelected(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">Painting</span>
+              {paintingTabError ? (
+                <span className="mt-0.5 block text-xs text-amber-800 dark:text-amber-200">
+                  {paintingTabError}
+                </span>
+              ) : paintingTabInfo ? (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab <strong>{paintingTabInfo.tabTitle}</strong>
+                  {formatSkuTabImportCounts(paintingTabInfo) ? (
+                    <span> · {formatSkuTabImportCounts(paintingTabInfo)}</span>
+                  ) : null}
+                  · upserts matching keys only
+                  {paintingTabInfo.url ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a
+                        href={paintingTabInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                      >
+                        Open tab
+                      </a>
+                    </>
+                  ) : null}
+                </span>
+              ) : (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab not found
+                </span>
+              )}
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-sf-border bg-sf-surface px-3 py-2.5 text-sm dark:border-zinc-700 dark:bg-zinc-900/40">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={removeProductsNotInSheet}
+              disabled={importBusy || testLoading || preparingObjects || clearingObjects}
+              onChange={(e) => setRemoveProductsNotInSheet(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">
+                Remove products not on sheet
+              </span>
+              <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                Applies to each selected SKU import. After import, deletes{" "}
+                <code className="text-xs">data_skus</code> (and suppliers) not on that tab — rows
+                left with <code className="text-xs">isCurrent=false</code>.{" "}
+                <strong>SKU (all)</strong> scans the full catalog; Building / Painting only remove
+                within categories present on that tab.
+              </span>
+            </span>
+          </label>
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => void runImportSkuData()}
+              disabled={
+                importBusy ||
+                testLoading ||
+                preparingObjects ||
+                clearingObjects ||
+                (!importSkuAllSelected && !importBuildingSelected && !importPaintingSelected)
               }
               className={sfPrimaryToolbarButton}
             >
-              {importingObjectLabourRates
-                ? "Importing…"
-                : "Import Incremental Labour → data_objectlabourrates"}
+              {importing ? "Importing SKU data…" : "Import SKU Data"}
             </button>
           </div>
+        </section>
+
+        <section className="flex flex-col gap-3 rounded-lg border border-sf-border bg-sf-page px-4 py-4 dark:border-zinc-700 dark:bg-zinc-900/60">
+          <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">
+            Supporting data
+          </h2>
+          <p className="text-xs text-sf-text-weak dark:text-zinc-500">
+            Lookup tables, labour rates, cascades, supplier discounts, and incremental labour products
+            — separate from the SKU product catalog.
+          </p>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={importLabourRatesSelected}
+              disabled={
+                importBusy ||
+                testLoading ||
+                preparingObjects ||
+                clearingObjects ||
+                !labourTabInfo
+              }
+              onChange={(e) => setImportLabourRatesSelected(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">
+                Import $ Labour Rates
+              </span>
+              {labourTabError ? (
+                <span className="mt-0.5 block text-xs text-amber-800 dark:text-amber-200">
+                  {labourTabError}
+                </span>
+              ) : labourTabInfo ? (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab <strong>{labourTabInfo.tabTitle}</strong>
+                  {labourTabInfo.url ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a
+                        href={labourTabInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                      >
+                        Open tab
+                      </a>
+                    </>
+                  ) : null}
+                  · → <code className="text-xs">data_labourrates</code> (columns A–E, row 5 headers)
+                </span>
+              ) : (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab not found
+                </span>
+              )}
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={importProductContractorRatesSelected}
+              disabled={
+                importBusy ||
+                testLoading ||
+                preparingObjects ||
+                clearingObjects ||
+                !contractorRatesTabInfo
+              }
+              onChange={(e) => setImportProductContractorRatesSelected(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">
+                Product Contractor Rates
+              </span>
+              {contractorRatesTabError ? (
+                <span className="mt-0.5 block text-xs text-amber-800 dark:text-amber-200">
+                  {contractorRatesTabError}
+                </span>
+              ) : contractorRatesTabInfo ? (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab <strong>{contractorRatesTabInfo.tabTitle}</strong>
+                  {contractorRatesTabInfo.url ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a
+                        href={contractorRatesTabInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                      >
+                        Open tab
+                      </a>
+                    </>
+                  ) : null}
+                  · → <code className="text-xs">data_productcontractorrates</code> (columns A–H, row
+                  5 headers, replaces collection each import)
+                </span>
+              ) : (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab not found
+                </span>
+              )}
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={importCascadesSelected}
+              disabled={
+                importBusy ||
+                testLoading ||
+                preparingObjects ||
+                clearingObjects ||
+                !cascadesTabInfo
+              }
+              onChange={(e) => setImportCascadesSelected(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">Cascades</span>
+              {cascadesTabError ? (
+                <span className="mt-0.5 block text-xs text-amber-800 dark:text-amber-200">
+                  {cascadesTabError}
+                </span>
+              ) : cascadesTabInfo ? (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab <strong>{cascadesTabInfo.tabTitle}</strong>
+                  {cascadesTabInfo.url ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a
+                        href={cascadesTabInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                      >
+                        Open tab
+                      </a>
+                    </>
+                  ) : null}
+                  · replaces <code className="text-xs">cascades</code> collection
+                </span>
+              ) : (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab not found
+                </span>
+              )}
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={importSupplierDiscountsSelected}
+              disabled={
+                importBusy ||
+                testLoading ||
+                preparingObjects ||
+                clearingObjects ||
+                !supplierDiscountsTabInfo
+              }
+              onChange={(e) => setImportSupplierDiscountsSelected(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">
+                Supplier Discounts
+              </span>
+              {supplierDiscountsTabError ? (
+                <span className="mt-0.5 block text-xs text-amber-800 dark:text-amber-200">
+                  {supplierDiscountsTabError}
+                </span>
+              ) : supplierDiscountsTabInfo ? (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab <strong>{supplierDiscountsTabInfo.tabTitle}</strong>
+                  {supplierDiscountsTabInfo.url ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a
+                        href={supplierDiscountsTabInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                      >
+                        Open tab
+                      </a>
+                    </>
+                  ) : null}
+                  · replaces discount ranges and supplier rows
+                </span>
+              ) : (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab not found
+                </span>
+              )}
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={importListsSelected}
+              disabled={
+                importBusy ||
+                testLoading ||
+                preparingObjects ||
+                clearingObjects ||
+                !listsTabInfo
+              }
+              onChange={(e) => setImportListsSelected(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">Lists</span>
+              {listsTabError ? (
+                <span className="mt-0.5 block text-xs text-amber-800 dark:text-amber-200">
+                  {listsTabError}
+                </span>
+              ) : listsTabInfo ? (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab <strong>{listsTabInfo.tabTitle}</strong>
+                  {listsTabInfo.url ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a
+                        href={listsTabInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                      >
+                        Open tab
+                      </a>
+                    </>
+                  ) : null}
+                  · styles, colours, UOM → <code className="text-xs">lookups</code> /{" "}
+                  <code className="text-xs">lookups_colours</code>
+                </span>
+              ) : (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab not found
+                </span>
+              )}
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={importIncrementalLabourSelected}
+              disabled={
+                importBusy ||
+                testLoading ||
+                preparingObjects ||
+                clearingObjects ||
+                !incrementalLabourProductsTabInfo
+              }
+              onChange={(e) => setImportIncrementalLabourSelected(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">
+                Incremental Labour - Products
+              </span>
+              {incrementalLabourProductsTabError ? (
+                <span className="mt-0.5 block text-xs text-amber-800 dark:text-amber-200">
+                  {incrementalLabourProductsTabError}
+                </span>
+              ) : incrementalLabourProductsTabInfo ? (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab <strong>{incrementalLabourProductsTabInfo.tabTitle}</strong>
+                  {incrementalLabourProductsTabInfo.gridRowCount != null ? (
+                    <span> · ~{incrementalLabourProductsTabInfo.gridRowCount} grid rows</span>
+                  ) : null}
+                  {incrementalLabourProductsTabInfo.url ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a
+                        href={incrementalLabourProductsTabInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                      >
+                        Open tab
+                      </a>
+                    </>
+                  ) : null}
+                  · → <code className="text-xs">data_objectlabourrates</code> (A3:I150, replaces
+                  collection each import)
+                </span>
+              ) : (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab not found
+                </span>
+              )}
+            </span>
+          </label>
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => void runImportSupportingData()}
+              disabled={
+                importBusy ||
+                testLoading ||
+                preparingObjects ||
+                clearingObjects ||
+                (!importLabourRatesSelected &&
+                  !importProductContractorRatesSelected &&
+                  !importCascadesSelected &&
+                  !importSupplierDiscountsSelected &&
+                  !importListsSelected &&
+                  !importIncrementalLabourSelected)
+              }
+              className={sfPrimaryToolbarButton}
+            >
+              {importingLabourRates ||
+              importingProductContractorRates ||
+              importingCascades ||
+              importingSupplierDiscounts ||
+              importingLists ||
+              importingObjectLabourRates
+                ? "Importing supporting data…"
+                : "Import Supporting Data"}
+            </button>
+          </div>
+
           {importObjectLabourRatesError ? (
             <p className="text-sm text-red-800 dark:text-red-300">{importObjectLabourRatesError}</p>
           ) : null}
           {importObjectLabourRatesResult ? (
             <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
-              Imported from <strong>{importObjectLabourRatesResult.tabTitle}</strong> (
+              Incremental labour — imported from{" "}
+              <strong>{importObjectLabourRatesResult.tabTitle}</strong> (
               {importObjectLabourRatesResult.range}): {importObjectLabourRatesResult.parsed} row(s)
-              → <code className="text-xs">data_objectlabourrates</code> —{" "}
-              {importObjectLabourRatesResult.created} created,{" "}
-              {importObjectLabourRatesResult.updated} updated.
+              → <code className="text-xs">data_objectlabourrates</code>
+              {importObjectLabourRatesResult.deletedPrior > 0
+                ? ` (${importObjectLabourRatesResult.deletedPrior} prior row(s) replaced)`
+                : ""}
+              .
               {importObjectLabourRatesResult.parseErrors.length > 0 ? (
                 <span className="block text-xs text-amber-800 dark:text-amber-200">
                   Skipped: {importObjectLabourRatesResult.parseErrors.join(" ")}
@@ -1104,6 +1883,12 @@ export function ImportMasterPricesPanel() {
             </p>
           ) : null}
         </section>
+
+        {importError && !importing ? (
+          <p className="text-sm text-red-800 dark:text-red-300" role="alert">
+            {importError}
+          </p>
+        ) : null}
 
         <section className="flex flex-col gap-3 border-t border-sf-border pt-4 dark:border-zinc-700">
           <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">
@@ -1140,6 +1925,7 @@ export function ImportMasterPricesPanel() {
                 importingLists ||
                 importingCascades ||
                 importingLabourRates ||
+                importingProductContractorRates ||
                 importingSupplierDiscounts ||
                 importingObjectLabourRates
               }
@@ -1160,6 +1946,7 @@ export function ImportMasterPricesPanel() {
                 importingLists ||
                 importingCascades ||
                 importingLabourRates ||
+                importingProductContractorRates ||
                 importingSupplierDiscounts ||
                 importingObjectLabourRates
               }
@@ -1180,6 +1967,7 @@ export function ImportMasterPricesPanel() {
                 importingLists ||
                 importingCascades ||
                 importingLabourRates ||
+                importingProductContractorRates ||
                 importingSupplierDiscounts ||
                 importingObjectLabourRates
               }
@@ -1272,203 +2060,57 @@ export function ImportMasterPricesPanel() {
           ) : null}
         </section>
 
-        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-sf-border bg-sf-page px-3 py-2.5 text-sm dark:border-zinc-700 dark:bg-zinc-900/60">
-          <input
-            type="checkbox"
-            className="mt-0.5 h-4 w-4 shrink-0"
-            checked={removeProductsNotInSheet}
-            disabled={importing}
-            onChange={(e) => setRemoveProductsNotInSheet(e.target.checked)}
-          />
-          <span className="text-sf-text-secondary dark:text-zinc-300">
-            <span className="font-medium text-sf-text dark:text-zinc-100">
-              Remove products not on sheet
+        <section className="flex flex-col gap-3 rounded-lg border-2 border-sf-brand/30 bg-sf-page px-4 py-4 dark:border-[#58a9f5]/30 dark:bg-zinc-900/60">
+          <h3 className="text-sm font-semibold text-sf-text dark:text-zinc-100">
+            Create objects — <code className="text-xs font-normal">data_skus</code> →{" "}
+            <code className="text-xs font-normal">data_objects</code> →{" "}
+            <code className="text-xs font-normal">quote_objects</code>
+          </h3>
+          <p className="text-xs text-sf-text-weak dark:text-zinc-500">
+            <strong>Prepare Objects</strong> merges distinct category + product type rows from SKUs
+            into <code className="text-xs">data_objects</code>, then creates or updates matching{" "}
+            <code className="text-xs">quote_objects</code>. Use the checkboxes to remove rows that
+            no longer belong in the pipeline (optional).
+          </p>
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={removeDataObjectsNotInSkus}
+              disabled={preparingObjects || clearingObjects || importing}
+              onChange={(e) => setRemoveDataObjectsNotInSkus(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">
+                Remove data_objects not in current SKUs
+              </span>
+              <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                Deletes <code className="text-xs">data_objects</code> whose category + product
+                type are not present in <code className="text-xs">data_skus</code> (runs before
+                creating missing rows).
+              </span>
             </span>
-            <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
-              Applies to <strong>Import SKUs (upsert)</strong> only. After import, deletes{" "}
-              <code className="text-xs">data_skus</code> (and their suppliers) that were not
-              updated or appended — rows left with <code className="text-xs">isCurrent=false</code>{" "}
-              because they were missing from the workbook.
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={removeQuoteObjectsNotInDataObjects}
+              disabled={preparingObjects || clearingObjects || importing}
+              onChange={(e) => setRemoveQuoteObjectsNotInDataObjects(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">
+                Remove quote_objects not in data_objects
+              </span>
+              <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                Deletes SKU-pipeline <code className="text-xs">quote_objects</code> with no
+                matching <code className="text-xs">data_objects</code> row (category + object name).
+                Blinds quote objects are not removed.
+              </span>
             </span>
-          </span>
-        </label>
-        <div className="flex flex-wrap gap-3">
-          {importTabInfo?.url ? (
-            <a
-              href={importTabInfo.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
-            >
-              Open {MASTER_PRICES_SKU_TAB_TITLE}
-            </a>
-          ) : null}
-          {buildingTabInfo?.url ? (
-            <a
-              href={buildingTabInfo.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
-            >
-              Open {MASTER_PRICES_BUILDING_TAB_TITLE}
-            </a>
-          ) : null}
-          {labourTabInfo?.url ? (
-            <a
-              href={labourTabInfo.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
-            >
-              Open {MASTER_PRICES_LABOUR_TAB_TITLE}
-            </a>
-          ) : null}
-          {cascadesTabInfo?.url ? (
-            <a
-              href={cascadesTabInfo.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
-            >
-              Open {MASTER_PRICES_CASCADES_TAB_TITLE}
-            </a>
-          ) : null}
-          {supplierDiscountsTabInfo?.url ? (
-            <a
-              href={supplierDiscountsTabInfo.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
-            >
-              Open {MASTER_PRICES_SUPPLIER_DISCOUNTS_TAB_TITLE}
-            </a>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void runImport("sku_all")}
-            disabled={
-              importing ||
-              testLoading ||
-              preparingObjects ||
-              importingLists ||
-              importingCascades ||
-              importingLabourRates ||
-              importingSupplierDiscounts ||
-              importingObjectLabourRates
-            }
-            className={sfPrimaryToolbarButton}
-          >
-            {activeImportSource === "sku_all" ? "Importing…" : "Import SKUs (upsert)"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void runImport("building")}
-            disabled={
-              importing ||
-              testLoading ||
-              preparingObjects ||
-              importingLists ||
-              importingCascades ||
-              importingLabourRates ||
-              importingSupplierDiscounts ||
-              importingObjectLabourRates ||
-              !buildingTabInfo
-            }
-            className={sfPrimaryToolbarButton}
-          >
-            {activeImportSource === "building" ? "Importing…" : "Import Building"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void runImport("labour")}
-            disabled={
-              importing ||
-              testLoading ||
-              preparingObjects ||
-              importingLists ||
-              importingCascades ||
-              importingLabourRates ||
-              importingSupplierDiscounts ||
-              importingObjectLabourRates ||
-              !labourTabInfo
-            }
-            className={sfPrimaryToolbarButton}
-          >
-            {activeImportSource === "labour" ? "Importing…" : "Import Labour SKUs"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void runImportLabourRates()}
-            disabled={
-              importing ||
-              testLoading ||
-              preparingObjects ||
-              importingLists ||
-              importingCascades ||
-              importingLabourRates ||
-              importingSupplierDiscounts ||
-              importingObjectLabourRates ||
-              !labourTabInfo
-            }
-            className={sfPrimaryToolbarButton}
-          >
-            {importingLabourRates ? "Importing…" : "Import $ Labour Rates → data_labourrates"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void runImportCascades()}
-            disabled={
-              importing ||
-              testLoading ||
-              preparingObjects ||
-              importingLists ||
-              importingCascades ||
-              importingLabourRates ||
-              importingSupplierDiscounts ||
-              importingObjectLabourRates ||
-              !cascadesTabInfo
-            }
-            className={sfPrimaryToolbarButton}
-          >
-            {importingCascades ? "Importing…" : "Import Cascades"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void runImportSupplierDiscounts()}
-            disabled={
-              importing ||
-              testLoading ||
-              preparingObjects ||
-              importingLists ||
-              importingCascades ||
-              importingLabourRates ||
-              importingSupplierDiscounts ||
-              importingObjectLabourRates ||
-              !supplierDiscountsTabInfo
-            }
-            className={sfPrimaryToolbarButton}
-          >
-            {importingSupplierDiscounts
-              ? "Importing…"
-              : "Import Supplier Discounts"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void runImportLists()}
-            disabled={
-              importing ||
-              testLoading ||
-              preparingObjects ||
-              importingLists ||
-              importingCascades ||
-              importingLabourRates ||
-              importingSupplierDiscounts ||
-              importingObjectLabourRates
-            }
-            className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
-          >
-            {importingLists ? "Importing lists…" : "Import Lists"}
-          </button>
+          </label>
+          <div className="flex flex-wrap gap-3">
           <button
             type="button"
             onClick={() => setClearObjectsConfirmOpen(true)}
@@ -1480,6 +2122,7 @@ export function ImportMasterPricesPanel() {
               importingLists ||
               importingCascades ||
               importingLabourRates ||
+              importingProductContractorRates ||
               importingSupplierDiscounts ||
               importingObjectLabourRates
             }
@@ -1498,6 +2141,7 @@ export function ImportMasterPricesPanel() {
               importingLists ||
               importingCascades ||
               importingLabourRates ||
+              importingProductContractorRates ||
               importingSupplierDiscounts ||
               importingObjectLabourRates
             }
@@ -1505,10 +2149,16 @@ export function ImportMasterPricesPanel() {
           >
             {preparingObjects ? "Preparing…" : "Prepare Objects"}
           </button>
-        </div>
+          </div>
+        </section>
 
         {importLabourRatesError ? (
           <p className="text-sm text-red-800 dark:text-red-300">{importLabourRatesError}</p>
+        ) : null}
+        {importProductContractorRatesError ? (
+          <p className="text-sm text-red-800 dark:text-red-300">
+            {importProductContractorRatesError}
+          </p>
         ) : null}
         {importLabourRatesResult ? (
           <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
@@ -1521,6 +2171,24 @@ export function ImportMasterPricesPanel() {
             {importLabourRatesResult.parseErrors.length > 0 ? (
               <span className="block text-xs text-amber-800 dark:text-amber-200">
                 Skipped with errors: {importLabourRatesResult.parseErrors.join(" ")}
+              </span>
+            ) : null}
+          </p>
+        ) : null}
+        {importProductContractorRatesResult ? (
+          <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
+            Import product contractor rates — tab{" "}
+            <strong>{importProductContractorRatesResult.tabTitle}</strong> (
+            {importProductContractorRatesResult.range}, header row{" "}
+            {importProductContractorRatesResult.headerRow1Based}, data from row{" "}
+            {importProductContractorRatesResult.dataStartRow1Based}):{" "}
+            {importProductContractorRatesResult.parsed} row(s) written to{" "}
+            <code className="text-xs">data_productcontractorrates</code> (
+            {importProductContractorRatesResult.deletedPrior} removed first).
+            {importProductContractorRatesResult.parseErrors.length > 0 ? (
+              <span className="block text-xs text-amber-800 dark:text-amber-200">
+                Skipped with errors:{" "}
+                {importProductContractorRatesResult.parseErrors.join(" ")}
               </span>
             ) : null}
           </p>
@@ -1610,10 +2278,19 @@ export function ImportMasterPricesPanel() {
           <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
             Prepare objects: {prepareResult.distinctFromSkus} distinct category + product type
             line(s) from SKUs —{" "}
-            {prepareResult.created} created, {prepareResult.skippedExisting} already in{" "}
-            <code className="text-xs">data_objects</code>
+            {prepareResult.created} data_object(s) added, {prepareResult.skippedExisting} already
+            present
+            {prepareResult.removedDataObjects > 0
+              ? `, ${prepareResult.removedDataObjects} data_object(s) removed (not in SKUs)`
+              : ""}
+            {prepareResult.quoteObjectsCreated > 0 || prepareResult.quoteObjectsUpdated > 0
+              ? ` · quote_objects: ${prepareResult.quoteObjectsCreated} created, ${prepareResult.quoteObjectsUpdated} updated`
+              : ""}
+            {prepareResult.removedQuoteObjects > 0
+              ? `, ${prepareResult.removedQuoteObjects} quote_object(s) removed (not in data_objects)`
+              : ""}
             {prepareResult.skippedIncomplete > 0
-              ? `, ${prepareResult.skippedIncomplete} SKU row(s) missing category or product type`
+              ? ` · ${prepareResult.skippedIncomplete} SKU row(s) missing category or product type`
               : ""}
             .
           </p>
@@ -1666,6 +2343,14 @@ export function ImportMasterPricesPanel() {
           </div>
         ) : null}
 
+        {sessionImportLogsSorted.length > 0 ? (
+          <ImportLogIndexPanel
+            logs={sessionImportLogsSorted}
+            selectedImportRunId={selectedImportLogId ?? displayLog?.importRunId ?? null}
+            onSelect={setSelectedImportLogId}
+          />
+        ) : null}
+
         {displayLog && summaryStatus ? (
           <ImportSummaryBanner log={displayLog} statusOverride={summaryStatus} />
         ) : null}
@@ -1687,30 +2372,6 @@ export function ImportMasterPricesPanel() {
 
       {displayLog ? <ImportLogAuditPanel log={displayLog} /> : null}
 
-      {recentLogs.length > 0 ? (
-        <section className={`${sfDataSurface} flex flex-col gap-2 p-4 md:p-5`}>
-          <h2 className="text-sm font-semibold text-sf-text dark:text-zinc-100">
-            Recent importlog runs
-          </h2>
-          <ul className="text-sm text-sf-text-secondary dark:text-zinc-400">
-            {recentLogs.map((log) => (
-              <li key={log.importRunId}>
-                <button
-                  type="button"
-                  className="text-left text-sf-brand hover:underline dark:text-[#58a9f5]"
-                  onClick={() => setSavedImportLog(log)}
-                >
-                  {new Date(log.completedAt).toLocaleString()} — {log.kind} — {log.status} — found{" "}
-                  {log.summary.rowsFound} / appended {log.summary.productsAppended} / updated{" "}
-                  {log.summary.productsUpdated} / errors {log.summary.errorRows} / blank{" "}
-                  {log.summary.blankRows}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
       <section className={`${sfDataSurface} flex flex-col gap-4 p-4 md:p-5`}>
         <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">
           Workbook access test
@@ -1718,14 +2379,20 @@ export function ImportMasterPricesPanel() {
         <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
           <code className="text-xs">{MASTER_PRICES_SKU_TAB_TITLE}</code>,{" "}
           <code className="text-xs">{MASTER_PRICES_BUILDING_TAB_TITLE}</code>, and{" "}
-          <code className="text-xs">{MASTER_PRICES_LABOUR_TAB_TITLE}</code> share the same column
-          layout (Apend1Type/Spec … Apend3Type/Spec after UOM). SKU tab
+          <code className="text-xs">{MASTER_PRICES_PAINTING_TAB_TITLE}</code> share the same column
+          layout (Apend1Type/Spec … Apend3Type/Spec after UOM).{" "}
+          <code className="text-xs">{MASTER_PRICES_LABOUR_TAB_TITLE}</code> is labour rates only
+          (A–E). SKU tab
           {importTabInfo ? (
             <> (gid <code className="text-xs">{importTabInfo.gid}</code>)</>
           ) : null}
           ; building
           {buildingTabInfo ? (
             <> (gid <code className="text-xs">{buildingTabInfo.gid}</code>)</>
+          ) : null}
+          ; painting
+          {paintingTabInfo ? (
+            <> (gid <code className="text-xs">{paintingTabInfo.gid}</code>)</>
           ) : null}
           ; labour
           {labourTabInfo ? (

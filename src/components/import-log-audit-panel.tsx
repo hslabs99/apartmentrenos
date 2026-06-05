@@ -1,5 +1,11 @@
 "use client";
 
+import { masterPricesSpreadsheetRowUrl } from "@/lib/google/master-prices-spreadsheet";
+import {
+  importLogCustomElevateRowsSkipped,
+  importLogDataErrors,
+  importLogSkippedCustomElevateSamples,
+} from "@/lib/import-log-error-rows";
 import { sfDataSurface } from "@/lib/sf-layout";
 import type { ImportLogPublic } from "@/types/import-log-types";
 
@@ -22,9 +28,13 @@ export function ImportLogAuditPanel({ log }: { log: ImportLogPublic }) {
     log.skippedInvalidSamples ??
     log.audit?.skippedRowSamples.filter((s) => s.status === "skipped_invalid") ??
     [];
+  const dataErrors = importLogDataErrors(log);
+  const customElevateSkipped = importLogSkippedCustomElevateSamples(log);
+  const customElevateCount = importLogCustomElevateRowsSkipped(log);
+  const sheetGid = log.gid;
 
   return (
-    <section className={`${sfDataSurface} flex flex-col gap-4 p-4 md:p-5`}>
+    <section id="import-data-errors" className={`${sfDataSurface} flex flex-col gap-4 p-4 md:p-5`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">
           importlog record
@@ -77,6 +87,26 @@ export function ImportLogAuditPanel({ log }: { log: ImportLogPublic }) {
                 {summary.errorRows}
               </td>
             </tr>
+            {customElevateCount > 0 ? (
+              <tr className="border-b border-sf-border dark:border-zinc-800">
+                <th className="py-2 pr-4 font-medium text-sf-text-secondary">
+                  Custom elevate skipped
+                </th>
+                <td className="py-2 tabular-nums text-sf-text-secondary dark:text-zinc-300">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      document
+                        .getElementById("import-custom-elevate-skipped")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                    }
+                    className="text-sf-brand underline decoration-sf-brand/40 underline-offset-2 hover:decoration-sf-brand dark:text-[#58a9f5]"
+                  >
+                    {customElevateCount}
+                  </button>
+                </td>
+              </tr>
+            ) : null}
             <tr className="border-b border-sf-border dark:border-zinc-800">
               <th className="py-2 pr-4 font-medium text-sf-text-secondary">Header row</th>
               <td className="py-2 tabular-nums">{summary.headerRow}</td>
@@ -102,29 +132,118 @@ export function ImportLogAuditPanel({ log }: { log: ImportLogPublic }) {
         </details>
       ) : null}
 
-      {(log.dataErrors ?? log.audit?.dataErrors ?? []).length > 0 ? (
+      {customElevateSkipped.length > 0 ? (
+        <details id="import-custom-elevate-skipped" open className="text-sm">
+          <summary className="cursor-pointer font-medium text-sf-text-secondary dark:text-zinc-300">
+            Custom elevate skipped ({customElevateCount}
+            {customElevateSkipped.length < customElevateCount
+              ? ` — showing ${customElevateSkipped.length}`
+              : ""}
+            ) — column D is Custom
+          </summary>
+          <p className="mt-1 text-xs text-sf-text-secondary dark:text-zinc-400">
+            These rows are intentionally excluded from import. Open in Google Sheets to review.
+          </p>
+          <div className="mt-2 max-h-64 overflow-auto">
+            <table className="w-full min-w-[500px] border-collapse text-left text-xs">
+              <thead>
+                <tr className="border-b border-sf-border dark:border-zinc-700">
+                  <th className="py-1 pr-2">Sheet row</th>
+                  <th className="py-1 pr-2">Category</th>
+                  <th className="py-1 pr-2">Product</th>
+                  <th className="py-1">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {customElevateSkipped.map((row) => (
+                  <tr
+                    key={`custom-elevate-${row.sheetRowNumber}`}
+                    className="border-b border-sf-border/60 dark:border-zinc-800"
+                  >
+                    <td className="py-1 pr-2 font-mono align-top">
+                      {sheetGid > 0 ? (
+                        <a
+                          href={masterPricesSpreadsheetRowUrl(sheetGid, row.sheetRowNumber)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                          title="Open this row in Google Sheets"
+                        >
+                          {row.sheetRowNumber}
+                        </a>
+                      ) : (
+                        row.sheetRowNumber
+                      )}
+                    </td>
+                    <td className="py-1 pr-2">{row.category ?? "—"}</td>
+                    <td className="py-1 pr-2 max-w-[200px] truncate">{row.product ?? "—"}</td>
+                    <td className="py-1 text-sf-text-secondary dark:text-zinc-400">{row.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      ) : null}
+
+      {dataErrors.length > 0 ? (
         <details open className="text-sm">
           <summary className="cursor-pointer font-medium text-amber-900 dark:text-amber-200">
-            Data errors ({(log.dataErrors ?? log.audit?.dataErrors ?? []).length}) — fix in
-            spreadsheet
+            Data errors ({dataErrors.length}) — fix in spreadsheet
           </summary>
           <div className="mt-2 max-h-64 overflow-auto">
             <table className="w-full min-w-[600px] border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-sf-border dark:border-zinc-700">
-                  <th className="py-1 pr-2">Workbook row</th>
+                  <th className="py-1 pr-2">Sheet row</th>
                   <th className="py-1 pr-2">Code</th>
                   <th className="py-1 pr-2">Parsed key</th>
                   <th className="py-1">Message</th>
                 </tr>
               </thead>
               <tbody>
-                {(log.dataErrors ?? log.audit?.dataErrors ?? []).map((row) => (
+                {dataErrors.map((row) => (
                   <tr
-                    key={`${row.sheetRowNumber}-${row.code}`}
+                    key={`${row.sheetRowNumber}-${row.triggerSheetRowNumber ?? ""}-${row.code}-${row.message}`}
                     className="border-b border-sf-border/60 dark:border-zinc-800"
                   >
-                    <td className="py-1 pr-2 font-mono">{row.sheetRowNumber}</td>
+                    <td className="py-1 pr-2 font-mono align-top">
+                      {sheetGid > 0 ? (
+                        <a
+                          href={masterPricesSpreadsheetRowUrl(sheetGid, row.sheetRowNumber)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                          title="Open this row in Google Sheets"
+                        >
+                          {row.sheetRowNumber}
+                        </a>
+                      ) : (
+                        row.sheetRowNumber
+                      )}
+                      {row.triggerSheetRowNumber != null ? (
+                        <span className="mt-0.5 block text-[0.65rem] font-sans text-sf-text-secondary dark:text-zinc-400">
+                          {sheetGid > 0 ? (
+                            <>
+                              option row{" "}
+                              <a
+                                href={masterPricesSpreadsheetRowUrl(
+                                  sheetGid,
+                                  row.triggerSheetRowNumber,
+                                )}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                              >
+                                {row.triggerSheetRowNumber}
+                              </a>
+                            </>
+                          ) : (
+                            <>option row {row.triggerSheetRowNumber}</>
+                          )}
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="py-1 pr-2 font-mono text-[0.65rem]">{row.code}</td>
                     <td className="max-w-[14rem] py-1 pr-2 align-top text-[0.65rem] text-sf-text-secondary dark:text-zinc-400">
                       {row.productKey ? (

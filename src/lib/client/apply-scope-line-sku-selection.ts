@@ -11,6 +11,8 @@ import type { PriceLevelPublic } from "@/types/price-level";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import type { ProjectAreaPublic } from "@/types/project-area";
 import type { ProjectPublic } from "@/types/project";
+import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
+import type { SupplierDiscountByKey } from "@/lib/client/supplier-discount-price";
 import type { QuoteObjectPublic } from "@/types/quote-object";
 
 async function readApiResponse<T>(res: Response): Promise<T> {
@@ -79,6 +81,8 @@ export async function applyScopeLineSkuWithBundledChildren(args: {
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
   quoteObjects: QuoteObjectPublic[];
   priceLevels: PriceLevelPublic[];
+  cascades?: CascadeRow[];
+  supplierDiscountByKey?: SupplierDiscountByKey;
   pa: ProjectAreaPublic;
   project: ProjectPublic | null;
   allObjects: ProjectAreaObjectPublic[];
@@ -100,8 +104,10 @@ export async function applyScopeLineSkuWithBundledChildren(args: {
           pa: args.pa,
           project: args.project,
           priceLevels: args.priceLevels,
+          cascades: args.cascades,
           quoteObjects: args.quoteObjects,
           preferredSupplierOption: args.pick.supplierOption,
+          supplierDiscountByKey: args.supplierDiscountByKey,
         })
       : [];
 

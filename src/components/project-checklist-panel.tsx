@@ -15,8 +15,14 @@ import { BlindsScopeEditModal } from "@/components/blinds-scope-edit-modal";
 import { BlindsScopeFields } from "@/components/blinds-scope-fields";
 import { BlindsWorkbenchSkuLink } from "@/components/blinds-workbench-sku-link";
 import { AddObjectPickerModal } from "@/components/add-object-picker-modal";
+import { AddScopePickerModal } from "@/components/add-scope-picker-modal";
 import {
   clAnswerInlineFieldClass,
+  clAnswerWidthCh,
+  clScopeQuestionSkuDividerClass,
+  clActionBtnClass,
+  clActionBtnDangerClass,
+  CL_FIELD_CONTROL_HEIGHT_CLASS,
   clInlineFieldLabelClass,
   clFieldsGridClass,
   clFieldsGridStyle,
@@ -27,6 +33,8 @@ import {
   clScopeLineStackClass,
   clScopeMeasureColClass,
   clScopeNonStdColClass,
+  clScopeToolColClass,
+  clToolCellClass,
   clScopeQuestionAnswerGroupClass,
   clScopeQuestionAnswerGroupBlindsClass,
   clScopeQuestionAnswerRowClass,
@@ -38,6 +46,7 @@ import {
   clSkuSelectExtraClass,
   clUomFieldClass,
 } from "@/components/cl-checklist-layout";
+import { ScopeLineMeasureTool, ScopeToolAfterAnswer } from "@/components/scope-tool-modal";
 import { ScopeLineSkuPicker } from "@/components/scope-line-sku-picker";
 import {
   ScopeLineBundledChildren,
@@ -46,19 +55,18 @@ import {
 import { applyScopeLineSkuWithBundledChildren } from "@/lib/client/apply-scope-line-sku-selection";
 import { partitionAreaLines } from "@/lib/client/partition-area-lines";
 import {
+  resolveScopeLineSkuUnitPriceExcGst,
   scopeLineMatchesSkuPick,
   type ScopeLineSkuPick,
 } from "@/lib/client/scope-line-sku-match";
 import { IconNotes, IconTrash } from "@/components/icons/lightning-icons";
 import { ModalFrame } from "@/components/modal-frame";
+import { CascadeElevateSelect } from "@/components/cascade-elevate-select";
 import { PriceLevelIdSelect } from "@/components/price-level-id-select";
 import { ProjectsTabs } from "@/components/projects-tabs";
 import { useLookups } from "@/lib/client/use-lookups";
-import {
-  checklistInheritedMeasureForRow,
-  checklistMeasureFieldDisplayString,
-  measuresClose,
-} from "@/lib/checklist-effective-measure";
+import { ChecklistMeasureInput } from "@/components/checklist-measure-input";
+import { ChecklistProjectDimensionsRow } from "@/components/checklist-project-dimensions-row";
 import { compareProjectAreasDisplayOrder } from "@/lib/project-area-display-order";
 import { projectAreaHeading } from "@/lib/project-area-display-name";
 import { sfRowIconBtn, sfRowIconBtnDanger } from "@/lib/sf-row-actions";
@@ -67,13 +75,20 @@ import { scopesForProjectArea } from "@/lib/scopes-for-project-area";
 import { marginPercentFromSettings } from "@/lib/settings-margin";
 import { contractLabourRateBySiloProduct, labourSiloCostExcGst } from "@/lib/labour-rate-lookup";
 import {
-  formatLabourHours,
-  LABOUR_SILO_KEYS,
-  WB_LABOUR_SILO_HEADERS,
+  LOOKUP_LABOUR_SILO_KEYS,
+  WB_WORKBENCH_LABOUR_SILO_HEADERS,
   type LabourSiloKey,
 } from "@/lib/labour-silo";
 import { applyLookupLabourToProjectLine } from "@/lib/client/apply-lookup-labour-to-line";
+import {
+  lookupLabourUpdatesForLines,
+  persistWorkbenchLookupLabour,
+} from "@/lib/client/sync-workbench-lookup-labour";
 import { WbLabourSiloRowCells, sumLabourHours } from "@/components/wb-labour-silo-row-cells";
+import { WbLabourSiloValue } from "@/components/wb-labour-silo-cell";
+import { WbLineSupplierCell } from "@/components/wb-line-supplier-cell";
+import { WbObjectName } from "@/components/wb-object-name";
+import { projectLineObjectLabel } from "@/lib/client/project-line-quote-object";
 import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
 import type { DataObjectLabourRatePublic } from "@/types/data-object-labour-rate-public";
 import { distinctLookupValues } from "@/lib/lookup-list-values";
@@ -81,7 +96,6 @@ import { LOOKUP_TYPE_STYLE } from "@/lib/lookup-types";
 import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
 import {
   cascadeLevelFromPriceLevel,
-  projectfinishForPriceLevelId,
 } from "@/lib/cascades/cascade-level-from-price-level";
 import { scopeSelectionUsesSystemBlinds } from "@/lib/blinds/blinds-scope-answer";
 import { isBlindsSystemLine, blindsSkuDisplayLabel } from "@/lib/blinds/blinds-data-utils";
@@ -92,7 +106,10 @@ import {
   parseCurrencyInput,
 } from "@/lib/client/format-money";
 import { loadCatalogSkuData } from "@/lib/client/load-catalog-sku-data";
+import { supplierDiscountByKeyFromRows } from "@/lib/client/supplier-discount-price";
+import type { DataSupplierDiscountPublic } from "@/types/data-supplier-discount-public";
 import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
+import { scopeAnswerNeedsShowAllLineSync } from "@/lib/client/scope-show-all-sync";
 import { useViewMode } from "@/lib/view-mode";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { DataSkuSupplierPublic } from "@/types/data-sku-supplier-public";
@@ -106,7 +123,7 @@ import type { ScopePublic } from "@/types/scope";
 import type { SettingPublic } from "@/types/setting";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 async function readApiResponse<T>(res: Response): Promise<T> {
   const contentType = res.headers.get("content-type") ?? "";
@@ -168,12 +185,18 @@ function formatLoad(n: number | null | undefined): string {
 }
 
 
-function objectLabel(row: ProjectAreaObjectPublic, quoteObjects: QuoteObjectPublic[]): string {
-  if (isBlindsSystemLine(row)) {
-    return row.blindType?.trim() || "Blinds";
-  }
-  const q = quoteObjects.find((o) => o.objectid === row.objectid);
-  return q?.objectname?.trim() ? q.objectname : `Object #${row.objectid}`;
+/** Object name row once per `objectid` within a scope’s lines (Show All = many SKU rows, one header). */
+function scopeLineShowsObjectNameHeader(
+  scopeLines: ProjectAreaObjectPublic[],
+  lineIdx: number,
+): boolean {
+  const line = scopeLines[lineIdx];
+  if (!line) return false;
+  const prev = lineIdx > 0 ? scopeLines[lineIdx - 1] : null;
+  const isFirstLineForObject = !prev || prev.objectid !== line.objectid;
+  if (!isFirstLineForObject) return false;
+  const scopeHasMultipleLines = scopeLines.length > 1;
+  return scopeHasMultipleLines || lineIdx > 0;
 }
 
 function lineSourceLabel(row: ProjectAreaObjectPublic): string {
@@ -259,13 +282,18 @@ const wbAreaGapCell =
 const cell =
   "border border-sf-border px-1 py-0.5 align-middle text-sm text-sf-text dark:border-zinc-700 dark:text-zinc-200";
 const cellMuted = `${cell} text-sf-text-weak dark:text-zinc-400`;
+/** Workbench object rows: text-xs (checklist keeps `cell` text-sm). */
+const wbCell =
+  "border border-sf-border px-1 py-0.5 align-middle text-xs text-sf-text dark:border-zinc-700 dark:text-zinc-200";
+const wbCellMuted = `${wbCell} text-sf-text-weak dark:text-zinc-400`;
 /**
  * Workbench table layout — see docs/layout-rules.md and .cursor/rules/layout-rules.mdc.
- * Col widths: colgroup only; reclaimed width → wbSpacerCol (20th column).
+ * Col widths: colgroup only; reclaimed width → wbSpacerCol (19th column).
  */
-const WB_TABLE_COLS = 22;
-const wbSpacerCol = "w-[3.5rem]";
-const wbSpacerCell = `${cellMuted} border border-sf-border dark:border-zinc-700`;
+const WB_TABLE_COLS = 19;
+const wbSupplierCol = "w-[6rem]";
+const wbSpacerCol = "w-[4.9rem]";
+const wbSpacerCell = `${wbCellMuted} border border-sf-border dark:border-zinc-700`;
 /** Area / project header rows: same columns as object table, no internal column borders. */
 const wbAreaHdrCell = "border-0 align-top px-1 py-1.5";
 const wbAreaHdrCellRight = `${wbAreaHdrCell} text-right`;
@@ -289,6 +317,9 @@ const inputLong =
 const selectBase =
   "rounded border border-sf-border-strong bg-sf-surface px-1 py-1 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400/60 dark:border-zinc-600 dark:bg-zinc-950";
 const selectCell = `${selectBase} w-full min-w-0`;
+/** Workbench row controls (no text-sm — avoids conflicting with text-xs). */
+const wbFieldBase =
+  "rounded border border-sf-border-strong bg-sf-surface px-1 py-0.5 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400/60 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-emerald-500";
 /** Workbench column-aligned field labels (project/area header rows). */
 const wbHdrLabel =
   "mb-0.5 block text-xs font-semibold uppercase tracking-wide text-sf-text-secondary dark:text-zinc-400";
@@ -297,16 +328,16 @@ const wbSelectTier = `${selectBase} w-[30ch] max-w-full`;
 const wbSelectColour = `${selectBase} w-[10ch] max-w-full`;
 /** Area colour override (longer placeholder text). */
 const wbSelectColourWide = `${selectBase} w-[22ch] max-w-full`;
-const wbCellMid = cell;
-const wbCellDesc = cell;
-const wbCellUom = cell;
-const wbCellSku = cell;
-const wbCellLoad = cell;
-const wbCellNum = `${cell} text-right tabular-nums`;
-const wbSelectRow = `${selectBase} block w-full max-w-full text-xs py-0.5`;
-const wbInputLoad = `${selectBase} block w-full min-w-0 tabular-nums text-right text-xs py-0.5`;
-const wbInputMeasure = `${selectBase} block w-full min-w-0 tabular-nums text-right text-xs py-0.5`;
-const wbInputM2 = `${selectBase} w-[6ch] max-w-full tabular-nums text-right py-0.5`;
+const wbCellMid = wbCell;
+const wbCellDesc = wbCell;
+const wbCellUom = wbCell;
+const wbCellSku = wbCell;
+const wbCellLoad = wbCell;
+const wbCellNum = `${wbCell} text-right tabular-nums`;
+const wbSelectRow = `${wbFieldBase} block w-full max-w-full text-xs`;
+const wbInputLoad = `${wbFieldBase} block w-full min-w-0 tabular-nums text-right text-xs`;
+const wbInputMeasure = `${wbFieldBase} block w-full min-w-0 tabular-nums text-right text-xs`;
+const wbInputM2 = `${wbFieldBase} w-[6ch] max-w-full tabular-nums text-right text-xs`;
 /** Shared workbench area footer: notes + questions (same title, label, 2-row fields). */
 const wbAreaSectionTitle =
   "text-sm font-semibold text-sf-text dark:text-zinc-100";
@@ -315,13 +346,13 @@ const wbAreaFieldStack = "w-full space-y-1";
 const wbAreaFieldLabel =
   "block text-xs font-medium text-sf-text-secondary dark:text-zinc-300";
 const wbAreaFieldTextarea = `${inputLong} block w-full resize-y`;
-const wbInputCurrency = `${selectBase} block w-full min-w-0 tabular-nums text-right text-xs py-0.5`;
+const wbInputCurrency = `${wbFieldBase} block w-full min-w-0 tabular-nums text-right text-xs`;
 const clAnswerInput = `${selectBase} block w-[20ch] min-w-[20ch] max-w-[20ch] text-xs py-0.5`;
+const clAnswerSelectBase = `${selectBase} block text-xs py-0.5`;
 const clBlindsDropWidthInput = `${selectBase} block w-[10ch] min-w-[10ch] max-w-[10ch] text-xs py-0.5`;
 const clSkuInput = `${selectBase} ${clSkuSelectExtraClass}`;
-const clUomInput = `${selectBase} block w-[10ch] max-w-full min-w-0 text-xs py-0.5`;
-const clMeasureInput = `${selectBase} block w-[10ch] max-w-full min-w-0 tabular-nums text-right text-xs py-0.5`;
-
+const clUomInput = `${selectBase} box-border block w-full max-w-full min-w-0 text-xs leading-tight py-0 ${CL_FIELD_CONTROL_HEIGHT_CLASS}`;
+const clMeasureInput = `${selectBase} box-border block w-full max-w-full min-w-0 tabular-nums text-right text-xs leading-tight py-0 ${CL_FIELD_CONTROL_HEIGHT_CLASS}`;
 export type ProjectChecklistPanelMode = "checklist" | "workbench";
 
 export function ProjectChecklistPanel({
@@ -356,6 +387,11 @@ export function ProjectChecklistPanel({
   const [suppliersBySkuId, setSuppliersBySkuId] = useState<
     Record<string, DataSkuSupplierPublic[]>
   >({});
+  const [supplierDiscounts, setSupplierDiscounts] = useState<DataSupplierDiscountPublic[]>([]);
+  const supplierDiscountByKey = useMemo(
+    () => supplierDiscountByKeyFromRows(supplierDiscounts),
+    [supplierDiscounts],
+  );
   const [scopeAnswerSaving, setScopeAnswerSaving] = useState<string | null>(null);
   const baseStyleOptions = useMemo(() => {
     const out = distinctLookupValues(lookups, LOOKUP_TYPE_STYLE);
@@ -373,6 +409,9 @@ export function ProjectChecklistPanel({
   const [pickObjectOpen, setPickObjectOpen] = useState(false);
   const [pickObjectAreaId, setPickObjectAreaId] = useState<string | null>(null);
   const [pickObjectSaving, setPickObjectSaving] = useState(false);
+  const [pickScopeOpen, setPickScopeOpen] = useState(false);
+  const [pickScopeAreaId, setPickScopeAreaId] = useState<string | null>(null);
+  const [pickScopeSaving, setPickScopeSaving] = useState(false);
   const [answerSavingId, setAnswerSavingId] = useState<string | null>(null);
   /** Workbench object line notes (icon opens popup; area notes stay inline in header). */
   const [lineNotesModal, setLineNotesModal] = useState<{
@@ -473,8 +512,18 @@ export function ProjectChecklistPanel({
       error?: string;
     };
     if (!objRes.ok) throw new Error(objData.error ?? "Failed to reload line items");
-    setAllObjects(objData.projectAreaObjects ?? []);
-  }, [projectDocId]);
+    let lines = objData.projectAreaObjects ?? [];
+    if (mode === "workbench" && lines.length > 0) {
+      try {
+        lines = await persistWorkbenchLookupLabour(lines, quoteObjects, objectLabourRates);
+      } catch (e) {
+        setError(
+          e instanceof Error ? e.message : "Failed to sync labour hours from rates table",
+        );
+      }
+    }
+    setAllObjects(lines);
+  }, [projectDocId, mode, quoteObjects, objectLabourRates]);
 
   const reloadProjectAreas = useCallback(async () => {
     if (!projectDocId) return;
@@ -647,6 +696,72 @@ export function ProjectChecklistPanel({
     [reloadLineItems, reloadProjectAreas],
   );
 
+  const showAllSyncInFlightRef = useRef(new Set<string>());
+
+  /** Re-apply scope answers when Show All was configured in Setup but lines are still a single SKU dropdown row. */
+  useEffect(() => {
+    if (!projectDocId || scopes.length === 0 || quoteObjects.length === 0) return;
+
+    for (const pa of projectAreas) {
+      for (const entry of pa.scopeAnswers ?? []) {
+        const scope = scopes.find((s) => s.id === entry.scopeDocId);
+        if (!scope) continue;
+        const scopeLines = allObjects.filter(
+          (o) =>
+            o.projectAreaDocId === pa.id &&
+            o.linesource === "scope" &&
+            o.scopeDocId === entry.scopeDocId,
+        );
+        if (
+          !scopeAnswerNeedsShowAllLineSync(scope, entry.answerid, scopeLines, quoteObjects)
+        ) {
+          continue;
+        }
+        const key = `${pa.id}:${entry.scopeDocId}`;
+        if (showAllSyncInFlightRef.current.has(key)) continue;
+        if (scopeAnswerSaving === entry.scopeDocId) continue;
+        showAllSyncInFlightRef.current.add(key);
+        void applyScopeAnswer(pa, entry.scopeDocId, entry.answerid).finally(() => {
+          showAllSyncInFlightRef.current.delete(key);
+        });
+      }
+    }
+  }, [
+    projectDocId,
+    projectAreas,
+    scopes,
+    quoteObjects,
+    allObjects,
+    applyScopeAnswer,
+    scopeAnswerSaving,
+  ]);
+
+  const addExtraScopeToArea = useCallback(
+    async (pa: ProjectAreaPublic, scopeDocId: string): Promise<boolean> => {
+      const prev = pa.extraScopeDocIds ?? [];
+      if (prev.includes(scopeDocId)) return true;
+      setError(null);
+      try {
+        const res = await fetch(`/api/projectareas/${encodeURIComponent(pa.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ extraScopeDocIds: [...prev, scopeDocId] }),
+        });
+        const data = await readApiResponse<{ projectArea?: ProjectAreaPublic; error?: string }>(res);
+        if (!res.ok) throw new Error(data.error ?? "Failed to add scope");
+        if (data.projectArea) {
+          setProjectAreas((p) => p.map((x) => (x.id === pa.id ? data.projectArea! : x)));
+        }
+        return true;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to add scope");
+        await reloadProjectAreas();
+        return false;
+      }
+    },
+    [reloadProjectAreas],
+  );
+
   const removeExtraScopeFromArea = useCallback(
     async (pa: ProjectAreaPublic, scopeDocId: string) => {
       const prev = pa.extraScopeDocIds ?? [];
@@ -753,6 +868,8 @@ export function ProjectChecklistPanel({
             suppliersBySkuId,
             quoteObjects,
             priceLevels,
+            cascades,
+            supplierDiscountByKey,
             pa,
             project,
             allObjects,
@@ -781,6 +898,8 @@ export function ProjectChecklistPanel({
       suppliersBySkuId,
       quoteObjects,
       priceLevels,
+      cascades,
+      supplierDiscountByKey,
       project,
       reloadLineItems,
     ],
@@ -821,12 +940,14 @@ export function ProjectChecklistPanel({
           })(),
         ]);
 
-        const [paRes, objRes, settingsRes, labourRatesRes, objectLabourRes] = await Promise.all([
+        const [paRes, objRes, settingsRes, labourRatesRes, objectLabourRes, supplierDiscRes] =
+          await Promise.all([
           fetch(`/api/projectareas?projectDocId=${encodeURIComponent(projectDocId)}`),
           fetch(`/api/projectareaobjects?projectDocId=${encodeURIComponent(projectDocId)}`),
           fetch("/api/settings"),
           fetch("/api/labour-rates"),
           fetch("/api/object-labour-rates"),
+          fetch("/api/supplier-discounts"),
         ]);
         const paData = (await paRes.json()) as { projectAreas?: ProjectAreaPublic[]; error?: string };
         if (!paRes.ok) throw new Error(paData.error ?? "Failed to load project areas");
@@ -858,6 +979,12 @@ export function ProjectChecklistPanel({
         if (objectLabourRes.ok) setObjectLabourRates(objectLabourData.items ?? []);
         else setObjectLabourRates([]);
 
+        const supplierDiscData = (await supplierDiscRes.json()) as {
+          items?: DataSupplierDiscountPublic[];
+        };
+        if (supplierDiscRes.ok) setSupplierDiscounts(supplierDiscData.items ?? []);
+        else setSupplierDiscounts([]);
+
         await reloadProjectAreaAnswers();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load");
@@ -876,7 +1003,50 @@ export function ProjectChecklistPanel({
     loadCatalogSkus,
     loadBlindsData,
     reloadProjectAreaAnswers,
+    mode,
   ]);
+
+  const workbenchLookupLabourSyncingRef = useRef(false);
+
+  /** Workbench: apply object labour rates table to lookup silos on load and when rates/lines change. */
+  useEffect(() => {
+    if (mode !== "workbench" || loading || !projectDocId) return;
+
+    const updates = lookupLabourUpdatesForLines(
+      allObjects,
+      quoteObjects,
+      objectLabourRates,
+    );
+    if (updates.length === 0) return;
+    if (workbenchLookupLabourSyncingRef.current) return;
+
+    workbenchLookupLabourSyncingRef.current = true;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const merged = await persistWorkbenchLookupLabour(
+          allObjects,
+          quoteObjects,
+          objectLabourRates,
+        );
+        if (!cancelled) setAllObjects(merged);
+      } catch (e) {
+        if (!cancelled) {
+          setError(
+            e instanceof Error ? e.message : "Failed to sync labour hours from rates table",
+          );
+        }
+      } finally {
+        if (!cancelled) workbenchLookupLabourSyncingRef.current = false;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      workbenchLookupLabourSyncingRef.current = false;
+    };
+  }, [mode, loading, projectDocId, allObjects, quoteObjects, objectLabourRates]);
 
   const objectsByProjectAreaDocId = useMemo(() => {
     const m = new Map<string, ProjectAreaObjectPublic[]>();
@@ -960,6 +1130,69 @@ export function ProjectChecklistPanel({
     setPickObjectAreaId(null);
   }
 
+  function openPickScopeModal(pa: ProjectAreaPublic) {
+    setPickScopeAreaId(pa.id);
+    setPickScopeOpen(true);
+  }
+
+  function closePickScopeModal() {
+    if (pickScopeSaving) return;
+    setPickScopeOpen(false);
+    setPickScopeAreaId(null);
+  }
+
+  async function addScopeToAreaFromPicker(scopeDocId: string) {
+    const pa = pickScopeAreaId
+      ? projectAreas.find((p) => p.id === pickScopeAreaId)
+      : undefined;
+    if (!pa) return;
+    setPickScopeSaving(true);
+    try {
+      const ok = await addExtraScopeToArea(pa, scopeDocId);
+      if (ok) closePickScopeModal();
+    } finally {
+      setPickScopeSaving(false);
+    }
+  }
+
+  function checklistAreaAddButtons(pa: ProjectAreaPublic, disabled: boolean) {
+    return (
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => openPickScopeModal(pa)}
+          disabled={disabled}
+          className={clActionBtnClass}
+        >
+          Add scope…
+        </button>
+        <button
+          type="button"
+          onClick={() => openPickObjectModal(pa)}
+          disabled={disabled}
+          className={clActionBtnClass}
+        >
+          Add object…
+        </button>
+      </div>
+    );
+  }
+
+  function checklistAreaRemoveButton(pa: ProjectAreaPublic, disabled: boolean) {
+    return (
+      <button
+        type="button"
+        onClick={() => setPaDeleteId(pa.id)}
+        disabled={disabled || paDeleting}
+        className={clActionBtnDangerClass}
+        aria-label={`Remove area ${projectAreaHeading(pa, areas)} from project`}
+        title="Remove area from project"
+      >
+        Remove area
+      </button>
+    );
+  }
+
   async function addLineItemFromQuoteObject(quoteObjectDocId: string) {
     if (!pickObjectAreaId) return;
     setPickObjectSaving(true);
@@ -991,7 +1224,11 @@ export function ProjectChecklistPanel({
       const data = await readApiResponse<{ error?: string }>(res);
       if (!res.ok) throw new Error(data.error ?? "Delete failed");
       setPaDeleteId(null);
-      await Promise.all([reloadProjectAreas(), reloadLineItems()]);
+      await Promise.all([
+        reloadProjectAreas(),
+        reloadLineItems(),
+        reloadProjectAreaAnswers(),
+      ]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to remove project area");
     } finally {
@@ -1070,6 +1307,18 @@ export function ProjectChecklistPanel({
     ? allObjects.find((o) => o.id === paoDeleteId)
     : undefined;
 
+  const pickScopeArea = pickScopeAreaId
+    ? projectAreas.find((pa) => pa.id === pickScopeAreaId)
+    : undefined;
+
+  const scopePickerCandidates = useMemo(() => {
+    if (!pickScopeArea) return [];
+    const onArea = new Set(
+      scopesForProjectArea(pickScopeArea, areas, scopes).map((s) => s.id),
+    );
+    return scopes.filter((s) => !onArea.has(s.id));
+  }, [pickScopeArea, areas, scopes]);
+
   const pickObjectArea = pickObjectAreaId
     ? projectAreas.find((pa) => pa.id === pickObjectAreaId)
     : undefined;
@@ -1085,7 +1334,7 @@ export function ProjectChecklistPanel({
 
   const projectLoadTotals = useMemo(() => {
     const t = {} as Record<LabourSiloKey, number>;
-    for (const k of LABOUR_SILO_KEYS) t[k] = sumLabourHours(allObjects, k);
+    for (const k of LOOKUP_LABOUR_SILO_KEYS) t[k] = sumLabourHours(allObjects, k);
     return t;
   }, [allObjects]);
 
@@ -1094,6 +1343,12 @@ export function ProjectChecklistPanel({
 
   const areaFieldKey = (pa: ProjectAreaPublic, field: string) =>
     `${pa.id}-${pa.updatedAt ?? ""}-${field}`;
+
+  const objectLabel = useCallback(
+    (row: ProjectAreaObjectPublic, qo: QuoteObjectPublic[]) =>
+      projectLineObjectLabel(row, qo, catalogSkus),
+    [catalogSkus],
+  );
 
   const workbenchBundledCtx = useMemo((): WorkbenchBundledContext => {
     return {
@@ -1135,6 +1390,7 @@ export function ProjectChecklistPanel({
       objectLabourRates,
     };
   }, [
+    objectLabel,
     cascades,
     baseStyleOptions,
     marginPct,
@@ -1195,14 +1451,23 @@ export function ProjectChecklistPanel({
 
       {projectDocId && project && !loading && mode !== "workbench" ? (
           <div className="flex flex-wrap items-end gap-x-3 gap-y-2 rounded-lg border border-sf-border bg-sf-page px-4 py-3 dark:border-zinc-700 dark:bg-zinc-900/60">
+            <ChecklistProjectDimensionsRow
+              project={project}
+              disabled={projectSaving}
+              onPatch={(body) => void patchProject(body)}
+              onValidationError={setError}
+            />
             <label className="flex min-w-[10rem] flex-col gap-0.5">
               <span className={wbHdrLabel}>Default Elevate</span>
-              <PriceLevelIdSelect
-                value={project.defaultpricelevelid ?? null}
-                onChange={(id) =>
+              <CascadeElevateSelect
+                cascades={cascades}
+                priceLevels={priceLevels}
+                priceLevelId={project.defaultpricelevelid ?? null}
+                projectFinish={project.projectfinish}
+                onChange={({ priceLevelId, projectFinish }) =>
                   void patchProject({
-                    defaultpricelevelid: id,
-                    projectfinish: projectfinishForPriceLevelId(priceLevels, id),
+                    defaultpricelevelid: priceLevelId,
+                    projectfinish: projectFinish,
                     defaultstyle: "",
                     defaultcolour: "",
                   })
@@ -1218,6 +1483,7 @@ export function ProjectChecklistPanel({
                 priceLevels,
                 project.defaultpricelevelid,
                 project.projectfinish,
+                cascades,
               )}
               style={project.defaultstyle ?? ""}
               colour={project.defaultcolour ?? ""}
@@ -1294,16 +1560,13 @@ export function ProjectChecklistPanel({
                 <col className="w-[2.75rem]" />
                 <col className="w-[2.8rem]" />
                 <col className="w-[2.8rem]" />
+                <col className="w-[1.85rem]" />
+                <col className="w-[1.85rem]" />
+                <col className="w-[1.85rem]" />
+                <col className="w-[1.85rem]" />
                 <col className="w-[3.15rem]" />
-                <col className="w-[1.85rem]" />
-                <col className="w-[1.85rem]" />
-                <col className="w-[1.85rem]" />
-                <col className="w-[1.85rem]" />
-                <col className="w-[1.85rem]" />
-                <col className="w-[1.85rem]" />
-                <col className="w-[1.85rem]" />
-                <col className="w-[1.85rem]" />
                 <col className="w-[2.75rem]" />
+                <col className={wbSupplierCol} />
                 <col className={wbSpacerCol} />
               </colgroup>
             ) : (
@@ -1352,12 +1615,15 @@ export function ProjectChecklistPanel({
                   <td className={`${wbAreaHdrCell} pl-2.5`}>
                     <label className="flex min-w-0 flex-col gap-0.5">
                       <span className={wbHdrLabel}>Default Elevate</span>
-                      <PriceLevelIdSelect
-                        value={project.defaultpricelevelid ?? null}
-                        onChange={(id) =>
+                      <CascadeElevateSelect
+                        cascades={cascades}
+                        priceLevels={priceLevels}
+                        priceLevelId={project.defaultpricelevelid ?? null}
+                        projectFinish={project.projectfinish}
+                        onChange={({ priceLevelId, projectFinish }) =>
                           void patchProject({
-                            defaultpricelevelid: id,
-                            projectfinish: projectfinishForPriceLevelId(priceLevels, id),
+                            defaultpricelevelid: priceLevelId,
+                            projectfinish: projectFinish,
                             defaultstyle: "",
                             defaultcolour: "",
                           })
@@ -1375,6 +1641,7 @@ export function ProjectChecklistPanel({
                         priceLevels,
                         project.defaultpricelevelid,
                         project.projectfinish,
+                        cascades,
                       )}
                       style={project.defaultstyle ?? ""}
                       colourFilterStyle={project.defaultstyle ?? ""}
@@ -1402,6 +1669,7 @@ export function ProjectChecklistPanel({
                         priceLevels,
                         project.defaultpricelevelid,
                         project.projectfinish,
+                        cascades,
                       )}
                       style={project.defaultstyle ?? ""}
                       colourFilterStyle={project.defaultstyle ?? ""}
@@ -1434,15 +1702,7 @@ export function ProjectChecklistPanel({
                       {grandTotal > 0 ? formatMoney(grandTotal) : "—"}
                     </span>
                   </td>
-                  <td className={wbAreaHdrCellRight}>
-                    <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
-                      Final (incl. margin)
-                    </span>
-                    <span className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
-                      {grandFinalTotal > 0 ? formatMoney(grandFinalTotal) : "—"}
-                    </span>
-                  </td>
-                  {WB_LABOUR_SILO_HEADERS.map(({ key, label, title }) => {
+                  {WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key, label, title }) => {
                     const hoursSum = projectLoadTotals[key];
                     const rate = contractLabourRateBySiloProduct(contractLabourRates, key);
                     const cost = labourSiloCostExcGst(hoursSum > 0 ? hoursSum : null, rate);
@@ -1451,17 +1711,22 @@ export function ProjectChecklistPanel({
                         <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
                           {label}
                         </span>
-                        <span className="text-sm tabular-nums text-sf-text dark:text-zinc-100">
-                          {hoursSum > 0 ? formatLabourHours(hoursSum) : "—"}
-                        </span>
-                        {cost != null ? (
-                          <span className="mt-0.5 block text-xs tabular-nums text-sf-text-secondary dark:text-zinc-400">
-                            {formatMoney(cost)}
-                          </span>
-                        ) : null}
+                        <WbLabourSiloValue
+                          hours={hoursSum > 0 ? hoursSum : null}
+                          cost={cost}
+                        />
                       </td>
                     );
                   })}
+                  <td className={wbAreaHdrCellRight}>
+                    <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
+                      Final (incl. margin)
+                    </span>
+                    <span className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
+                      {grandFinalTotal > 0 ? formatMoney(grandFinalTotal) : "—"}
+                    </span>
+                  </td>
+                  <td className={wbAreaHdrCell} />
                   <td className={wbAreaHdrCell} />
                   <td className={wbAreaHdrCell} />
                 </tr>
@@ -1484,7 +1749,7 @@ export function ProjectChecklistPanel({
                 const areaFinalSubtotal = areaSubtotal * (1 + marginPct / 100);
                 const hasIncludedMoney = rows.some((r) => includedLineTotal(r) > 0);
                 const areaLoadTotals = Object.fromEntries(
-                  LABOUR_SILO_KEYS.map((k) => [k, sumLabourHours(rows, k)]),
+                  LOOKUP_LABOUR_SILO_KEYS.map((k) => [k, sumLabourHours(rows, k)]),
                 ) as Record<LabourSiloKey, number>;
                 const areaBusy = areaSavingId === pa.id;
                 const areaScopes = scopesForProjectArea(pa, areas, scopes);
@@ -1546,7 +1811,7 @@ export function ProjectChecklistPanel({
                                   }}
                                 />
                               </label>
-                              <div className="shrink-0 pr-3 [&_button]:min-h-[1.375rem] [&_button]:py-1">
+                              <div className="shrink-0 pr-3">
                                 <ClNonStdTierOpenButton
                                   active={hasClNonStandardTierStyleColour(pa)}
                                   disabled={areaBusy}
@@ -1560,14 +1825,8 @@ export function ProjectChecklistPanel({
                                   }
                                 />
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => openPickObjectModal(pa)}
-                                disabled={areaBusy}
-                                className="min-h-8 shrink-0 rounded border border-sf-border-strong bg-sf-surface px-2 py-1 text-xs font-medium text-sf-text hover:bg-sf-page disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-                              >
-                                Add object…
-                              </button>
+                              {checklistAreaAddButtons(pa, areaBusy)}
+                              {checklistAreaRemoveButton(pa, areaBusy)}
                             </div>
                           </div>
                           <div className={`${wbAreaObjectBand} space-y-3 px-3 py-3`}>
@@ -1612,6 +1871,12 @@ export function ProjectChecklistPanel({
                                 const usesBlindsAnswer = scopeSelectionUsesSystemBlinds(scope, value);
                                 const blindsLine =
                                   scopeLines.find((l) => l.systemObjectKind === "blinds") ?? null;
+                                const answerWidthCh = clAnswerWidthCh(scope.answers);
+                                const answerWidthStyle = {
+                                  width: answerWidthCh,
+                                  minWidth: answerWidthCh,
+                                  maxWidth: answerWidthCh,
+                                } as const;
                                 return (
                                   <li
                                     key={scope.id}
@@ -1631,7 +1896,10 @@ export function ProjectChecklistPanel({
                                             >
                                               {scope.question}
                                             </span>
-                                            <label className={clAnswerInlineFieldClass}>
+                                            <label
+                                              className={clAnswerInlineFieldClass}
+                                              style={yesOnlyId ? undefined : answerWidthStyle}
+                                            >
                                               {yesOnlyId ? (
                                                 <span className="flex h-[2.125rem] items-center">
                                                   <input
@@ -1652,7 +1920,8 @@ export function ProjectChecklistPanel({
                                               ) : (
                                                 <select
                                                   aria-label={`Answer for: ${scope.question}`}
-                                                  className={`${clAnswerInput} text-xs`}
+                                                  className={clAnswerSelectBase}
+                                                  style={answerWidthStyle}
                                                   disabled={busy}
                                                   value={value}
                                                   onChange={(e) => {
@@ -1678,6 +1947,11 @@ export function ProjectChecklistPanel({
                                                 </span>
                                               ) : null}
                                             </label>
+                                            <ScopeToolAfterAnswer
+                                              scope={scope}
+                                              answered={Boolean(value)}
+                                              disabled={busy}
+                                            />
                                           </div>
                                           {isExtraScope ? (
                                             <button
@@ -1693,6 +1967,11 @@ export function ProjectChecklistPanel({
                                             </button>
                                           ) : null}
                                         </div>
+                                        <div
+                                          className={clScopeQuestionSkuDividerClass}
+                                          role="separator"
+                                          aria-hidden
+                                        />
                                         <div className={clFieldsGridClass} style={clFieldsGridStyle}>
                                           <div
                                             className={`${clSkuFieldClass} ${clScopeSkuColClass}`}
@@ -1710,20 +1989,22 @@ export function ProjectChecklistPanel({
                                             className={`${clNonStdCellClass} ${clScopeNonStdColClass}`}
                                             aria-hidden
                                           />
+                                          <div
+                                            className={`${clToolCellClass} ${clScopeToolColClass}`}
+                                            aria-hidden
+                                          />
                                         </div>
                                       </div>
                                     ) : (
                                     scopeLines.map((lineRow, lineIdx) => {
                                         const isFirstRow = lineIdx === 0;
+                                        const showObjectNameHeader = scopeLineShowsObjectNameHeader(
+                                          scopeLines,
+                                          lineIdx,
+                                        );
                                         const lineSaving = rowSavingId === lineRow.id;
                                         const qObj = quoteObjects.find(
                                           (o) => o.objectid === lineRow.objectid,
-                                        );
-                                        const measureDisplay = checklistMeasureFieldDisplayString(
-                                          lineRow,
-                                          qObj,
-                                          pa,
-                                          project,
                                         );
                                         const measureKey =
                                           lineRow.custommeasure != null
@@ -1763,7 +2044,10 @@ export function ProjectChecklistPanel({
                                                       {scope.question}
                                                     </span>
                                                   ) : null}
-                                                  <label className={clAnswerInlineFieldClass}>
+                                                  <label
+                                                    className={clAnswerInlineFieldClass}
+                                                    style={yesOnlyId ? undefined : answerWidthStyle}
+                                                  >
                                                     {isFirstRow && usesBlindsAnswer && blindsLine ? (
                                                       <span className={clInlineFieldLabelClass}>
                                                         Answer
@@ -1789,7 +2073,8 @@ export function ProjectChecklistPanel({
                                                     ) : (
                                                       <select
                                                         aria-label={`Answer for: ${scope.question}`}
-                                                        className={`${clAnswerInput} text-xs`}
+                                                        className={clAnswerSelectBase}
+                                                        style={answerWidthStyle}
                                                         disabled={busy}
                                                         value={value}
                                                         onChange={(e) => {
@@ -1815,6 +2100,11 @@ export function ProjectChecklistPanel({
                                                       </span>
                                                     ) : null}
                                                   </label>
+                                                  <ScopeToolAfterAnswer
+                                                    scope={scope}
+                                                    answered={Boolean(value)}
+                                                    disabled={busy}
+                                                  />
                                                   {isFirstRow && usesBlindsAnswer && blindsLine ? (
                                                     <BlindsScopeFields
                                                       line={blindsLine}
@@ -1847,7 +2137,15 @@ export function ProjectChecklistPanel({
                                                   </button>
                                                 ) : null}
                                               </div>
-                                            ) : (
+                                            ) : null}
+                                            {isFirstRow ? (
+                                              <div
+                                                className={clScopeQuestionSkuDividerClass}
+                                                role="separator"
+                                                aria-hidden
+                                              />
+                                            ) : null}
+                                            {showObjectNameHeader ? (
                                               <div className={clObjectNameRowClass}>
                                                 <span
                                                   className={clObjectNameTextClass}
@@ -1856,7 +2154,7 @@ export function ProjectChecklistPanel({
                                                   {objectLabel(lineRow, quoteObjects)}
                                                 </span>
                                               </div>
-                                            )}
+                                            ) : null}
                                             <div className={clFieldsGridClass} style={clFieldsGridStyle}>
                                             <div
                                               className={`${clSkuFieldClass} ${clScopeSkuColClass}`}
@@ -1866,7 +2164,7 @@ export function ProjectChecklistPanel({
                                               <div className={clSkuPickerWrapClass}>
                                                 {isBlindsSystemLine(lineRow) ? (
                                                   <div
-                                                    className={`${clSkuInput} flex min-h-[2.125rem] items-center bg-sf-page dark:bg-zinc-900`}
+                                                    className={`${clSkuInput} flex h-full items-center bg-sf-page dark:bg-zinc-900`}
                                                     title={blindsSkuDisplayLabel(lineRow)}
                                                   >
                                                     {blindsSkuDisplayLabel(lineRow)}
@@ -1878,6 +2176,7 @@ export function ProjectChecklistPanel({
                                                 catalogSkus={catalogSkus}
                                                 suppliersBySkuId={suppliersBySkuId}
                                                 priceLevels={priceLevels}
+                                                cascades={cascades}
                                                 pa={pa}
                                                 project={project}
                                                 disabled={lineSaving}
@@ -1886,6 +2185,9 @@ export function ProjectChecklistPanel({
                                                 showSupplierPrice={false}
                                                 shortMatchLabels
                                                 inlineRow
+                                                lockToSkuId={
+                                                  lineRow.scopeShowAllSku ? lineRow.skuId : null
+                                                }
                                                 onSelectSku={(pick) => {
                                                   void applyLineSkuSelection(lineRow, pa, pick);
                                                 }}
@@ -1895,74 +2197,18 @@ export function ProjectChecklistPanel({
                                             </div>
                                             <label className={`${clMeasureFieldClass} ${clScopeMeasureColClass}`}>
                                               <span className={wbHdrLabel}>Measure</span>
-                                              <input
-                                                key={measureKey}
-                                                type="text"
-                                                inputMode="decimal"
-                                                className={clMeasureInput}
-                                                defaultValue={measureDisplay}
+                                              <ChecklistMeasureInput
+                                                line={lineRow}
+                                                quoteObject={qObj}
+                                                pa={pa}
+                                                project={project}
+                                                measureKey={measureKey}
+                                                inputClassName={clMeasureInput}
                                                 disabled={lineSaving}
-                                                title="Matches grid measure; shows inherited m²/LM when template uses project or area quantities."
-                                                onKeyDown={(e) => {
-                                                  if (e.key === "Enter")
-                                                    (e.target as HTMLInputElement).blur();
+                                                onPatch={(custommeasure) => {
+                                                  void patchLineItem(lineRow.id, { custommeasure });
                                                 }}
-                                                onBlur={(e) => {
-                                                  const el = e.target as HTMLInputElement;
-                                                  const raw = el.value.trim();
-                                                  if (raw !== "" && parseOptionalNumber(raw) === null) {
-                                                    setError(
-                                                      "Measure must be a valid number (or empty).",
-                                                    );
-                                                    el.value = checklistMeasureFieldDisplayString(
-                                                      lineRow,
-                                                      qObj,
-                                                      pa,
-                                                      project,
-                                                    );
-                                                    return;
-                                                  }
-                                                  const next = parseOptionalNumber(raw);
-                                                  const stored = lineRow.custommeasure ?? null;
-                                                  const inherited = checklistInheritedMeasureForRow(
-                                                    lineRow,
-                                                    qObj,
-                                                    pa,
-                                                    project,
-                                                  );
-                                                  if (raw === "" || next === null) {
-                                                    if (stored !== null) {
-                                                      void patchLineItem(lineRow.id, {
-                                                        custommeasure: null,
-                                                      });
-                                                    } else {
-                                                      el.value = checklistMeasureFieldDisplayString(
-                                                        lineRow,
-                                                        qObj,
-                                                        pa,
-                                                        project,
-                                                      );
-                                                    }
-                                                    return;
-                                                  }
-                                                  if (stored !== null) {
-                                                    if (next !== stored) {
-                                                      void patchLineItem(lineRow.id, {
-                                                        custommeasure: next,
-                                                      });
-                                                    }
-                                                    return;
-                                                  }
-                                                  if (
-                                                    inherited != null &&
-                                                    measuresClose(next, inherited)
-                                                  ) {
-                                                    return;
-                                                  }
-                                                  void patchLineItem(lineRow.id, {
-                                                    custommeasure: next,
-                                                  });
-                                                }}
+                                                onValidationError={setError}
                                               />
                                             </label>
                                             <label className={`${clUomFieldClass} ${clScopeUomColClass}`}>
@@ -2001,6 +2247,20 @@ export function ProjectChecklistPanel({
                                                 }
                                               />
                                             </div>
+                                            <div className={`${clToolCellClass} ${clScopeToolColClass}`}>
+                                              <ScopeLineMeasureTool
+                                                scope={scope}
+                                                line={lineRow}
+                                                quoteObjects={quoteObjects}
+                                                objectLabel={objectLabel(lineRow, quoteObjects)}
+                                                disabled={lineSaving}
+                                                onApplyMeasure={(m2) => {
+                                                  void patchLineItem(lineRow.id, {
+                                                    custommeasure: m2,
+                                                  });
+                                                }}
+                                              />
+                                            </div>
                                             </div>
                                           </div>
                                         );
@@ -2013,7 +2273,9 @@ export function ProjectChecklistPanel({
                           ) : (
                             <p className="text-xs text-sf-text-secondary dark:text-zinc-400">
                               No scope questions for this template area. Add them under{" "}
-                              <span className="font-medium">Setup → Scopes</span>.
+                              <span className="font-medium">Setup → Scopes</span>, or use{" "}
+                              <span className="font-medium">Add scope…</span> to attach a question
+                              from any setup area.
                             </p>
                           )}
                           {(() => {
@@ -2032,16 +2294,10 @@ export function ProjectChecklistPanel({
                                     const qObj = quoteObjects.find(
                                       (o) => o.objectid === lineRow.objectid,
                                     );
-                                    const measureDisplay = checklistMeasureFieldDisplayString(
-                                      lineRow,
-                                      qObj,
-                                      pa,
-                                      project,
-                                    );
                                     const measureKey =
                                       lineRow.custommeasure != null
                                         ? inputKey(lineRow, "manual-m")
-                                        : `${inputKey(lineRow, "manual-m")}-ctx-${pa.aream2 ?? ""}-${project?.projectm2 ?? ""}`;
+                                        : `${inputKey(lineRow, "manual-m")}-ctx-${pa.aream2 ?? ""}-${project?.projectm2 ?? ""}-${project?.projectm2soft ?? ""}-${project?.projectm2hard ?? ""}`;
                                     return (
                                       <div
                                         key={lineRow.id}
@@ -2070,6 +2326,7 @@ export function ProjectChecklistPanel({
                                               catalogSkus={catalogSkus}
                                               suppliersBySkuId={suppliersBySkuId}
                                               priceLevels={priceLevels}
+                                              cascades={cascades}
                                               pa={pa}
                                               project={project}
                                               disabled={lineSaving}
@@ -2079,6 +2336,9 @@ export function ProjectChecklistPanel({
                                               shortMatchLabels
                                               inlineRow
                                               autoApplySingleMatch
+                                              lockToSkuId={
+                                                lineRow.scopeShowAllSku ? lineRow.skuId : null
+                                              }
                                               onSelectSku={(pick) => {
                                                 void applyLineSkuSelection(lineRow, pa, pick);
                                               }}
@@ -2087,36 +2347,18 @@ export function ProjectChecklistPanel({
                                         </div>
                                         <label className={`${clMeasureFieldClass} ${clScopeMeasureColClass}`}>
                                           <span className={wbHdrLabel}>Measure</span>
-                                          <input
-                                            key={measureKey}
-                                            type="text"
-                                            inputMode="decimal"
-                                            className={clMeasureInput}
-                                            defaultValue={measureDisplay}
+                                          <ChecklistMeasureInput
+                                            line={lineRow}
+                                            quoteObject={qObj}
+                                            pa={pa}
+                                            project={project}
+                                            measureKey={measureKey}
+                                            inputClassName={clMeasureInput}
                                             disabled={lineSaving}
-                                            onBlur={(e) => {
-                                              const raw = e.target.value.trim();
-                                              if (raw !== "" && parseOptionalNumber(raw) === null) {
-                                                setError("Measure must be a valid number (or empty).");
-                                                e.target.value = measureDisplay;
-                                                return;
-                                              }
-                                              const next = parseOptionalNumber(raw);
-                                              const stored = lineRow.custommeasure ?? null;
-                                              if (raw === "" || next === null) {
-                                                if (stored !== null) {
-                                                  void patchLineItem(lineRow.id, {
-                                                    custommeasure: null,
-                                                  });
-                                                }
-                                                return;
-                                              }
-                                              if (stored !== next) {
-                                                void patchLineItem(lineRow.id, {
-                                                  custommeasure: next,
-                                                });
-                                              }
+                                            onPatch={(custommeasure) => {
+                                              void patchLineItem(lineRow.id, { custommeasure });
                                             }}
+                                            onValidationError={setError}
                                           />
                                         </label>
                                         <label className={`${clUomFieldClass} ${clScopeUomColClass}`}>
@@ -2160,6 +2402,10 @@ export function ProjectChecklistPanel({
                               </div>
                             ) : null;
                           })()}
+                          <div className="flex flex-wrap items-center justify-start gap-2 border-t border-sf-border pt-3 dark:border-zinc-700">
+                            {checklistAreaAddButtons(pa, areaBusy)}
+                            {checklistAreaRemoveButton(pa, areaBusy)}
+                          </div>
                           <div className={wbAreaSectionStack}>
                             <h5 className={wbAreaSectionTitle}>Area notes</h5>
                             <textarea
@@ -2297,10 +2543,13 @@ export function ProjectChecklistPanel({
                       <td className={`${wbAreaHdrCellOutlineMid} pl-2.5`}>
                         <label className="flex min-w-0 flex-col gap-0.5">
                           <span className={wbHdrLabel}>Elevate</span>
-                          <PriceLevelIdSelect
-                            value={pa.pricelevelid ?? null}
-                            onChange={(id) => {
-                              void patchProjectArea(pa.id, { pricelevelid: id });
+                          <CascadeElevateSelect
+                            cascades={cascades}
+                            priceLevels={priceLevels}
+                            priceLevelId={pa.pricelevelid ?? null}
+                            projectFinish={project?.projectfinish}
+                            onChange={({ priceLevelId }) => {
+                              void patchProjectArea(pa.id, { pricelevelid: priceLevelId });
                             }}
                             className={wbSelectRow}
                             disabled={areaBusy}
@@ -2315,6 +2564,7 @@ export function ProjectChecklistPanel({
                             priceLevels,
                             pa.pricelevelid ?? project?.defaultpricelevelid,
                             project?.projectfinish,
+                            cascades,
                           )}
                           style={pa.style ?? ""}
                           colourFilterStyle={effectiveCascadeStyleForArea(pa, project)}
@@ -2347,6 +2597,7 @@ export function ProjectChecklistPanel({
                             priceLevels,
                             pa.pricelevelid ?? project?.defaultpricelevelid,
                             project?.projectfinish,
+                            cascades,
                           )}
                           style={pa.style ?? ""}
                           colourFilterStyle={effectiveCascadeStyleForArea(pa, project)}
@@ -2384,15 +2635,7 @@ export function ProjectChecklistPanel({
                           {hasIncludedMoney ? formatMoney(areaSubtotal) : "—"}
                         </span>
                       </td>
-                      <td className={wbAreaHdrCellOutlineMidRight}>
-                        <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
-                          Final (incl. margin)
-                        </span>
-                        <span className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
-                          {hasIncludedMoney ? formatMoney(areaFinalSubtotal) : "—"}
-                        </span>
-                      </td>
-                      {WB_LABOUR_SILO_HEADERS.map(({ key, label, title }) => {
+                      {WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key, label, title }) => {
                         const hoursSum = areaLoadTotals[key];
                         const rate = contractLabourRateBySiloProduct(contractLabourRates, key);
                         const cost = labourSiloCostExcGst(hoursSum > 0 ? hoursSum : null, rate);
@@ -2405,17 +2648,22 @@ export function ProjectChecklistPanel({
                             <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
                               {label}
                             </span>
-                            <span className="text-sm tabular-nums text-sf-text dark:text-zinc-100">
-                              {hoursSum > 0 ? formatLabourHours(hoursSum) : "—"}
-                            </span>
-                            {cost != null ? (
-                              <span className="mt-0.5 block text-xs tabular-nums text-sf-text-secondary dark:text-zinc-400">
-                                {formatMoney(cost)}
-                              </span>
-                            ) : null}
+                            <WbLabourSiloValue
+                              hours={hoursSum > 0 ? hoursSum : null}
+                              cost={cost}
+                            />
                           </td>
                         );
                       })}
+                      <td className={wbAreaHdrCellOutlineMidRight}>
+                        <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
+                          Final (incl. margin)
+                        </span>
+                        <span className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
+                          {hasIncludedMoney ? formatMoney(areaFinalSubtotal) : "—"}
+                        </span>
+                      </td>
+                      <td className={wbAreaHdrCellOutlineMid} />
                       <td colSpan={2} className={wbAreaHdrCellOutlineLast}>
                         <div className="flex flex-wrap items-center justify-end gap-1.5 pr-1">
                           <button
@@ -2485,16 +2733,23 @@ export function ProjectChecklistPanel({
                       <th scope="col" className={thBaseWb}>
                         Line total
                       </th>
-                      <th scope="col" className={thBaseWb}>
-                        Final price
-                      </th>
-                      {WB_LABOUR_SILO_HEADERS.map(({ key, label, title }) => (
+                      {WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key, label, title }) => (
                         <th key={key} scope="col" className={thBaseWb} title={title}>
                           {label}
                         </th>
                       ))}
+                      <th
+                        scope="col"
+                        className={thBaseWb}
+                        title="Line total including project margin"
+                      >
+                        Final price
+                      </th>
                       <th scope="col" className={thBaseWb}>
                         Notes
+                      </th>
+                      <th scope="col" className={thBaseWb} title="Supplier for the line SKU">
+                        Supplier
                       </th>
                       <th scope="col" className={wbSpacerCell} aria-hidden />
                         </tr>
@@ -2541,13 +2796,12 @@ export function ProjectChecklistPanel({
                             </td>
                             <td className={`${wbCellDesc} pl-1`}>
                               <div className="flex items-center gap-1">
-                                <span
-                                  className={`min-w-0 truncate font-medium leading-tight ${included ? "text-sf-text dark:text-zinc-100" : ""}`}
-                                >
-                                  {isBlindsSystemLine(row)
-                                    ? "Blinds"
-                                    : objectLabel(row, quoteObjects)}
-                                </span>
+                                <WbObjectName
+                                  row={row}
+                                  quoteObjects={quoteObjects}
+                                  catalogSkus={catalogSkus}
+                                  included={included}
+                                />
                                 {saving ? (
                                   <span className="shrink-0 text-[10px] text-zinc-400">…</span>
                                 ) : null}
@@ -2567,10 +2821,13 @@ export function ProjectChecklistPanel({
                               {lineSourceLabel(row)}
                             </td>
                             <td className={wbCellMid}>
-                              <PriceLevelIdSelect
-                                value={row.pricelevelid ?? null}
-                                onChange={(id) => {
-                                  void patchLineItem(row.id, { pricelevelid: id });
+                              <CascadeElevateSelect
+                                cascades={cascades}
+                                priceLevels={priceLevels}
+                                priceLevelId={row.pricelevelid ?? null}
+                                projectFinish={project?.projectfinish}
+                                onChange={({ priceLevelId }) => {
+                                  void patchLineItem(row.id, { pricelevelid: priceLevelId });
                                 }}
                                 className={wbSelectRow}
                                 disabled={saving}
@@ -2614,6 +2871,7 @@ export function ProjectChecklistPanel({
                                     pa.pricelevelid ??
                                     project?.defaultpricelevelid,
                                   project?.projectfinish,
+                                  cascades,
                                 )}
                                 styleForFilter={effectiveCascadeStyleForLine(row, pa, project)}
                                 colour={row.colour ?? ""}
@@ -2648,16 +2906,20 @@ export function ProjectChecklistPanel({
                                     catalogSkus={catalogSkus}
                                     suppliersBySkuId={suppliersBySkuId}
                                     priceLevels={priceLevels}
+                                    cascades={cascades}
+                                    supplierDiscountByKey={supplierDiscountByKey}
                                     pa={pa}
                                     project={project}
                                     disabled={saving}
                                     selectClassName={wbSelectRow}
                                     variant="compact"
-                                    showSupplierPrice={false}
+                                    showSupplierPrice
                                     shortMatchLabels
                                     inlineRow
                                     autoApplySingleMatch
                                     autoApplyOnlyWhenEmptySku
+                                    syncUnitPriceFromPick
+                                    lockToSkuId={row.scopeShowAllSku ? row.skuId : null}
                                     showIncludeAllSupplierOptions={isAdminMode}
                                     includeAllSupplierOptions={includeAllSuppliersForLine(
                                       row.id,
@@ -2721,7 +2983,13 @@ export function ProjectChecklistPanel({
                                 type="text"
                                 inputMode="decimal"
                                 className={wbInputCurrency}
-                                defaultValue={formatCurrencyInput(row.customumprice)}
+                                defaultValue={formatCurrencyInput(
+                                  resolveScopeLineSkuUnitPriceExcGst(
+                                    row,
+                                    suppliersBySkuId,
+                                    supplierDiscountByKey,
+                                  ),
+                                )}
                                 disabled={saving}
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -2730,7 +2998,13 @@ export function ProjectChecklistPanel({
                                   const raw = e.target.value.trim();
                                   if (raw !== "" && parseCurrencyInput(raw) === null) {
                                     setError("Unit price must be a valid amount (or empty).");
-                                    e.target.value = formatCurrencyInput(row.customumprice);
+                                    e.target.value = formatCurrencyInput(
+                                      resolveScopeLineSkuUnitPriceExcGst(
+                                    row,
+                                    suppliersBySkuId,
+                                    supplierDiscountByKey,
+                                  ),
+                                    );
                                     return;
                                   }
                                   const next = parseCurrencyInput(raw);
@@ -2744,11 +3018,6 @@ export function ProjectChecklistPanel({
                             <td className={wbCellNum}>
                               {formatMoney(row.totalprice)}
                             </td>
-                            <td
-                              className={`${wbCellNum} font-medium text-emerald-800 dark:text-emerald-200`}
-                            >
-                              {lf != null ? formatMoney(lf) : "—"}
-                            </td>
                             <WbLabourSiloRowCells
                               row={row}
                               quoteObjects={quoteObjects}
@@ -2761,7 +3030,12 @@ export function ProjectChecklistPanel({
                               inputKey={inputKey}
                               onPatch={(lineId, body) => void patchLineItem(lineId, body)}
                             />
-                            <td className={`${cell} text-center`}>
+                            <td
+                              className={`${wbCellNum} font-medium text-emerald-800 dark:text-emerald-200`}
+                            >
+                              {lf != null ? formatMoney(lf) : "—"}
+                            </td>
+                            <td className={`${wbCellMid} text-center`}>
                               <div className="flex items-center justify-center gap-0.5">
                                 <button
                                   type="button"
@@ -2793,6 +3067,12 @@ export function ProjectChecklistPanel({
                                 </button>
                               </div>
                             </td>
+                            <WbLineSupplierCell
+                              row={row}
+                              suppliersBySkuId={suppliersBySkuId}
+                              supplierDiscountByKey={supplierDiscountByKey}
+                              cellClassName={wbCellMid}
+                            />
                             <td className={wbSpacerCell} />
                           </tr>,
                           <ScopeLineBundledChildren
@@ -2803,6 +3083,7 @@ export function ProjectChecklistPanel({
                             catalogSkus={catalogSkus}
                             suppliersBySkuId={suppliersBySkuId}
                             priceLevels={priceLevels}
+                            supplierDiscountByKey={supplierDiscountByKey}
                             pa={pa}
                             project={project}
                             rowSavingId={rowSavingId}
@@ -2926,17 +3207,7 @@ export function ProjectChecklistPanel({
                     {formatMoney(grandTotal)}
                   </span>
                 </td>
-                <td
-                  className={`${cell} bg-sf-page text-right align-top text-base tabular-nums text-emerald-900 dark:text-emerald-100 dark:bg-zinc-800`}
-                >
-                  <span className="block text-xs font-medium uppercase tracking-wide text-emerald-900/80 dark:text-emerald-200/90">
-                    Final price
-                  </span>
-                  <span className="text-base font-semibold">
-                    {formatMoney(grandFinalTotal)}
-                  </span>
-                </td>
-                {WB_LABOUR_SILO_HEADERS.map(({ key, label, title }) => {
+                {WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key, label, title }) => {
                   const hoursSum = projectLoadTotals[key];
                   const rate = contractLabourRateBySiloProduct(contractLabourRates, key);
                   const cost = labourSiloCostExcGst(hoursSum > 0 ? hoursSum : null, rate);
@@ -2949,17 +3220,24 @@ export function ProjectChecklistPanel({
                       <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
                         {label}
                       </span>
-                      <span className="text-sm font-semibold tabular-nums">
-                        {hoursSum > 0 ? formatLabourHours(hoursSum) : "—"}
-                      </span>
-                      {cost != null ? (
-                        <span className="mt-0.5 block text-xs font-normal tabular-nums text-sf-text-secondary dark:text-zinc-400">
-                          {formatMoney(cost)}
-                        </span>
-                      ) : null}
+                      <WbLabourSiloValue
+                        hours={hoursSum > 0 ? hoursSum : null}
+                        cost={cost}
+                      />
                     </td>
                   );
                 })}
+                <td
+                  className={`${cell} bg-sf-page text-right align-top text-base tabular-nums text-emerald-900 dark:text-emerald-100 dark:bg-zinc-800`}
+                >
+                  <span className="block text-xs font-medium uppercase tracking-wide text-emerald-900/80 dark:text-emerald-200/90">
+                    Final price
+                  </span>
+                  <span className="text-base font-semibold">
+                    {formatMoney(grandFinalTotal)}
+                  </span>
+                </td>
+                <td className={`${cell} bg-sf-page dark:bg-zinc-800`} />
                 <td className={`${cell} bg-sf-page dark:bg-zinc-800`} />
                 <td className={`${wbSpacerCell} bg-sf-page dark:bg-zinc-800`} />
               </tr>
@@ -3184,13 +3462,25 @@ export function ProjectChecklistPanel({
         onPick={(id) => void addLineItemFromQuoteObject(id)}
       />
 
+      <AddScopePickerModal
+        open={pickScopeOpen && Boolean(pickScopeArea)}
+        areaLabel={
+          pickScopeArea ? projectAreaHeading(pickScopeArea, areas) : ""
+        }
+        scopes={scopePickerCandidates}
+        areas={areas}
+        saving={pickScopeSaving}
+        onClose={closePickScopeModal}
+        onPick={(id) => void addScopeToAreaFromPicker(id)}
+      />
+
       <ConfirmDialog
         open={Boolean(paDeleteId)}
         title="Remove area from project?"
         description={
           projectAreaPendingDelete
-            ? `“${projectAreaHeading(projectAreaPendingDelete, areas)}” and all line items for this area on the project will be removed. This cannot be undone.`
-            : "This area and its line items will be removed. This cannot be undone."
+            ? `“${projectAreaHeading(projectAreaPendingDelete, areas)}” and all scope answers, line items, and area questions for this area will be removed from the project. This cannot be undone.`
+            : "This area and all its scope answers, line items, and area questions will be removed. This cannot be undone."
         }
         confirmLabel="Remove area"
         cancelLabel="Cancel"

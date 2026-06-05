@@ -1,5 +1,6 @@
 import { FieldValue, type DocumentData, type Firestore } from "firebase-admin/firestore";
 import { buildDataObjectKey, type DataObjectKeyFields } from "@/lib/data-object-key";
+import { quoteObjectSkuPipelineKey } from "@/lib/server/quote-object-sku-pipeline";
 import { mapSkuUomToQuoteUom } from "@/lib/map-sku-uom-to-quote-uom";
 import { isQuoteObjectsMetaDocument } from "@/lib/firestore/quote-objects-collection";
 import { allocateNextSequence } from "@/lib/firestore/sequences";
@@ -28,10 +29,7 @@ export type SyncQuoteObjectFromDataObjectResult = {
 };
 
 function quoteObjectMatchKey(data: DocumentData): string {
-  return buildDataObjectKey({
-    category: String(data.category ?? ""),
-    productType: String(data.objectname ?? ""),
-  });
+  return quoteObjectSkuPipelineKey(data);
 }
 
 function findMatchingQuoteObjectDoc(

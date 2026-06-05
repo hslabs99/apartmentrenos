@@ -75,6 +75,46 @@ function keySnapshot(fields: ProductKeyFields): ImportLogDataError["productKey"]
   };
 }
 
+type SkuImportErrorCode = ImportLogDataError["code"];
+
+/** Sheet row to open in Google Sheets — product-key origin for key errors, actual row for supplier-slot errors. */
+function logSheetRowForError(row: ParsedSheetRow, code: SkuImportErrorCode): number {
+  if (code === "supplier_without_product_key" || code === "incomplete_row") {
+    return row.productKeySourceRowNumber;
+  }
+  return row.sheetRowNumber;
+}
+
+function formatErrorRowRef(row: ParsedSheetRow, code: SkuImportErrorCode): string {
+  const logRow = logSheetRowForError(row, code);
+  const base = formatWorkbookRowRef(logRow);
+  if (logRow !== row.sheetRowNumber) {
+    return `${base} (supplier option on row ${row.sheetRowNumber})`;
+  }
+  return base;
+}
+
+function buildDataError(
+  row: ParsedSheetRow,
+  code: SkuImportErrorCode,
+  messageBody: string,
+  keyFields: ProductKeyFields,
+): ImportLogDataError {
+  const logRow = logSheetRowForError(row, code);
+  const triggerRow = row.sheetRowNumber;
+  const triggerNote =
+    logRow !== triggerRow ? ` Triggered on supplier row ${triggerRow}.` : "";
+  return {
+    sheetRowNumber: logRow,
+    triggerSheetRowNumber: logRow !== triggerRow ? triggerRow : undefined,
+    code,
+    message: `${formatErrorRowRef(row, code)}: ${messageBody}${triggerNote}`,
+    category: keyFields.category.trim() || null,
+    product: keyFields.product.trim() || null,
+    productKey: keySnapshot(keyFields),
+  };
+}
+
 /**
  * Build products/suppliers from parsed sheet rows.
  * Row order in the workbook does not matter: products are merged by product key (cols A–F).
@@ -83,7 +123,7 @@ function keySnapshot(fields: ProductKeyFields): ImportLogDataError["productKey"]
 export function buildSkuImportFromSheetRows(
   sheetRows: ParsedSheetRow[],
   maxSamples = 150,
-  logContext?: ProductKeyLogContext,
+  _logContext?: ProductKeyLogContext,
 ): BuildSkuImportResult {
   const productsByKey = new Map<string, DataSku>();
   const suppliers: DataSkuSupplier[] = [];
@@ -92,9 +132,6 @@ export function buildSkuImportFromSheetRows(
   const skippedRowSamples: ImportLogRowSample[] = [];
   let nextSkuSequence = 1;
   let skippedInvalidRows = 0;
-
-  const rowRef = (sheetRowNumber: number) =>
-    logContext ? formatWorkbookRowRef(sheetRowNumber, logContext) : `Row ${sheetRowNumber}`;
 
   const pushError = (error: ImportLogDataError) => {
     dataErrors.push(error);
@@ -124,31 +161,28 @@ export function buildSkuImportFromSheetRows(
 
     if (!productKeyComplete && supplierEmpty) {
       skippedInvalidRows += 1;
-      pushError({
-        sheetRowNumber: row.sheetRowNumber,
-        code: "incomplete_row",
-        message: `${rowRef(row.sheetRowNumber)}: non-blank row missing product key and supplier data. Parsed key: ${formatParsedProductKey(keyFields)}.`,
-        category: row.category || null,
-        product: row.product || null,
-        productKey: keySnapshot(keyFields),
-      });
+      pushError(
+        buildDataError(
+          row,
+          "incomplete_row",
+          `non-blank row missing product key and supplier data. Parsed key: ${formatParsedProductKey(keyFields)}.`,
+          keyFields,
+        ),
+      );
       continue;
     }
 
     if (!productKeyComplete && !supplierEmpty) {
       skippedInvalidRows += 1;
       const missing = missingProductKeyLabels(keyFields).join(", ");
-      pushError({
-        sheetRowNumber: row.sheetRowNumber,
-        code: "supplier_without_product_key",
-        message:
-          `${rowRef(row.sheetRowNumber)}: supplier data present but product key incomplete (need ${missing}). ` +
-          `Parsed key: ${formatParsedProductKey(keyFields)}. ` +
-          describeSupplierPresence(row),
-        category: row.category || null,
-        product: row.product || null,
-        productKey: keySnapshot(keyFields),
-      });
+      pushError(
+        buildDataError(
+          row,
+          "supplier_without_product_key",
+          `supplier data present but product key incomplete (need ${missing}). Parsed key: ${formatParsedProductKey(keyFields)}. ${describeSupplierPresence(row)}`,
+          keyFields,
+        ),
+      );
       continue;
     }
 
@@ -186,8 +220,8 @@ export function buildSkuImportFromSheetRows(
       }
     }
 
-    // Last row seen for this product key wins (easy to find in the sheet after import).
-    product.sourceSheetRows = [row.sheetRowNumber];
+    // Product origin row — where cols A–C were set (not last supplier continuation row).
+    product.sourceSheetRows = [row.productKeySourceRowNumber];
 
     if (supplierEmpty) {
       continue;
@@ -195,32 +229,28 @@ export function buildSkuImportFromSheetRows(
 
     if (!isValidSupplierOption(row.supplierOption)) {
       skippedInvalidRows += 1;
-      pushError({
-        sheetRowNumber: row.sheetRowNumber,
-        code: "invalid_supplier_option",
-        message:
-          `${rowRef(row.sheetRowNumber)}: supplier option must be ${MIN_SUPPLIER_OPTION}–${MAX_SUPPLIER_OPTION} (got ${formatSupplierOptionDisplay(row.supplierOption)}). ` +
-          `Parsed key: ${formatParsedProductKey(keyFields)}.`,
-        category: row.category || null,
-        product: row.product || null,
-        productKey: keySnapshot(keyFields),
-      });
+      pushError(
+        buildDataError(
+          row,
+          "invalid_supplier_option",
+          `supplier option must be ${MIN_SUPPLIER_OPTION}–${MAX_SUPPLIER_OPTION} (got ${formatSupplierOptionDisplay(row.supplierOption)}). Parsed key: ${formatParsedProductKey(keyFields)}.`,
+          keyFields,
+        ),
+      );
       continue;
     }
 
     const slotKey = `${product.skuId}::${row.supplierOption}`;
     if (supplierSlotKeys.has(slotKey)) {
       skippedInvalidRows += 1;
-      pushError({
-        sheetRowNumber: row.sheetRowNumber,
-        code: "duplicate_supplier_option",
-        message:
-          `${rowRef(row.sheetRowNumber)}: duplicate supplier option ${row.supplierOption} for product ${product.skuId}. ` +
-          `Parsed key: ${formatParsedProductKey(keyFields)}.`,
-        category: row.category || null,
-        product: row.product || null,
-        productKey: keySnapshot(keyFields),
-      });
+      pushError(
+        buildDataError(
+          row,
+          "duplicate_supplier_option",
+          `duplicate supplier option ${row.supplierOption} for product ${product.skuId}. Parsed key: ${formatParsedProductKey(keyFields)}.`,
+          keyFields,
+        ),
+      );
       continue;
     }
 

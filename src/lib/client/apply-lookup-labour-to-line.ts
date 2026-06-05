@@ -15,7 +15,12 @@ export function applyLookupLabourToProjectLine(
   lineUom?: string,
 ): ProjectAreaObjectPublic {
   const uom = lineUom ?? line.customuom ?? "";
-  const { row } = findObjectLabourRateByObjectName(objectLabourRates, objectName);
+  const skuProduct = line.skuProduct?.trim() || null;
+  const { row } = findObjectLabourRateByObjectName(
+    objectLabourRates,
+    objectName,
+    skuProduct,
+  );
   if (!row) {
     const cleared = { ...line, custommeasure };
     for (const k of LOOKUP_LABOUR_SILO_KEYS) cleared[k] = null;

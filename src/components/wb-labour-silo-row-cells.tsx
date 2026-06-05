@@ -1,12 +1,13 @@
 "use client";
 
 import { WbLabourSiloCell } from "@/components/wb-labour-silo-cell";
-import { objectLabourDuplicateForName } from "@/lib/client/labour-rate-index";
+import {
+  objectLabourDuplicateForName,
+  objectLabourRatesLookupName,
+} from "@/lib/client/labour-rate-index";
 import {
   LABOUR_SILO_KEYS,
-  TEMPLATE_LABOUR_SILO_KEYS,
-  WB_LABOUR_SILO_HEADERS,
-  type LabourSiloKey,
+  WB_WORKBENCH_LABOUR_SILO_HEADERS,
 } from "@/lib/labour-silo";
 import type { DataObjectLabourRatePublic } from "@/types/data-object-labour-rate-public";
 import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
@@ -39,39 +40,35 @@ export function WbLabourSiloRowCells({
   onPatch,
 }: Props) {
   const qObj = quoteObjects.find((o) => o.objectid === row.objectid);
+  const objectLabourMatchName = objectLabourRatesLookupName(
+    qObj?.objectname ?? objectLabel,
+  );
+  const skuProduct = row.skuProduct?.trim() || null;
   const dup = objectLabourDuplicateForName(
     objectLabourRates,
-    qObj?.objectname?.trim() || objectLabel,
+    objectLabourMatchName,
+    skuProduct,
   );
 
   return (
     <>
-      {WB_LABOUR_SILO_HEADERS.map(({ key }) => {
-        const hours = row[key];
-        const isTemplate = (TEMPLATE_LABOUR_SILO_KEYS as readonly LabourSiloKey[]).includes(
-          key,
-        );
-        return (
-          <WbLabourSiloCell
-            key={key}
-            siloKey={key}
-            hours={hours}
-            contractRates={contractRates}
-            objectLabourDuplicate={dup}
-            editable={isTemplate}
-            disabled={saving}
-            cellClassName={wbCellLoad}
-            inputClassName={wbInputLoad}
-            inputKey={inputKey(row, key)}
-            displayKey={`${inputKey(row, key)}-${hours ?? "n"}`}
-            onHoursChange={
-              isTemplate
-                ? (next) => onPatch(row.id, { [key]: next })
-                : undefined
-            }
-          />
-        );
-      })}
+      {WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key }) => (
+        <WbLabourSiloCell
+          key={key}
+          siloKey={key}
+          hours={row[key]}
+          contractRates={contractRates}
+          objectLabourDuplicate={dup}
+          objectLabourMatchName={objectLabourMatchName}
+          skuProduct={skuProduct}
+          editable={false}
+          disabled={saving}
+          cellClassName={wbCellLoad}
+          inputClassName={wbInputLoad}
+          inputKey={inputKey(row, key)}
+          displayKey={`${inputKey(row, key)}-${row[key] ?? "n"}`}
+        />
+      ))}
     </>
   );
 }

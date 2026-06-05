@@ -1,6 +1,8 @@
 import type { DocumentData, Timestamp } from "firebase-admin/firestore";
+import { isScopeToolType, type ScopeToolType } from "@/lib/scope-tools";
 import type { ScopeAnswerPublic, ScopePublic } from "@/types/scope";
 import { normalizedScopeAreaState } from "@/lib/scope-areas";
+import { readScopeToolFromFirestore } from "@/lib/scope-tools";
 import { readSystemScopeFromFirestore } from "@/lib/system-scope-types";
 
 /** Minimal area row for ordering scope tags (matches Setup → Areas order). */
@@ -50,6 +52,33 @@ function normalizeAttachedObjectNames(raw: unknown): string[] {
   return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 }
 
+function normalizeAttachedObjectTools(raw: unknown): Partial<Record<string, ScopeToolType>> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Partial<Record<string, ScopeToolType>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = key.trim();
+    const tool = typeof value === "string" ? value.trim() : "";
+    if (!id || !isScopeToolType(tool)) continue;
+    out[id] = tool;
+  }
+  return out;
+}
+
+function normalizeAttachedObjectFlags(
+  raw: unknown,
+  attachedIds: string[],
+): Partial<Record<string, boolean>> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const allowed = new Set(attachedIds);
+  const out: Partial<Record<string, boolean>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = key.trim();
+    if (!id || !allowed.has(id) || value !== true) continue;
+    out[id] = true;
+  }
+  return out;
+}
+
 function normalizeAttachedCategories(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
@@ -73,12 +102,39 @@ export function firestoreAnswersToPublic(raw: unknown): ScopeAnswerPublic[] {
     const answerid = String(rec.answerid ?? "");
     const label = String(rec.label ?? "");
     if (!answerid || !label) continue;
+    const attachedQuoteObjectIds = normalizeAttachedQuoteObjectIds(rec.attachedQuoteObjectIds);
+    const toolsRaw = normalizeAttachedObjectTools(rec.attachedObjectTools);
+    const showAllRaw = normalizeAttachedObjectFlags(
+      rec.attachedObjectShowAll,
+      attachedQuoteObjectIds,
+    );
+    const noChargeRaw = normalizeAttachedObjectFlags(
+      rec.attachedObjectNoCharge,
+      attachedQuoteObjectIds,
+    );
+    const attachedObjectTools: Partial<Record<string, ScopeToolType>> = {};
+    for (const id of attachedQuoteObjectIds) {
+      const tool = toolsRaw[id];
+      if (tool) attachedObjectTools[id] = tool;
+    }
+    const attachedObjectShowAll: Partial<Record<string, boolean>> = {};
+    const attachedObjectNoCharge: Partial<Record<string, boolean>> = {};
+    for (const id of attachedQuoteObjectIds) {
+      if (showAllRaw[id]) attachedObjectShowAll[id] = true;
+      if (noChargeRaw[id]) attachedObjectNoCharge[id] = true;
+    }
     out.push({
       answerid,
       label,
-      attachedQuoteObjectIds: normalizeAttachedQuoteObjectIds(rec.attachedQuoteObjectIds),
+      attachedQuoteObjectIds,
       attachedObjectNames: normalizeAttachedObjectNames(rec.attachedObjectNames),
       attachedCategories: normalizeAttachedCategories(rec.attachedCategories),
+      attachedObjectTools:
+        Object.keys(attachedObjectTools).length > 0 ? attachedObjectTools : undefined,
+      attachedObjectShowAll:
+        Object.keys(attachedObjectShowAll).length > 0 ? attachedObjectShowAll : undefined,
+      attachedObjectNoCharge:
+        Object.keys(attachedObjectNoCharge).length > 0 ? attachedObjectNoCharge : undefined,
     });
   }
   return out;
@@ -230,6 +286,9 @@ export function scopeDocToPublic(
   const { systemScope, systemScopeType } = readSystemScopeFromFirestore(
     data as Record<string, unknown>,
   );
+  const { exposeTool, scopeToolType } = readScopeToolFromFirestore(
+    data as Record<string, unknown>,
+  );
 
   return {
     id,
@@ -246,6 +305,8 @@ export function scopeDocToPublic(
     answers: firestoreAnswersToPublic(data.answers),
     systemScope,
     systemScopeType,
+    exposeTool,
+    scopeToolType,
     createdAt: tsToIso(data.createdAt as Timestamp | undefined),
     updatedAt: tsToIso(data.updatedAt as Timestamp | undefined),
   };

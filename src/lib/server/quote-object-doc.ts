@@ -2,6 +2,7 @@ import type { DocumentData, Timestamp } from "firebase-admin/firestore";
 import { parseProductFromDoc } from "@/lib/legacy-product-field";
 import { labourHoursFromQuoteTemplateData } from "@/lib/server/labour-hours";
 import type {
+  QuoteObjectInheritM2Source,
   QuoteObjectPriceLevelRowPublic,
   QuoteObjectPublic,
 } from "@/types/quote-object";
@@ -40,6 +41,66 @@ function effectiveLmRunsRollWidthM(quoteData: DocumentData): number {
   const rw = numOrNull(quoteData.runWidth);
   if (rw != null && rw > 0) return rw;
   return DEFAULT_LM_RUNS_RUN_WIDTH;
+}
+
+/** Resolve inherit source from Firestore quote_object (incl. legacy `inheritAreaM2`). */
+export function normalizeInheritM2SourceFromDoc(
+  quoteData: DocumentData | undefined,
+): QuoteObjectInheritM2Source {
+  if (!quoteData) return "none";
+  const uom = String(quoteData.uom ?? "").trim();
+  if (uom !== "M2" && uom !== LM_RUNS_UOM) return "none";
+  const srcRaw = String(quoteData.inheritM2Source ?? "").trim();
+  if (
+    srcRaw === "apartment_total_m2" ||
+    srcRaw === "apartment_soft_m2" ||
+    srcRaw === "apartment_hard_m2" ||
+    srcRaw === "area_m2" ||
+    srcRaw === "none"
+  ) {
+    return srcRaw;
+  }
+  return quoteData.inheritAreaM2 === true ? "area_m2" : "none";
+}
+
+export function quoteObjectUsesInheritedM2(quoteData: DocumentData | undefined): boolean {
+  return normalizeInheritM2SourceFromDoc(quoteData) !== "none";
+}
+
+/**
+ * Stored line measure when materializing a project line. When the template inherits m²,
+ * leave `custommeasure` null so checklist keeps resolving from project / area m².
+ */
+export function customMeasureForNewProjectLine(
+  quoteData: DocumentData | undefined,
+  templateMeasurement: number | null,
+  ctx: {
+    areaM2?: number | null;
+    apartmentTotalM2?: number | null;
+    apartmentSoftM2?: number | null;
+    apartmentHardM2?: number | null;
+  },
+  explicitCustomMeasure?: number | null,
+): number | null {
+  if (explicitCustomMeasure !== undefined) return explicitCustomMeasure;
+  if (quoteObjectUsesInheritedM2(quoteData)) return null;
+  return effectiveMeasurementForQuoteLine(quoteData, templateMeasurement, ctx);
+}
+
+/** Measure for pricing totals: explicit line override, else inherited / template quantity. */
+export function effectiveMeasureForLinePricing(
+  quoteData: DocumentData | undefined,
+  templateMeasurement: number | null,
+  ctx: {
+    areaM2?: number | null;
+    apartmentTotalM2?: number | null;
+    apartmentSoftM2?: number | null;
+    apartmentHardM2?: number | null;
+  },
+  storedCustomMeasure: number | null | undefined,
+): number | null {
+  if (storedCustomMeasure != null) return storedCustomMeasure;
+  return effectiveMeasurementForQuoteLine(quoteData, templateMeasurement, ctx);
 }
 
 export function calcTotal(
@@ -130,17 +191,7 @@ export function effectiveMeasurementForQuoteLine(
   if (!quoteData) return templateMeasurement;
   const uom = String(quoteData.uom ?? "").trim();
   if (uom === "M2") {
-    const srcRaw = String(quoteData.inheritM2Source ?? "").trim();
-    const src =
-      srcRaw === "apartment_total_m2" ||
-      srcRaw === "apartment_soft_m2" ||
-      srcRaw === "apartment_hard_m2" ||
-      srcRaw === "area_m2" ||
-      srcRaw === "none"
-        ? srcRaw
-        : quoteData.inheritAreaM2 === true
-          ? "area_m2"
-          : "none";
+    const src = normalizeInheritM2SourceFromDoc(quoteData);
     if (src === "area_m2") return numOrNull(ctx.areaM2) ?? null;
     if (src === "apartment_total_m2") return numOrNull(ctx.apartmentTotalM2) ?? null;
     if (src === "apartment_soft_m2") return numOrNull(ctx.apartmentSoftM2) ?? null;
@@ -149,15 +200,7 @@ export function effectiveMeasurementForQuoteLine(
   }
   if (uom === LM_RUNS_UOM) {
     const rw = effectiveLmRunsRollWidthM(quoteData);
-    const srcRaw = String(quoteData.inheritM2Source ?? "").trim();
-    const src =
-      srcRaw === "apartment_total_m2" ||
-      srcRaw === "apartment_soft_m2" ||
-      srcRaw === "apartment_hard_m2" ||
-      srcRaw === "area_m2" ||
-      srcRaw === "none"
-        ? srcRaw
-        : "none";
+    const src = normalizeInheritM2SourceFromDoc(quoteData);
     const baseM2 =
       src === "area_m2"
         ? numOrNull(ctx.areaM2)
@@ -175,6 +218,21 @@ export function effectiveMeasurementForQuoteLine(
     return templateMeasurement;
   }
   return templateMeasurement;
+}
+
+/**
+ * Line UOM when materializing a project line. Quote template UOM wins when set (e.g. `LM-Runs`
+ * carpet formula); catalog SKU UOM (often plain `LM`) is only used when the template has none.
+ */
+export function resolveProjectLineCustomUom(
+  templateUom: string,
+  skuUom: string | null | undefined,
+  explicitUom?: string,
+): string {
+  if (explicitUom !== undefined) return explicitUom;
+  const fromTemplate = String(templateUom ?? "").trim();
+  if (fromTemplate) return fromTemplate;
+  return String(skuUom ?? "").trim();
 }
 
 /**

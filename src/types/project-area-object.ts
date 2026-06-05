@@ -9,6 +9,8 @@ export type ProjectAreaObjectPublic = {
   /** Firestore doc id of the parent row in `projectareas` (scopes lines to one area instance). */
   projectAreaDocId?: string | null;
   objectid: number;
+  /** Quote object display name at line creation (kept when Setup object is removed). */
+  objectname?: string | null;
   areaid: number;
   /** How the line was created (legacy rows treated as default). */
   linesource?: ProjectAreaObjectLineSource;
@@ -43,6 +45,10 @@ export type ProjectAreaObjectPublic = {
   skuId?: string | null;
   /** Product name from the matched SKU row. */
   skuProduct?: string | null;
+  /** Scope line expanded from Show All — SKU is fixed to one catalog row. */
+  scopeShowAllSku?: boolean;
+  /** Scope line tagged No Charge in Setup — prices stay at $0. */
+  scopeNoCharge?: boolean;
   /** Supplier priority (1–10) used for unit price on this line; default P1 when absent. */
   supplierOption?: number | null;
   dateadded?: string | null;

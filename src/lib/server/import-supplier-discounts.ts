@@ -18,6 +18,7 @@ const DELETE_BATCH_SIZE = 500;
 
 export type ImportSupplierDiscountsResult = {
   tabTitle: string;
+  gid: number;
   range: string;
   headerRow1Based: number;
   dataStartRow1Based: number;
@@ -130,6 +131,7 @@ export async function runImportSupplierDiscounts(
 
   return {
     tabTitle: fetched.tabTitle,
+    gid: fetched.gid,
     range: fetched.range,
     headerRow1Based: fetched.headerRow1Based,
     dataStartRow1Based: fetched.dataStartRow1Based,

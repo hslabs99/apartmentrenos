@@ -3,11 +3,14 @@
 import { CascadeColourSelect } from "@/components/cascade-style-colour-fields";
 import {
   clFieldsGridClass,
+  clFieldsGridStyle,
   clObjectNameRowClass,
   clObjectNameTextClass,
   clScopeLineStackClass,
   clScopeMeasureColClass,
   clScopeNonStdColClass,
+  clScopeToolColClass,
+  clToolCellClass,
   clScopeSkuColClass,
   clScopeUomColClass,
   clSkuFieldClass,
@@ -16,16 +19,15 @@ import {
   clUomFieldClass,
 } from "@/components/cl-checklist-layout";
 import { IconNotes, IconTrash } from "@/components/icons/lightning-icons";
-import { PriceLevelIdSelect } from "@/components/price-level-id-select";
+import { CascadeElevateSelect } from "@/components/cascade-elevate-select";
 import { ScopeLineSkuPicker } from "@/components/scope-line-sku-picker";
 import { formatCurrencyInput, parseCurrencyInput } from "@/lib/client/format-money";
 import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
-import type { ScopeLineSkuPick } from "@/lib/client/scope-line-sku-match";
 import {
-  checklistInheritedMeasureForRow,
-  checklistMeasureFieldDisplayString,
-  measuresClose,
-} from "@/lib/checklist-effective-measure";
+  resolveScopeLineSkuUnitPriceExcGst,
+  type ScopeLineSkuPick,
+} from "@/lib/client/scope-line-sku-match";
+import { ChecklistMeasureInput } from "@/components/checklist-measure-input";
 import { cascadeLevelFromPriceLevel } from "@/lib/cascades/cascade-level-from-price-level";
 import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
 import { sfRowIconBtnDanger } from "@/lib/sf-row-actions";
@@ -37,6 +39,9 @@ import type { ProjectAreaPublic } from "@/types/project-area";
 import type { ProjectPublic } from "@/types/project";
 import type { QuoteObjectPublic } from "@/types/quote-object";
 import { WbLabourSiloRowCells } from "@/components/wb-labour-silo-row-cells";
+import { WbLineSupplierCell } from "@/components/wb-line-supplier-cell";
+import type { SupplierDiscountByKey } from "@/lib/client/supplier-discount-price";
+import { WbObjectName } from "@/components/wb-object-name";
 import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
 import type { DataObjectLabourRatePublic } from "@/types/data-object-labour-rate-public";
 
@@ -57,6 +62,7 @@ type ChecklistProps = {
   catalogSkus: DataSkuPublic[];
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
   priceLevels: PriceLevelPublic[];
+  cascades?: CascadeRow[];
   pa: ProjectAreaPublic;
   project: ProjectPublic | null;
   rowSavingId: string | null;
@@ -118,6 +124,7 @@ type WorkbenchProps = {
   catalogSkus: DataSkuPublic[];
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
   priceLevels: PriceLevelPublic[];
+  supplierDiscountByKey: SupplierDiscountByKey;
   pa: ProjectAreaPublic;
   project: ProjectPublic | null;
   rowSavingId: string | null;
@@ -141,6 +148,7 @@ function ChecklistBundledLine({
   catalogSkus,
   suppliersBySkuId,
   priceLevels,
+  cascades,
   pa,
   project,
   lineSaving,
@@ -157,6 +165,7 @@ function ChecklistBundledLine({
   catalogSkus: DataSkuPublic[];
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
   priceLevels: PriceLevelPublic[];
+  cascades?: CascadeRow[];
   pa: ProjectAreaPublic;
   project: ProjectPublic | null;
   lineSaving: boolean;
@@ -169,11 +178,10 @@ function ChecklistBundledLine({
   onValidationError: (message: string) => void;
 }) {
   const qObj = quoteObjects.find((o) => o.objectid === child.objectid);
-  const measureDisplay = checklistMeasureFieldDisplayString(child, qObj, pa, project);
   const measureKey =
     child.custommeasure != null
       ? inputKey(child, "bundled-m")
-      : `${inputKey(child, "bundled-m")}-ctx-${pa.aream2 ?? ""}-${project?.projectm2 ?? ""}`;
+      : `${inputKey(child, "bundled-m")}-ctx-${pa.aream2 ?? ""}-${project?.projectm2 ?? ""}-${project?.projectm2soft ?? ""}-${project?.projectm2hard ?? ""}`;
 
   return (
     <div
@@ -185,7 +193,7 @@ function ChecklistBundledLine({
         </span>
         <span className="ml-2 shrink-0 text-[10px] uppercase text-sf-text-weak">Bundled</span>
       </div>
-      <div className={clFieldsGridClass}>
+      <div className={clFieldsGridClass} style={clFieldsGridStyle}>
         <div className={`${clSkuFieldClass} ${clScopeSkuColClass}`}>
           <span className={wbHdrLabel}>SKU</span>
           <div className={clSkuPickerWrapClass}>
@@ -196,6 +204,7 @@ function ChecklistBundledLine({
                 catalogSkus={catalogSkus}
                 suppliersBySkuId={suppliersBySkuId}
                 priceLevels={priceLevels}
+                cascades={cascades}
                 pa={pa}
                 project={project}
                 disabled={lineSaving}
@@ -215,43 +224,18 @@ function ChecklistBundledLine({
         </div>
         <label className={`${clMeasureFieldClass} ${clScopeMeasureColClass}`}>
           <span className={wbHdrLabel}>Measure</span>
-          <input
-            key={measureKey}
-            type="text"
-            inputMode="decimal"
-            className={clMeasureInput}
-            defaultValue={measureDisplay}
+          <ChecklistMeasureInput
+            line={child}
+            quoteObject={qObj}
+            pa={pa}
+            project={project}
+            measureKey={measureKey}
+            inputClassName={clMeasureInput}
             disabled={lineSaving}
-            title="Matches grid measure; shows inherited m²/LM when template uses project or area quantities."
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            onPatch={(custommeasure) => {
+              onPatchLine(child.id, { custommeasure });
             }}
-            onBlur={(e) => {
-              const el = e.target as HTMLInputElement;
-              const raw = el.value.trim();
-              if (raw !== "" && parseOptionalNumber(raw) === null) {
-                onValidationError("Measure must be a valid number (or empty).");
-                el.value = checklistMeasureFieldDisplayString(child, qObj, pa, project);
-                return;
-              }
-              const next = parseOptionalNumber(raw);
-              const stored = child.custommeasure ?? null;
-              const inherited = checklistInheritedMeasureForRow(child, qObj, pa, project);
-              if (raw === "" || next === null) {
-                if (stored !== null) {
-                  onPatchLine(child.id, { custommeasure: null });
-                } else {
-                  el.value = checklistMeasureFieldDisplayString(child, qObj, pa, project);
-                }
-                return;
-              }
-              if (stored !== null) {
-                if (next !== stored) onPatchLine(child.id, { custommeasure: next });
-                return;
-              }
-              if (inherited != null && measuresClose(next, inherited)) return;
-              onPatchLine(child.id, { custommeasure: next });
-            }}
+            onValidationError={onValidationError}
           />
         </label>
         <label className={`${clUomFieldClass} ${clScopeUomColClass}`}>
@@ -273,6 +257,7 @@ function ChecklistBundledLine({
           />
         </label>
         <div className={`${clScopeNonStdColClass}`} aria-hidden />
+        <div className={`${clToolCellClass} ${clScopeToolColClass}`} aria-hidden />
       </div>
     </div>
   );
@@ -284,6 +269,7 @@ function WorkbenchBundledLine({
   catalogSkus,
   suppliersBySkuId,
   priceLevels,
+  supplierDiscountByKey,
   pa,
   project,
   lineSaving,
@@ -295,6 +281,7 @@ function WorkbenchBundledLine({
   catalogSkus: DataSkuPublic[];
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
   priceLevels: PriceLevelPublic[];
+  supplierDiscountByKey: SupplierDiscountByKey;
   pa: ProjectAreaPublic;
   project: ProjectPublic | null;
   lineSaving: boolean;
@@ -322,14 +309,26 @@ function WorkbenchBundledLine({
         />
       </td>
       <td className={`${wb.wbCellDesc} pl-6`}>
-        <span className="text-xs font-medium">{bundledLabel(child, quoteObjects, wb.objectLabel)}</span>
+        <span className="flex min-w-0 items-center gap-0.5 text-xs">
+          <span className="shrink-0 text-sf-text-secondary dark:text-zinc-400">↳</span>
+          <WbObjectName
+            row={child}
+            quoteObjects={quoteObjects}
+            catalogSkus={catalogSkus}
+            included={included}
+            className="text-xs"
+          />
+        </span>
       </td>
       <td className={`${wb.wbCellMid} truncate text-xs`}>{wb.lineSourceLabel(child)}</td>
       <td className={wb.wbCellMid}>
-        <PriceLevelIdSelect
-          value={child.pricelevelid ?? null}
-          onChange={(id) => {
-            onPatchLine(child.id, { pricelevelid: id });
+        <CascadeElevateSelect
+          cascades={wb.cascades}
+          priceLevels={priceLevels}
+          priceLevelId={child.pricelevelid ?? null}
+          projectFinish={project?.projectfinish}
+          onChange={({ priceLevelId }) => {
+            onPatchLine(child.id, { pricelevelid: priceLevelId });
           }}
           className={wb.wbSelectRow}
           disabled={lineSaving}
@@ -368,6 +367,7 @@ function WorkbenchBundledLine({
             priceLevels,
             child.pricelevelid ?? pa.pricelevelid ?? project?.defaultpricelevelid,
             project?.projectfinish,
+            wb.cascades,
           )}
           styleForFilter={wb.effectiveCascadeStyleForLine(child, pa, project)}
           colour={child.colour ?? ""}
@@ -385,19 +385,23 @@ function WorkbenchBundledLine({
             catalogSkus={catalogSkus}
             suppliersBySkuId={suppliersBySkuId}
             priceLevels={priceLevels}
+            cascades={wb.cascades}
+            supplierDiscountByKey={supplierDiscountByKey}
             pa={pa}
             project={project}
             disabled={lineSaving}
             selectClassName={wb.wbSelectRow}
             variant="compact"
-            showSupplierPrice={false}
+            showSupplierPrice
             shortMatchLabels
             inlineRow
+            syncUnitPriceFromPick
             showIncludeAllSupplierOptions={wb.isAdminMode}
             includeAllSupplierOptions={wb.includeAllSuppliersForLine(child.id)}
             onIncludeAllSupplierOptionsChange={(checked) =>
               wb.setIncludeAllSuppliersForLine(child.id, checked)
             }
+            lockToSkuId={child.scopeShowAllSku ? child.skuId : null}
             onSelectSku={(pick: ScopeLineSkuPick) => {
               onPatchLine(child.id, patchBodyForScopeLineSku(child, pick));
             }}
@@ -454,7 +458,13 @@ function WorkbenchBundledLine({
           type="text"
           inputMode="decimal"
           className={wb.wbInputCurrency}
-          defaultValue={formatCurrencyInput(child.customumprice)}
+          defaultValue={formatCurrencyInput(
+            resolveScopeLineSkuUnitPriceExcGst(
+              child,
+              suppliersBySkuId,
+              supplierDiscountByKey,
+            ),
+          )}
           disabled={lineSaving}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -463,7 +473,13 @@ function WorkbenchBundledLine({
             const raw = e.target.value.trim();
             if (raw !== "" && parseCurrencyInput(raw) === null) {
               wb.onValidationError("Unit price must be a valid amount (or empty).");
-              e.target.value = formatCurrencyInput(child.customumprice);
+              e.target.value = formatCurrencyInput(
+                resolveScopeLineSkuUnitPriceExcGst(
+              child,
+              suppliersBySkuId,
+              supplierDiscountByKey,
+            ),
+              );
               return;
             }
             const next = parseCurrencyInput(raw);
@@ -475,9 +491,6 @@ function WorkbenchBundledLine({
         />
       </td>
       <td className={wb.wbCellNum}>{wb.formatMoney(child.totalprice)}</td>
-      <td className={`${wb.wbCellNum} font-medium text-emerald-800 dark:text-emerald-200`}>
-        {lf != null ? wb.formatMoney(lf) : "—"}
-      </td>
       <WbLabourSiloRowCells
         row={child}
         quoteObjects={quoteObjects}
@@ -490,6 +503,9 @@ function WorkbenchBundledLine({
         inputKey={wb.inputKey}
         onPatch={onPatchLine}
       />
+      <td className={`${wb.wbCellNum} font-medium text-emerald-800 dark:text-emerald-200`}>
+        {lf != null ? wb.formatMoney(lf) : "—"}
+      </td>
       <td className={wb.wbCellMid}>
         <div className="flex items-center justify-end gap-0.5">
           <button
@@ -518,6 +534,12 @@ function WorkbenchBundledLine({
           </button>
         </div>
       </td>
+      <WbLineSupplierCell
+        row={child}
+        suppliersBySkuId={suppliersBySkuId}
+        supplierDiscountByKey={supplierDiscountByKey}
+        cellClassName={wb.wbCellMid}
+      />
       <td className={wb.wbSpacerCell} />
     </tr>
   );
@@ -537,6 +559,7 @@ export function ScopeLineBundledChildren(props: Props) {
             catalogSkus={props.catalogSkus}
             suppliersBySkuId={props.suppliersBySkuId}
             priceLevels={props.priceLevels}
+            cascades={props.cascades}
             pa={props.pa}
             project={props.project}
             lineSaving={props.rowSavingId === child.id}
@@ -563,6 +586,7 @@ export function ScopeLineBundledChildren(props: Props) {
           catalogSkus={props.catalogSkus}
           suppliersBySkuId={props.suppliersBySkuId}
           priceLevels={props.priceLevels}
+          supplierDiscountByKey={props.supplierDiscountByKey}
           pa={props.pa}
           project={props.project}
           lineSaving={props.rowSavingId === child.id}

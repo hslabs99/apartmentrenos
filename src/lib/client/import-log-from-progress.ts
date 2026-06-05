@@ -42,6 +42,8 @@ export function importLogFromProgress(
     skippedInvalidSamples: event.audit.skippedRowSamples.filter(
       (s) => s.status === "skipped_invalid",
     ),
+    skippedCustomElevateSamples: event.audit.customElevateSkippedSamples,
+    customElevateRowsSkipped: event.audit.customElevateRowsSkipped,
     dataErrors: event.audit.dataErrors,
     audit: event.audit,
   };

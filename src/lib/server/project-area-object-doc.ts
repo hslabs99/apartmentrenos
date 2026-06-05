@@ -74,6 +74,11 @@ export function docToProjectAreaObjectPublic(
   const linesource = readLineSource(data);
   const oid = integerObjectId(data.objectid);
   const q = oid !== undefined ? quoteByObjectId?.get(oid) : undefined;
+  const snapshotObjectname =
+    typeof data.objectname === "string" && data.objectname.trim()
+      ? data.objectname.trim()
+      : null;
+  const quoteObjectname = q ? String(q.objectname ?? "").trim() : "";
   const tmpl = labourHoursFromQuoteTemplateData(q);
   const hours = effectiveLineLabourHours(data, tmpl);
   const pad = data.projectAreaDocId;
@@ -82,6 +87,7 @@ export function docToProjectAreaObjectPublic(
     projectid: Number(data.projectid ?? 0),
     projectAreaDocId: typeof pad === "string" && pad.trim() ? pad.trim() : null,
     objectid: Number(data.objectid ?? 0),
+    objectname: snapshotObjectname || quoteObjectname || null,
     areaid: Number(data.areaid ?? 0),
     linesource,
     scopeDocId:
@@ -108,6 +114,8 @@ export function docToProjectAreaObjectPublic(
     skuId: typeof data.skuId === "string" && data.skuId.trim() ? data.skuId.trim() : null,
     skuProduct:
       typeof data.skuProduct === "string" && data.skuProduct.trim() ? data.skuProduct.trim() : null,
+    scopeShowAllSku: data.scopeShowAllSku === true,
+    scopeNoCharge: data.scopeNoCharge === true,
     supplierOption: (() => {
       const n =
         typeof data.supplierOption === "number"

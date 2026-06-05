@@ -1,11 +1,12 @@
 "use client";
 
+import { CascadeElevateSelect } from "@/components/cascade-elevate-select";
 import {
   CascadeColourSelect,
   CascadeStyleColourFields,
 } from "@/components/cascade-style-colour-fields";
+import { clActionBtnActiveClass, clActionBtnClass } from "@/components/cl-checklist-layout";
 import { ModalFrame } from "@/components/modal-frame";
-import { PriceLevelIdSelect } from "@/components/price-level-id-select";
 import { cascadeLevelFromPriceLevel } from "@/lib/cascades/cascade-level-from-price-level";
 import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
 import type { PriceLevelPublic } from "@/types/price-level";
@@ -137,12 +138,8 @@ export function ClNonStdTierOpenButton({
       }
       aria-label={`Non-standard finishes for ${label}`}
       onClick={onOpen}
-      className={`min-h-11 shrink-0 rounded-lg border px-3 py-2 text-xs font-medium transition disabled:opacity-50 ${
-        compact ? "w-full" : ""
-      } ${
-        active
-          ? "border-red-500 bg-red-50 text-red-950 hover:bg-red-100 dark:border-red-600 dark:bg-red-950/40 dark:text-red-100 dark:hover:bg-red-950/60"
-          : "border-sf-border-strong bg-sf-surface text-sf-text-secondary hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+      className={`${clActionBtnClass} ${compact ? "w-full" : ""} ${
+        active ? clActionBtnActiveClass : ""
       }`}
     >
       Non Std{active ? " · on" : ""}
@@ -198,6 +195,7 @@ export function ClNonStdTierModal({
     priceLevels,
     draft.pricelevelid ?? defaultPriceLevelId,
     project?.projectfinish,
+    cascades,
   );
 
   const elevateEmptyLabel =
@@ -291,9 +289,14 @@ export function ClNonStdTierModal({
             <span className="text-xs font-semibold uppercase tracking-wide text-sf-text-secondary dark:text-zinc-400">
               Elevate
             </span>
-            <PriceLevelIdSelect
-              value={draft.pricelevelid}
-              onChange={(id) => setDraft((prev) => ({ ...prev, pricelevelid: id }))}
+            <CascadeElevateSelect
+              cascades={cascades}
+              priceLevels={priceLevels}
+              priceLevelId={draft.pricelevelid}
+              projectFinish={project?.projectfinish}
+              onChange={({ priceLevelId }) =>
+                setDraft((prev) => ({ ...prev, pricelevelid: priceLevelId }))
+              }
               className={selectClass}
               disabled={disabled || saving}
               emptyLabel={elevateEmptyLabel}

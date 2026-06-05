@@ -3,13 +3,15 @@ import { isAreaObjectsMetaDocument } from "@/lib/firestore/areaobjects-collectio
 import { isAreasQuestionsMetaDocument } from "@/lib/firestore/areasquestions-collection";
 import { isLookupsMetaDocument } from "@/lib/firestore/lookups-collection";
 import { compareTemplateDocs } from "@/lib/server/template-sort-order";
+import { purgeStaleAreaLinesBeforeSeed } from "@/lib/server/project-area-line-backfill";
 import { isQuoteObjectsMetaDocument } from "@/lib/firestore/quote-objects-collection";
 import {
   ensureAreaNumericId,
   ensureProjectNumericId,
 } from "@/lib/server/resolve-ids";
 import {
-  effectiveMeasurementForQuoteLine,
+  customMeasureForNewProjectLine,
+  effectiveMeasureForLinePricing,
   quoteTemplatePricingForPriceLevel,
 } from "@/lib/server/quote-object-doc";
 import {
@@ -212,6 +214,8 @@ export async function addProjectAreaWithSeed(
     updatedAt: FieldValue.serverTimestamp(),
   });
 
+  await purgeStaleAreaLinesBeforeSeed(db, projectid, areaid, ref.id);
+
   const effectivePl = await resolveEffectivePriceLevelId(db, ref.id, projectid);
   const projDims = await loadProjectDimensionsByProjectId(db, projectid);
 
@@ -244,20 +248,27 @@ export async function addProjectAreaWithSeed(
         if (objectid === undefined) continue;
         const q = quoteByObjectId.get(objectid);
         const pricing = quoteTemplatePricingForPriceLevel(q, effectivePl);
-        const custommeasure = effectiveMeasurementForQuoteLine(
+        const measureCtx = {
+          areaM2: payload.aream2,
+          apartmentTotalM2: projDims.apartmentTotalM2,
+          apartmentHardM2: projDims.apartmentHardM2,
+          apartmentSoftM2: projDims.apartmentSoftM2,
+        };
+        const custommeasure = customMeasureForNewProjectLine(
           q,
           pricing.measurement,
-          {
-            areaM2: payload.aream2,
-            apartmentTotalM2: projDims.apartmentTotalM2,
-            apartmentHardM2: projDims.apartmentHardM2,
-            apartmentSoftM2: projDims.apartmentSoftM2,
-          },
+          measureCtx,
         );
         const customumprice = pricing.customumprice;
+        const measureForPricing = effectiveMeasureForLinePricing(
+          q,
+          pricing.measurement,
+          measureCtx,
+          custommeasure,
+        );
         let totalprice: number | null;
-        if (custommeasure != null && customumprice != null) {
-          totalprice = custommeasure * customumprice;
+        if (measureForPricing != null && customumprice != null) {
+          totalprice = measureForPricing * customumprice;
         } else {
           totalprice = pricing.totalprice;
         }
@@ -265,15 +276,17 @@ export async function addProjectAreaWithSeed(
         const objectName = q ? String(q.objectname ?? "").trim() : "";
         const { hours: labourHours } = applyProjectLineLabourHours({
           objectName,
+          skuProduct: null,
           quoteTemplate: q,
           objectLabourRates,
-          custommeasure,
+          custommeasure: measureForPricing,
           lineUom: pricing.customuom,
         });
         batch.set(db.collection("projectareaobjects").doc(), {
           projectid,
           projectAreaDocId: ref.id,
           objectid,
+          ...(objectName ? { objectname: objectName } : {}),
           areaid,
           linesource: "default",
           dateadded: FieldValue.serverTimestamp(),

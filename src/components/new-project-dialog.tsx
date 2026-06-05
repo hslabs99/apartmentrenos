@@ -4,6 +4,7 @@ import { ModalFrame } from "@/components/modal-frame";
 import { ProjectDefaultTierFields } from "@/components/project-default-tier-fields";
 import { usePriceLevels } from "@/lib/client/use-price-levels";
 import { projectfinishForPriceLevelId } from "@/lib/cascades/cascade-level-from-price-level";
+import { useCascades } from "@/lib/client/use-cascades";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -25,10 +26,12 @@ type NewProjectDialogProps = {
 export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogProps) {
   const router = useRouter();
   const { levels: priceLevels, loading: priceLevelsLoading } = usePriceLevels();
+  const { cascades } = useCascades();
   const [projectname, setProjectname] = useState("");
   const [projectdescription, setProjectdescription] = useState("");
   const [projectm2Str, setProjectm2Str] = useState("");
   const [defaultPriceLevelId, setDefaultPriceLevelId] = useState<number | null>(null);
+  const [defaultProjectFinish, setDefaultProjectFinish] = useState("");
   const [defaultStyle, setDefaultStyle] = useState("");
   const [defaultColour, setDefaultColour] = useState("");
   const [saving, setSaving] = useState(false);
@@ -39,6 +42,7 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
     setProjectdescription("");
     setProjectm2Str("");
     setDefaultPriceLevelId(null);
+    setDefaultProjectFinish("");
     setDefaultStyle("");
     setDefaultColour("");
     setError(null);
@@ -83,7 +87,9 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
           projectdescription: projectdescription.trim(),
           projectm2,
           defaultpricelevelid: defaultPriceLevelId,
-          projectfinish: projectfinishForPriceLevelId(priceLevels, defaultPriceLevelId),
+          projectfinish:
+            defaultProjectFinish.trim() ||
+            projectfinishForPriceLevelId(priceLevels, defaultPriceLevelId, cascades),
           defaultstyle: defaultStyle.trim(),
           defaultcolour: defaultColour.trim(),
         }),
@@ -159,6 +165,8 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
         <ProjectDefaultTierFields
           priceLevelId={defaultPriceLevelId}
           onPriceLevelIdChange={setDefaultPriceLevelId}
+          projectFinish={defaultProjectFinish}
+          onProjectFinishChange={setDefaultProjectFinish}
           style={defaultStyle}
           colour={defaultColour}
           onStyleChange={setDefaultStyle}

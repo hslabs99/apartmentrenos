@@ -13,9 +13,18 @@ export const MASTER_PRICES_SKU_TAB_TITLE = "Products_SKU_ALL";
 export const MASTER_PRICES_BUILDING_TAB_TITLE = "Products_Building";
 
 /**
- * Labour SKU import tab — same columns/layout as {@link MASTER_PRICES_SKU_TAB_TITLE}.
+ * Contract labour rates tab → `data_labourrates` (Import $ Labour Rates).
  */
 export const MASTER_PRICES_LABOUR_TAB_TITLE = "Products_Labour";
+
+/**
+ * Product contractor rates tab → `data_productcontractorrates` (Import Contractor Rates).
+ */
+export const MASTER_PRICES_CONTRACTOR_RATES_TAB_TITLE = "Products_ContractorRates";
+/**
+ * Painting SKU import tab — same columns/layout as {@link MASTER_PRICES_SKU_TAB_TITLE}.
+ */
+export const MASTER_PRICES_PAINTING_TAB_TITLE = "Products_Painting";
 
 /** Case-insensitive worksheet title match (trimmed). */
 export function sheetTabTitleMatches(a: string, b: string): boolean {
@@ -31,7 +40,7 @@ export const MASTER_PRICES_CASCADES_TAB_TITLE = "Cascading Restrictions";
 /** Supplier Discounts tab → `data_supplier_discounts` (tiered % by order value silo). */
 export const MASTER_PRICES_SUPPLIER_DISCOUNTS_TAB_TITLE = "Supplier Discounts";
 
-/** Incremental labour per product → `data_objectlabourrates` (upsert by category + type + product). */
+/** Incremental labour per product → `data_objectlabourrates` (replaced on each import). */
 export const MASTER_PRICES_INCREMENTAL_LABOUR_PRODUCTS_TAB_TITLE =
   "Incremental Labour - Products";
 
@@ -44,4 +53,9 @@ export const MASTER_PRICES_DEFAULT_GID = MASTER_PRICES_SKU_TAB_GID;
 export function masterPricesSpreadsheetEditUrl(gid: number): string {
   const base = `https://docs.google.com/spreadsheets/d/${MASTER_PRICES_SPREADSHEET_ID}/edit`;
   return `${base}?gid=${gid}#gid=${gid}`;
+}
+
+/** Open the workbook tab scrolled to a 1-based sheet row (same row number as Excel). */
+export function masterPricesSpreadsheetRowUrl(gid: number, row1Based: number): string {
+  return `https://docs.google.com/spreadsheets/d/${MASTER_PRICES_SPREADSHEET_ID}/edit#gid=${gid}&range=A${row1Based}`;
 }

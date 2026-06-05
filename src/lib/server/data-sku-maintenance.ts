@@ -60,13 +60,53 @@ export async function deleteSuppliersForSkuIds(
   return deleteDocRefs(db, refsToDelete, onChunk);
 }
 
-/** Set isCurrent=false on every product (start of import — sheet will re-flag matches). */
+/** Set isCurrent=false on every product (start of full-catalog import). */
 export async function markAllProductsNotCurrent(
   db: Firestore,
   onChunk?: (done: number, total: number) => void,
 ): Promise<number> {
   const snap = await db.collection(DATA_SKUS_COLLECTION).get();
   const refs = snap.docs.filter((d) => !isDataSkusMetaDocument(d.id)).map((d) => d.ref);
+  const total = refs.length;
+  let done = 0;
+
+  for (let i = 0; i < refs.length; i += BATCH_SIZE) {
+    const chunk = refs.slice(i, i + BATCH_SIZE);
+    const batch = db.batch();
+    for (const ref of chunk) {
+      batch.update(ref, { isCurrent: false });
+    }
+    await batch.commit();
+    done += chunk.length;
+    onChunk?.(done, total);
+  }
+
+  return done;
+}
+
+function normalizeCategoryKey(category: string): string {
+  return category.trim().toLowerCase();
+}
+
+/** Set isCurrent=false on products in the given categories (partial-tab import scope). */
+export async function markProductsNotCurrentForCategories(
+  db: Firestore,
+  categories: string[],
+  onChunk?: (done: number, total: number) => void,
+): Promise<number> {
+  const categoryKeys = new Set(
+    categories.map(normalizeCategoryKey).filter(Boolean),
+  );
+  if (categoryKeys.size === 0) return 0;
+
+  const snap = await db.collection(DATA_SKUS_COLLECTION).get();
+  const refs = snap.docs
+    .filter((d) => {
+      if (isDataSkusMetaDocument(d.id)) return false;
+      return categoryKeys.has(normalizeCategoryKey(String(d.data().category ?? "")));
+    })
+    .map((d) => d.ref);
+
   const total = refs.length;
   let done = 0;
 
@@ -126,6 +166,49 @@ export async function deleteProductsNotInSheet(
     .get();
   const productRefs = snap.docs
     .filter((d) => !isDataSkusMetaDocument(d.id))
+    .map((d) => d.ref);
+  const skuIds = productRefs.map((r) => r.id);
+
+  const suppliersDeleted = await deleteSuppliersForSkuIds(db, skuIds, (deleted, total) => {
+    onProgress?.({ phase: "suppliers", deleted, total });
+  });
+
+  const productsDeleted = await deleteDocRefs(db, productRefs, (deleted, total) => {
+    onProgress?.({ phase: "products", deleted, total });
+  });
+
+  return { productsDeleted, suppliersDeleted };
+}
+
+/**
+ * After a partial-tab import (categories marked not-current, sheet rows re-flagged):
+ * delete `isCurrent=false` products in those categories and their supplier rows.
+ */
+export async function deleteProductsNotInSheetForCategories(
+  db: Firestore,
+  categories: string[],
+  onProgress?: (event: {
+    phase: "suppliers" | "products";
+    deleted: number;
+    total: number;
+  }) => void,
+): Promise<{ productsDeleted: number; suppliersDeleted: number }> {
+  const categoryKeys = new Set(
+    categories.map(normalizeCategoryKey).filter(Boolean),
+  );
+  if (categoryKeys.size === 0) {
+    return { productsDeleted: 0, suppliersDeleted: 0 };
+  }
+
+  const snap = await db
+    .collection(DATA_SKUS_COLLECTION)
+    .where("isCurrent", "==", false)
+    .get();
+  const productRefs = snap.docs
+    .filter((d) => {
+      if (isDataSkusMetaDocument(d.id)) return false;
+      return categoryKeys.has(normalizeCategoryKey(String(d.data().category ?? "")));
+    })
     .map((d) => d.ref);
   const skuIds = productRefs.map((r) => r.id);
 

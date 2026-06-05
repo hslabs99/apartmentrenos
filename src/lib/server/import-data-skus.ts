@@ -2,12 +2,12 @@ import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import type { FetchedMasterPricesSkus } from "@/lib/google/fetch-sku-rows-from-sheet";
 import {
   fetchMasterPricesBuildingSkuRows,
-  fetchMasterPricesLabourSkuRows,
+  fetchMasterPricesPaintingSkuRows,
   fetchMasterPricesSkuRows,
 } from "@/lib/google/fetch-master-prices-sku-rows";
 import {
   MASTER_PRICES_BUILDING_TAB_TITLE,
-  MASTER_PRICES_LABOUR_TAB_TITLE,
+  MASTER_PRICES_PAINTING_TAB_TITLE,
   MASTER_PRICES_SKU_TAB_TITLE,
 } from "@/lib/google/master-prices-spreadsheet";
 import {
@@ -22,8 +22,10 @@ import {
 import {
   deleteOrphanSuppliers,
   deleteProductsNotInSheet,
+  deleteProductsNotInSheetForCategories,
   deleteSuppliersForSkuIds,
   markAllProductsNotCurrent,
+  markProductsNotCurrentForCategories,
 } from "@/lib/server/data-sku-maintenance";
 import {
   loadExistingProductKeyMap,
@@ -35,10 +37,10 @@ import type { DataSkuSupplier } from "@/types/data-sku-supplier";
 import type { ImportLogAudit, ImportLogKind, ImportLogStatus } from "@/types/import-log-types";
 
 /** Which workbook tab drives this import run. */
-export type DataSkusImportSource = "sku_all" | "building" | "labour";
+export type DataSkusImportSource = "sku_all" | "building" | "painting";
 
 export type DataSkusImportOptions = {
-  /** After full SKU import: delete products left with isCurrent=false (not on sheet). */
+  /** After import: delete products left with isCurrent=false (not on that tab's sheet). */
   removeProductsNotInSheet?: boolean;
 };
 
@@ -74,12 +76,12 @@ const DATA_SKUS_IMPORT_SOURCES: Record<DataSkusImportSource, DataSkusImportSourc
     markAllProductsNotCurrent: false,
     fetchRows: fetchMasterPricesBuildingSkuRows,
   },
-  labour: {
-    label: "Labour",
-    requiredTabTitle: MASTER_PRICES_LABOUR_TAB_TITLE,
-    importLogKind: "data_skus_import_labour",
+  painting: {
+    label: "Painting",
+    requiredTabTitle: MASTER_PRICES_PAINTING_TAB_TITLE,
+    importLogKind: "data_skus_import_painting",
     markAllProductsNotCurrent: false,
-    fetchRows: fetchMasterPricesLabourSkuRows,
+    fetchRows: fetchMasterPricesPaintingSkuRows,
   },
 };
 
@@ -223,6 +225,21 @@ export async function runDataSkusImport(
     });
 
     if (audit.productsImported === 0 && audit.nonBlankRows > 0) {
+      const status: ImportLogStatus =
+        audit.skippedInvalidRows > 0 ? "partial" : "failed";
+      await saveDataSkusImportLog(db, {
+        importRunId,
+        kind: sourceConfig.importLogKind,
+        status,
+        tabTitle: fetched.tabTitle,
+        sheetRange: fetched.range,
+        gid: fetched.gid,
+        audit,
+        deletedFromFirestore: 0,
+        writtenToFirestore: 0,
+        writtenProducts: 0,
+        writtenSuppliers: 0,
+      });
       throw new Error(
         `No products to import. Header row ${audit.headerRow1Based}. ` +
           `${audit.skippedInvalidRows} row(s) with errors. Check import log.`,
@@ -231,6 +248,10 @@ export async function runDataSkusImport(
 
     await ensureDataSkusBootstrap(db);
     await ensureDataSkuSuppliersBootstrap(db);
+
+    const sheetCategories = [
+      ...new Set(products.map((p) => p.category.trim()).filter(Boolean)),
+    ];
 
     if (sourceConfig.markAllProductsNotCurrent) {
       onProgress({
@@ -245,6 +266,24 @@ export async function runDataSkusImport(
         onProgress({
           phase: "deleting",
           message: `Marked ${done} of ${total} product(s) not current…`,
+          percent: clampPercent(20 + (total === 0 ? 0 : (done / total) * 6)),
+          importRunId,
+          audit: audit!,
+        });
+      });
+    } else if (options.removeProductsNotInSheet && sheetCategories.length > 0) {
+      onProgress({
+        phase: "deleting",
+        message: `Marking products not current in ${sheetCategories.length} categor(ies) from this tab…`,
+        percent: 20,
+        importRunId,
+        audit,
+      });
+
+      await markProductsNotCurrentForCategories(db, sheetCategories, (done, total) => {
+        onProgress({
+          phase: "deleting",
+          message: `Marked ${done} of ${total} product(s) not current in tab categories…`,
           percent: clampPercent(20 + (total === 0 ? 0 : (done / total) * 6)),
           importRunId,
           audit: audit!,
@@ -394,52 +433,66 @@ export async function runDataSkusImport(
     deleted += orphansDeleted;
 
     if (options.removeProductsNotInSheet) {
-      if (!sourceConfig.markAllProductsNotCurrent) {
-        audit = {
-          ...audit,
-          warnings: [
-            ...audit.warnings,
-            "Remove products not on sheet was skipped (only applies to full SKU catalog import).",
-          ],
-        };
-      } else {
-        onProgress({
-          phase: "deleting",
-          message: "Removing products not on sheet (isCurrent=false)…",
-          percent: 97,
-          importRunId,
-          audit,
-          productsCreated,
-          productsUpdated,
-        });
+      onProgress({
+        phase: "deleting",
+        message: "Removing products not on sheet (isCurrent=false)…",
+        percent: 97,
+        importRunId,
+        audit,
+        productsCreated,
+        productsUpdated,
+      });
 
-        const removed = await deleteProductsNotInSheet(db, (ev) => {
-          onProgress({
-            phase: "deleting",
-            message:
-              ev.phase === "suppliers"
-                ? `Removed ${ev.deleted} of ${ev.total} supplier row(s) for off-sheet products…`
-                : `Removed ${ev.deleted} of ${ev.total} off-sheet product(s)…`,
-            percent: clampPercent(
-              97 +
-                (ev.phase === "suppliers"
-                  ? ev.total === 0
-                    ? 0
-                    : (ev.deleted / ev.total) * 1.5
-                  : 1.5 + (ev.total === 0 ? 0 : (ev.deleted / ev.total) * 1.5)),
-            ),
-            importRunId,
-            audit: audit!,
-            productsCreated,
-            productsUpdated,
-            productsRemovedNotInSheet,
-            suppliersRemovedNotInSheet,
+      const removed = sourceConfig.markAllProductsNotCurrent
+        ? await deleteProductsNotInSheet(db, (ev) => {
+            onProgress({
+              phase: "deleting",
+              message:
+                ev.phase === "suppliers"
+                  ? `Removed ${ev.deleted} of ${ev.total} supplier row(s) for off-sheet products…`
+                  : `Removed ${ev.deleted} of ${ev.total} off-sheet product(s)…`,
+              percent: clampPercent(
+                97 +
+                  (ev.phase === "suppliers"
+                    ? ev.total === 0
+                      ? 0
+                      : (ev.deleted / ev.total) * 1.5
+                    : 1.5 + (ev.total === 0 ? 0 : (ev.deleted / ev.total) * 1.5)),
+              ),
+              importRunId,
+              audit: audit!,
+              productsCreated,
+              productsUpdated,
+              productsRemovedNotInSheet,
+              suppliersRemovedNotInSheet,
+            });
+          })
+        : await deleteProductsNotInSheetForCategories(db, sheetCategories, (ev) => {
+            onProgress({
+              phase: "deleting",
+              message:
+                ev.phase === "suppliers"
+                  ? `Removed ${ev.deleted} of ${ev.total} supplier row(s) for off-sheet tab products…`
+                  : `Removed ${ev.deleted} of ${ev.total} off-sheet tab product(s)…`,
+              percent: clampPercent(
+                97 +
+                  (ev.phase === "suppliers"
+                    ? ev.total === 0
+                      ? 0
+                      : (ev.deleted / ev.total) * 1.5
+                    : 1.5 + (ev.total === 0 ? 0 : (ev.deleted / ev.total) * 1.5)),
+              ),
+              importRunId,
+              audit: audit!,
+              productsCreated,
+              productsUpdated,
+              productsRemovedNotInSheet,
+              suppliersRemovedNotInSheet,
+            });
           });
-        });
-        productsRemovedNotInSheet = removed.productsDeleted;
-        suppliersRemovedNotInSheet = removed.suppliersDeleted;
-        deleted += productsRemovedNotInSheet + suppliersRemovedNotInSheet;
-      }
+      productsRemovedNotInSheet = removed.productsDeleted;
+      suppliersRemovedNotInSheet = removed.suppliersDeleted;
+      deleted += productsRemovedNotInSheet + suppliersRemovedNotInSheet;
     }
 
     const written = writtenProducts + writtenSuppliers;
@@ -521,6 +574,7 @@ export async function runDataSkusImport(
       sheetGridRowCount: null,
       totalDataRowsScanned: 0,
       blankRowsSkipped: 0,
+      customElevateRowsSkipped: 0,
       nonBlankRows: 0,
       importedRows: 0,
       productsImported: 0,
@@ -531,6 +585,7 @@ export async function runDataSkusImport(
       unmappedHeaders: [],
       warnings: [message],
       skippedRowSamples: [],
+      customElevateSkippedSamples: [],
       dataErrors: [],
     };
 

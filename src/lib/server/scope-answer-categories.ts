@@ -147,7 +147,8 @@ export async function resolveQuoteObjectLinesForDocIds(
   ];
   if (unique.length === 0) return [];
 
-  const candidates: Cand[] = [];
+  const out: ScopeCategoryLineSeed[] = [];
+  const seen = new Set<number>();
 
   for (const docId of unique) {
     const snap = await db.collection("quote_objects").doc(docId).get();
@@ -155,14 +156,14 @@ export async function resolveQuoteObjectLinesForDocIds(
     const data = snap.data() as DocumentData;
     if (!quoteObjectMatchesAreaTags(data, templateAreaDocId)) continue;
     const objectid = integerObjectId(data.objectid);
-    if (objectid === undefined) continue;
-    candidates.push({
+    if (objectid === undefined || seen.has(objectid)) continue;
+    seen.add(objectid);
+    out.push({
       objectid,
       notes1: String(data.notes1 ?? ""),
       notes2: String(data.notes2 ?? ""),
-      sortOrder: numOrNull(data.sortOrder),
     });
   }
 
-  return finalizeQuoteObjectCandidates(candidates);
+  return out;
 }

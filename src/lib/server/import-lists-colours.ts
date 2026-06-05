@@ -12,10 +12,12 @@ import { allocateNextSequence } from "@/lib/firestore/sequences";
 
 export type ImportListsColoursResult = {
   tabTitle: string;
+  gid: number;
   range: string;
   parsed: number;
   created: number;
   updated: number;
+  skipped: number;
 };
 
 export async function runImportListsColours(
@@ -79,9 +81,11 @@ export async function runImportListsColours(
 
   return {
     tabTitle: fetched.tabTitle,
+    gid: fetched.gid,
     range: fetched.range,
     parsed: rows.length,
     created,
     updated,
+    skipped: 0,
   };
 }

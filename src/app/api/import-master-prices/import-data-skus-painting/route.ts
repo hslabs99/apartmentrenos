@@ -14,7 +14,7 @@ function ndjsonLine(event: ImportDataSkusProgress): Uint8Array {
 }
 
 /**
- * POST — upsert products from `Products_Labour` tab (same layout as Products_SKU_ALL).
+ * POST — upsert products from `Products_Painting` tab (same layout as Products_SKU_ALL).
  * Does not mark the full catalog not-current; only rows on this sheet are updated.
  */
 export async function POST(req: NextRequest) {
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
 
       try {
         const db = getAdminFirestore();
-        await runDataSkusImport(db, push, "labour", options);
+        await runDataSkusImport(db, push, "painting", options);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         push({

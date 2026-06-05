@@ -16,6 +16,7 @@ import {
   renumberScopesForAreaDocId,
 } from "@/lib/server/template-sort-order";
 import type { ScopePublic } from "@/types/scope";
+import { normalizeScopeToolFields } from "@/lib/scope-tools";
 import { normalizeScopeAnswers, normalizeSystemScopeFields, scopeWriteSchema } from "./scope-validation";
 
 export const runtime = "nodejs";
@@ -185,6 +186,7 @@ export async function POST(req: NextRequest) {
       const scopeid = await allocateNextSequence(db, "scopeid");
       const answers = normalizeScopeAnswers(parsed.data.answers!);
       const { systemScope, systemScopeType } = normalizeSystemScopeFields(parsed.data);
+      const { exposeTool, scopeToolType } = normalizeScopeToolFields(parsed.data);
       await ref.set({
         scopeid,
         areaid: primaryAreaid,
@@ -195,6 +197,8 @@ export async function POST(req: NextRequest) {
         answers,
         systemScope,
         systemScopeType,
+        exposeTool,
+        scopeToolType,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });

@@ -59,6 +59,17 @@ export async function saveDataSkusImportLog(
       product: s.product ?? null,
     }));
 
+  const skippedCustomElevateSamples = params.audit.customElevateSkippedSamples
+    .slice(0, 500)
+    .map((s) => ({
+      sheetRowNumber: s.sheetRowNumber,
+      status: s.status,
+      reason: s.reason,
+      sku: s.sku ?? null,
+      category: s.category ?? null,
+      product: s.product ?? null,
+    }));
+
   const warnings = params.audit.warnings.slice(0, 30);
   const dataErrors = params.audit.dataErrors.slice(0, 50);
 
@@ -85,6 +96,8 @@ export async function saveDataSkusImportLog(
     errorMessage: params.errorMessage ?? null,
     warnings,
     skippedInvalidSamples,
+    skippedCustomElevateSamples,
+    customElevateRowsSkipped: params.audit.customElevateRowsSkipped,
     dataErrors,
   });
 
@@ -118,7 +131,7 @@ export function importLogDocToPublic(id: string, data: DocumentData): ImportLogP
     tabTitle: String(data.tabTitle ?? ""),
     gid: typeof data.gid === "number" ? data.gid : 0,
     sheetRange: String(data.sheetRange ?? ""),
-    completedAt: completedAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
+    completedAt: completedAt?.toDate?.()?.toISOString?.() ?? "",
     summary,
     deletedPrior: Number(data.deletedPrior ?? data.deletedFromFirestore ?? 0),
     errorMessage:
@@ -129,6 +142,13 @@ export function importLogDocToPublic(id: string, data: DocumentData): ImportLogP
     skippedInvalidSamples: Array.isArray(data.skippedInvalidSamples)
       ? (data.skippedInvalidSamples as ImportLogPublic["skippedInvalidSamples"])
       : undefined,
+    skippedCustomElevateSamples: Array.isArray(data.skippedCustomElevateSamples)
+      ? (data.skippedCustomElevateSamples as ImportLogPublic["skippedCustomElevateSamples"])
+      : undefined,
+    customElevateRowsSkipped:
+      typeof data.customElevateRowsSkipped === "number"
+        ? data.customElevateRowsSkipped
+        : undefined,
     dataErrors: Array.isArray(data.dataErrors)
       ? (data.dataErrors as ImportLogPublic["dataErrors"])
       : undefined,

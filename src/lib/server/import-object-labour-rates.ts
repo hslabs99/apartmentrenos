@@ -6,20 +6,26 @@ import {
 } from "@/lib/firestore/data-objectlabourrates-collection";
 import { fetchIncrementalLabourProductsRows } from "@/lib/google/fetch-incremental-labour-products-rows";
 import { INCREMENTAL_LABOUR_PRODUCTS_DATA_START_ROW_1_BASED } from "@/lib/google/parse-incremental-labour-products";
-import { dataLabourRateKey } from "@/lib/data-labour-rate-key";
 
 const WRITE_BATCH_SIZE = 400;
+const DELETE_BATCH_SIZE = 500;
 
 export type ImportObjectLabourRatesResult = {
   tabTitle: string;
+  gid: number;
   range: string;
   headerRow1Based: number;
   dataStartRow1Based: number;
   parsed: number;
-  created: number;
-  updated: number;
+  written: number;
+  deletedPrior: number;
   parseErrors: string[];
 };
+
+function productForFirestore(product: string): string | null {
+  const trimmed = product.trim();
+  return trimmed === "" ? null : trimmed;
+}
 
 function rowPayload(
   row: Awaited<ReturnType<typeof fetchIncrementalLabourProductsRows>>["rows"][number],
@@ -28,7 +34,7 @@ function rowPayload(
   return {
     category: row.category,
     productType: row.productType,
-    product: row.product,
+    product: productForFirestore(row.product),
     constructionAssistant: row.constructionAssistant,
     leadContractor: row.leadContractor,
     electrician: row.electrician,
@@ -37,10 +43,12 @@ function rowPayload(
     comments: row.comments,
     sheetRow: row.sheetRow,
     importedAt: now,
+    createdAt: now,
     updatedAt: now,
   };
 }
 
+/** Replace `data_objectlabourrates` from `Incremental Labour - Products` (collection cleared first). */
 export async function runImportObjectLabourRates(
   db: Firestore,
 ): Promise<ImportObjectLabourRatesResult> {
@@ -66,44 +74,32 @@ export async function runImportObjectLabourRates(
   await ensureDataObjectlabourratesBootstrap(db);
 
   const snap = await db.collection(DATA_OBJECTLABOURRATES_COLLECTION).get();
-  const existingByKey = new Map<string, string>();
-  for (const doc of snap.docs) {
-    if (isDataObjectlabourratesMetaDocument(doc.id)) continue;
-    const data = doc.data();
-    const key = dataLabourRateKey(
-      String(data.category ?? ""),
-      String(data.productType ?? ""),
-      String(data.product ?? ""),
-    );
-    existingByKey.set(key, doc.id);
+  const deleteRefs = snap.docs
+    .filter((d) => !isDataObjectlabourratesMetaDocument(d.id))
+    .map((d) => d.ref);
+
+  let deletedPrior = 0;
+  for (let i = 0; i < deleteRefs.length; i += DELETE_BATCH_SIZE) {
+    const chunk = deleteRefs.slice(i, i + DELETE_BATCH_SIZE);
+    const batch = db.batch();
+    for (const ref of chunk) {
+      batch.delete(ref);
+    }
+    await batch.commit();
+    deletedPrior += chunk.length;
   }
 
   const now = FieldValue.serverTimestamp();
-  let created = 0;
-  let updated = 0;
+  let written = 0;
 
   for (let i = 0; i < fetched.rows.length; i += WRITE_BATCH_SIZE) {
     const chunk = fetched.rows.slice(i, i + WRITE_BATCH_SIZE);
     const batch = db.batch();
 
     for (const row of chunk) {
-      const key = dataLabourRateKey(row.category, row.productType, row.product);
-      const existingId = existingByKey.get(key);
-      const data = rowPayload(row, now);
-
-      if (existingId) {
-        const ref = db.collection(DATA_OBJECTLABOURRATES_COLLECTION).doc(existingId);
-        batch.update(ref, data);
-        updated++;
-      } else {
-        const ref = db.collection(DATA_OBJECTLABOURRATES_COLLECTION).doc();
-        batch.set(ref, {
-          ...data,
-          createdAt: now,
-        });
-        existingByKey.set(key, ref.id);
-        created++;
-      }
+      const ref = db.collection(DATA_OBJECTLABOURRATES_COLLECTION).doc();
+      batch.set(ref, rowPayload(row, now));
+      written++;
     }
 
     await batch.commit();
@@ -111,12 +107,13 @@ export async function runImportObjectLabourRates(
 
   return {
     tabTitle: fetched.tabTitle,
+    gid: fetched.gid,
     range: fetched.range,
     headerRow1Based: fetched.headerRow1Based,
     dataStartRow1Based: INCREMENTAL_LABOUR_PRODUCTS_DATA_START_ROW_1_BASED,
     parsed: fetched.rows.length,
-    created,
-    updated,
+    written,
+    deletedPrior,
     parseErrors: fetched.errors,
   };
 }

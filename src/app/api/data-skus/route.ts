@@ -8,7 +8,10 @@ import {
   DATA_SKUS_COLLECTION,
   isDataSkusMetaDocument,
 } from "@/lib/firestore/data-skus-collection";
+import { buildPrimarySupplierBySkuId } from "@/lib/client/primary-supplier-by-sku";
 import { dataSkuDocToPublic } from "@/lib/server/data-sku-doc";
+import { dataSkuSupplierDocToPublic } from "@/lib/server/data-sku-supplier-doc";
+import { isValidSupplierOption } from "@/lib/sku/supplier-option";
 
 export const runtime = "nodejs";
 
@@ -21,18 +24,28 @@ export async function GET() {
     ]);
 
     const supplierCountBySkuId = new Map<string, number>();
+    const supplierItems = [];
     for (const doc of supplierSnap.docs) {
       if (isDataSkuSuppliersMetaDocument(doc.id)) continue;
-      const skuId = String(doc.data().skuId ?? "").trim();
+      const row = dataSkuSupplierDocToPublic(doc.id, doc.data());
+      if (!isValidSupplierOption(row.supplierOption)) continue;
+      supplierItems.push(row);
+      const skuId = row.skuId.trim();
       if (!skuId) continue;
       supplierCountBySkuId.set(skuId, (supplierCountBySkuId.get(skuId) ?? 0) + 1);
     }
+    const primarySupplierBySkuId = buildPrimarySupplierBySkuId(supplierItems);
 
     const items = skuSnap.docs
       .filter((d) => !isDataSkusMetaDocument(d.id))
       .map((d) => {
         const skuId = String(d.data().skuId ?? d.id).trim() || d.id;
-        return dataSkuDocToPublic(d.id, d.data(), supplierCountBySkuId.get(skuId) ?? 0);
+        return dataSkuDocToPublic(
+          d.id,
+          d.data(),
+          supplierCountBySkuId.get(skuId) ?? 0,
+          primarySupplierBySkuId[skuId] ?? null,
+        );
       })
       .sort((a, b) => a.skuId.localeCompare(b.skuId, undefined, { sensitivity: "base" }));
 

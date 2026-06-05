@@ -5,15 +5,9 @@ export type ProductKeyLogContext = {
   dataStartRow1Based: number;
 };
 
-export function formatWorkbookRowRef(
-  sheetRowNumber: number,
-  ctx: ProductKeyLogContext,
-): string {
-  const dataRowIndex = sheetRowNumber - ctx.dataStartRow1Based + 1;
-  return (
-    `Workbook row ${sheetRowNumber} (Excel row ${sheetRowNumber}; ` +
-    `data row #${dataRowIndex} after header on row ${ctx.headerRow1Based})`
-  );
+/** 1-based Google Sheet / Excel row — matches row numbers shown in the spreadsheet UI. */
+export function formatWorkbookRowRef(sheetRowNumber: number): string {
+  return `Google Sheet row ${sheetRowNumber}`;
 }
 
 export function formatParsedProductKey(fields: ProductKeyFields): string {

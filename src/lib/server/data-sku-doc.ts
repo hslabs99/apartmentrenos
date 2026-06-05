@@ -1,5 +1,6 @@
 import type { DocumentData } from "firebase-admin/firestore";
 import { parseProductFromDoc } from "@/lib/legacy-product-field";
+import type { PrimarySupplierSummary } from "@/lib/client/primary-supplier-by-sku";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 
 function parseText(v: unknown): string {
@@ -18,6 +19,7 @@ export function dataSkuDocToPublic(
   id: string,
   data: DocumentData,
   supplierCount = 0,
+  primarySupplier: PrimarySupplierSummary | null = null,
 ): DataSkuPublic {
   const skuId = parseText(data.skuId) || id;
   return {
@@ -44,5 +46,6 @@ export function dataSkuDocToPublic(
     sourceSheetRows: parseSourceSheetRows(data.sourceSheetRows),
     isCurrent: data.isCurrent === true,
     supplierCount,
+    primarySupplier,
   };
 }

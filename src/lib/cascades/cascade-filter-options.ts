@@ -1,4 +1,4 @@
-import { normalizeSkuPart } from "@/lib/sku/normalize-sku-part";
+import { normalizeElevateLevel, normalizeSkuPart } from "@/lib/sku/normalize-sku-part";
 
 export type CascadeRow = {
   level: string;
@@ -7,7 +7,7 @@ export type CascadeRow = {
 };
 
 function normLevel(level: string): string {
-  return normalizeSkuPart(level);
+  return normalizeElevateLevel(level);
 }
 
 /** Distinct cascade levels (sorted). */

@@ -1,6 +1,7 @@
+import type { ScopeToolType } from "@/lib/scope-tools";
 import type { SystemScopeType } from "@/lib/system-scope-types";
 
-export type { SystemScopeType };
+export type { ScopeToolType, SystemScopeType };
 
 /** One answer option for a scope question; stable answerid for downstream use. */
 export type ScopeAnswerPublic = {
@@ -19,6 +20,18 @@ export type ScopeAnswerPublic = {
    * @deprecated Prefer `attachedObjectNames`. Legacy: ObjectCategory lookup values.
    */
   attachedCategories: string[];
+  /**
+   * Optional calculator per attached quote object (`attachedQuoteObjectIds` keys).
+   * Values are `ScopeToolType` keys (e.g. BenchtopM2).
+   */
+  attachedObjectTools?: Partial<Record<string, ScopeToolType>>;
+  /**
+   * When true for a quote object id, checklist creates one scope line per matching SKU
+   * instead of one line with a multi-SKU dropdown.
+   */
+  attachedObjectShowAll?: Partial<Record<string, boolean>>;
+  /** When true, scope lines for this quote object import with $0 unit and line price. */
+  attachedObjectNoCharge?: Partial<Record<string, boolean>>;
 };
 
 /** `header` / `footer` = section markers only (no answers); `question` = normal scope with answers. */
@@ -50,6 +63,10 @@ export type ScopePublic = {
   systemScope?: boolean;
   /** Rule set key when `systemScope` is true (e.g. Blinds). */
   systemScopeType?: SystemScopeType | null;
+  /** When true, checklist shows a calculator tool after the scope is answered. */
+  exposeTool?: boolean;
+  /** Calculator tool key when `exposeTool` is true. */
+  scopeToolType?: ScopeToolType | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 };

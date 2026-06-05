@@ -32,7 +32,14 @@ import {
 import type { AreaPublic } from "@/types/area";
 import type { LookupPublic } from "@/types/lookup";
 import type { PriceLevelPublic } from "@/types/price-level";
-import type { QuoteObjectPublic } from "@/types/quote-object";
+import type {
+  QuoteObjectInheritM2Source,
+  QuoteObjectPublic,
+} from "@/types/quote-object";
+import {
+  QUOTE_OBJECT_INHERIT_M2_LABELS,
+  QUOTE_OBJECT_INHERIT_M2_SOURCES,
+} from "@/types/quote-object";
 import type { ScopePublic } from "@/types/scope";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -44,6 +51,10 @@ const LM_RUNS_UOM = "LM-Runs";
 const DEFAULT_LM_RUNS_RUN_WIDTH = 3.2;
 
 const UOM_OPTIONS = ["Unit", "M2", "M3", "LM", "LM-Runs", "Kg", "Ltr"] as const;
+
+function uomSupportsInheritM2(uom: string): boolean {
+  return uom === "M2" || uom === LM_RUNS_UOM;
+}
 
 /** Legacy tier pricing UI — hidden; existing tier data still loads/saves via levelDrafts. */
 const SHOW_PRICE_LEVEL_PRICING_UI = false;
@@ -445,9 +456,7 @@ export function QuoteObjectsPanel() {
   const [objectname, setObjectname] = useState("");
   const [product, setProduct] = useState("");
   const [uom, setUom] = useState("Unit");
-  const [inheritM2Source, setInheritM2Source] = useState<
-    "none" | "apartment_total_m2" | "apartment_soft_m2" | "apartment_hard_m2" | "area_m2"
-  >("none");
+  const [inheritM2Source, setInheritM2Source] = useState<QuoteObjectInheritM2Source>("none");
   const [measurementStr, setMeasurementStr] = useState("");
   const [runWidthStr, setRunWidthStr] = useState("");
   /** For LM-Runs: saved default room area (m²); with run width derives default measurement (LM). */
@@ -987,7 +996,9 @@ export function QuoteObjectsPanel() {
     setUom(normalizeUom(r.uom || "Unit") || "Unit");
     {
       const nu = normalizeUom(r.uom || "Unit") || "Unit";
-      setInheritM2Source(nu === "M2" ? r.inheritM2Source ?? "none" : "none");
+      setInheritM2Source(
+        uomSupportsInheritM2(nu) ? r.inheritM2Source ?? "none" : "none",
+      );
     }
     setMeasurementStr(numToInput(r.measurement));
     setRunWidthStr(
@@ -1009,7 +1020,7 @@ export function QuoteObjectsPanel() {
         baseDrafts,
         sortedPriceLevels,
         r.uom || "Unit",
-        (r.uom || "Unit") === "M2" &&
+        uomSupportsInheritM2(r.uom || "Unit") &&
           (r.inheritM2Source ?? "none") !== "none",
         effM,
       ),
@@ -1272,7 +1283,9 @@ export function QuoteObjectsPanel() {
         setUom(normalizeUom(r.uom || "Unit") || "Unit");
         {
           const nu = normalizeUom(r.uom || "Unit") || "Unit";
-          setInheritM2Source(nu === "M2" ? r.inheritM2Source ?? "none" : "none");
+          setInheritM2Source(
+            uomSupportsInheritM2(nu) ? r.inheritM2Source ?? "none" : "none",
+          );
         }
         setMeasurementStr(numToInput(r.measurement));
         setRunWidthStr(
@@ -1294,7 +1307,7 @@ export function QuoteObjectsPanel() {
             cloneDrafts,
             sortedPriceLevels,
             r.uom || "Unit",
-            (r.uom || "Unit") === "M2" &&
+            uomSupportsInheritM2(r.uom || "Unit") &&
               (r.inheritM2Source ?? "none") !== "none",
             cloneEffM,
           ),
@@ -2240,23 +2253,27 @@ export function QuoteObjectsPanel() {
 
                 <label className="block rounded-lg border border-sf-border px-3 py-3 dark:border-zinc-600">
                   <span className="mb-1 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                    Inherit M2
+                    Inherit m² on checklist
                   </span>
                   <select
                     value={inheritM2Source}
-                    disabled={uom !== "M2" && uom !== LM_RUNS_UOM}
-                    onChange={(e) => setInheritM2Source(e.target.value as typeof inheritM2Source)}
+                    disabled={!uomSupportsInheritM2(uom)}
+                    onChange={(e) =>
+                      setInheritM2Source(e.target.value as QuoteObjectInheritM2Source)
+                    }
                     className={headerFieldClass}
                   >
-                    <option value="none">None (use Default Measurement)</option>
-                    <option value="area_m2">Area M2 (room)</option>
-                    <option value="apartment_total_m2">Total Apartment M2</option>
-                    <option value="apartment_soft_m2">Apartment Soft M2</option>
-                    <option value="apartment_hard_m2">Apartment Hard M2</option>
+                    {QUOTE_OBJECT_INHERIT_M2_SOURCES.map((src) => (
+                      <option key={src} value={src}>
+                        {QUOTE_OBJECT_INHERIT_M2_LABELS[src]}
+                      </option>
+                    ))}
                   </select>
                   <span className="mt-1 block text-xs text-sf-text-weak dark:text-zinc-400">
-                    For UOM M2 only: new checklist lines will use the selected M2 as the line
-                    measurement instead of the default measurement above.
+                    For UOM M2 (or LM-Runs): new checklist lines use project or room m² as the
+                    measure instead of default measurement — e.g. paint → apartment m², bathroom
+                    tile → area m². Updates when project or area m² changes until the user
+                    overrides the measure on the line.
                   </span>
                 </label>
 

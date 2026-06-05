@@ -69,6 +69,8 @@ export function effectiveLineLabourHours(
 
 export type ApplyProjectLineLabourArgs = {
   objectName: string;
+  /** SKU product on the line — narrows object labour rows with a set Product column. */
+  skuProduct?: string | null;
   quoteTemplate: DocumentData | undefined;
   objectLabourRates: DataObjectLabourRatePublic[];
   custommeasure: number | null;
@@ -92,6 +94,7 @@ export function applyProjectLineLabourHours(
   const { row, duplicateMatch } = findObjectLabourRateByObjectName(
     args.objectLabourRates,
     args.objectName,
+    args.skuProduct,
   );
 
   let lookup = emptyLabourHours();
@@ -126,10 +129,16 @@ export function recalcLookupLabourHoursOnLine(
   objectLabourRates: DataObjectLabourRatePublic[],
   custommeasure: number | null,
   lineUom: string,
+  skuProduct?: string | null,
 ): { patch: Partial<LabourHours>; objectLabourDuplicate: boolean } {
+  const sku =
+    skuProduct !== undefined
+      ? skuProduct?.trim() || null
+      : String(lineData.skuProduct ?? "").trim() || null;
   const { row, duplicateMatch } = findObjectLabourRateByObjectName(
     objectLabourRates,
     objectName,
+    sku,
   );
   const patch: Partial<LabourHours> = {};
   if (!row) {

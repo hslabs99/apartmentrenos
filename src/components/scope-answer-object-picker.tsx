@@ -1,11 +1,16 @@
 "use client";
 
 import {
+  SCOPE_TOOL_TYPES,
+  scopeToolTypeLabel,
+  type ScopeToolType,
+} from "@/lib/scope-tools";
+import {
   systemScopeObjectId,
   type SystemScopeType,
 } from "@/lib/system-scope-types";
 import type { QuoteObjectPublic } from "@/types/quote-object";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type DragEvent } from "react";
 
 const UNTYPED_GROUP = "(No object type)";
 const SYSTEM_OBJECT_TYPE = "System";
@@ -43,7 +48,13 @@ type Props = {
   /** When the scope is a system scope, offer `System:{type}` for attachment. */
   systemScopeType?: SystemScopeType | null;
   selectedIds: string[];
+  objectTools: Partial<Record<string, ScopeToolType>>;
+  objectShowAll: Partial<Record<string, boolean>>;
+  objectNoCharge: Partial<Record<string, boolean>>;
   onChange: (ids: string[]) => void;
+  onObjectToolsChange: (tools: Partial<Record<string, ScopeToolType>>) => void;
+  onObjectShowAllChange: (showAll: Partial<Record<string, boolean>>) => void;
+  onObjectNoChargeChange: (noCharge: Partial<Record<string, boolean>>) => void;
   disabled?: boolean;
   inputClassName: string;
 };
@@ -52,12 +63,19 @@ export function ScopeAnswerObjectPicker({
   quoteObjects,
   systemScopeType = null,
   selectedIds,
+  objectTools,
+  objectShowAll,
+  objectNoCharge,
   onChange,
+  onObjectToolsChange,
+  onObjectShowAllChange,
+  onObjectNoChargeChange,
   disabled = false,
   inputClassName,
 }: Props) {
   const [search, setSearch] = useState("");
   const [expandedTypes, setExpandedTypes] = useState<Set<string> | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
 
   const systemItems = useMemo((): PickerItem[] => {
     if (!systemScopeType) return [];
@@ -125,13 +143,11 @@ export function ScopeAnswerObjectPicker({
     return new Set(filteredGroups.map((g) => g.objecttype));
   }, [expandedTypes, filteredGroups]);
 
+  /** Preserve Setup order from `selectedIds` (drag-and-drop reorder). */
   const selectedItems = useMemo(() => {
     return selectedIds
       .map((id) => byId.get(id))
-      .filter((item): item is PickerItem => item != null)
-      .sort((a, b) =>
-        a.objecttype.localeCompare(b.objecttype, undefined, { sensitivity: "base" }),
-      );
+      .filter((item): item is PickerItem => item != null);
   }, [selectedIds, byId]);
 
   function toggleExpanded(objecttype: string) {
@@ -151,7 +167,77 @@ export function ScopeAnswerObjectPicker({
       onChange([...selectedIds, id]);
     } else {
       onChange(selectedIds.filter((x) => x !== id));
+      if (objectTools[id]) {
+        const next = { ...objectTools };
+        delete next[id];
+        onObjectToolsChange(next);
+      }
+      if (objectShowAll[id]) {
+        const next = { ...objectShowAll };
+        delete next[id];
+        onObjectShowAllChange(next);
+      }
+      if (objectNoCharge[id]) {
+        const next = { ...objectNoCharge };
+        delete next[id];
+        onObjectNoChargeChange(next);
+      }
     }
+  }
+
+  function setObjectTool(id: string, tool: ScopeToolType | "") {
+    if (disabled) return;
+    const next = { ...objectTools };
+    if (!tool) delete next[id];
+    else next[id] = tool;
+    onObjectToolsChange(next);
+  }
+
+  function setObjectShowAll(id: string, checked: boolean) {
+    if (disabled) return;
+    const next = { ...objectShowAll };
+    if (!checked) delete next[id];
+    else next[id] = true;
+    onObjectShowAllChange(next);
+  }
+
+  function setObjectNoCharge(id: string, checked: boolean) {
+    if (disabled) return;
+    const next = { ...objectNoCharge };
+    if (!checked) delete next[id];
+    else next[id] = true;
+    onObjectNoChargeChange(next);
+  }
+
+  function reorderSelected(draggedId: string, targetId: string) {
+    if (disabled || draggedId === targetId) return;
+    const from = selectedIds.indexOf(draggedId);
+    const to = selectedIds.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...selectedIds];
+    next.splice(from, 1);
+    next.splice(to, 0, draggedId);
+    onChange(next);
+  }
+
+  function handleDragStart(e: DragEvent<HTMLLIElement>, id: string) {
+    if (disabled) return;
+    setDragId(id);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
+  }
+
+  function handleDragOver(e: DragEvent<HTMLLIElement>) {
+    if (disabled) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }
+
+  function handleDrop(e: DragEvent<HTMLLIElement>, targetId: string) {
+    e.preventDefault();
+    const dragged = dragId ?? e.dataTransfer.getData("text/plain");
+    setDragId(null);
+    if (dragged) reorderSelected(dragged, targetId);
   }
 
   function expandAll() {
@@ -199,27 +285,90 @@ export function ScopeAnswerObjectPicker({
 
       <div>
         <p className="mb-1.5 text-xs font-medium text-sf-text-secondary dark:text-zinc-400">
-          Selected ({selectedItems.length})
+          Selected ({selectedItems.length}) — drag to reorder
         </p>
         {selectedItems.length > 0 ? (
-          <ul className="flex flex-wrap gap-2 rounded-lg border border-sf-border bg-sf-page p-2 dark:border-zinc-600 dark:bg-zinc-900/50">
+          <ul className="space-y-2 rounded-lg border border-sf-border bg-sf-page p-2 dark:border-zinc-600 dark:bg-zinc-900/50">
             {selectedItems.map((item) => (
               <li
                 key={item.id}
-                className="flex max-w-full items-center gap-1 rounded-full bg-sf-surface px-2 py-1 text-xs dark:bg-zinc-800"
+                draggable={!disabled}
+                onDragStart={(e) => handleDragStart(e, item.id)}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, item.id)}
+                onDragEnd={() => setDragId(null)}
+                className={`flex flex-wrap items-center gap-2 rounded-md bg-sf-surface px-2 py-2 text-sm dark:bg-zinc-800 ${
+                  dragId === item.id ? "opacity-60 ring-2 ring-sf-brand/40" : ""
+                } ${!disabled ? "cursor-grab active:cursor-grabbing" : ""}`}
               >
-                <span className="truncate" title={item.label}>
-                  <span className="text-sf-text-weak dark:text-zinc-400">
+                <span
+                  className="shrink-0 select-none text-sf-text-weak dark:text-zinc-500"
+                  aria-hidden
+                  title="Drag to reorder"
+                >
+                  ⠿
+                </span>
+                <span className="min-w-0 flex-1 truncate" title={item.label}>
+                  <span className="text-xs text-sf-text-weak dark:text-zinc-400">
                     {item.objecttype} ·{" "}
                   </span>
                   {item.isSystem ? item.id : item.label.split(" · ")[0]}
                 </span>
+                {!item.isSystem ? (
+                  <>
+                    <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 rounded border-sf-border-strong"
+                        checked={objectShowAll[item.id] === true}
+                        disabled={disabled}
+                        onChange={(e) => setObjectShowAll(item.id, e.target.checked)}
+                      />
+                      <span className="text-sf-text-weak dark:text-zinc-400" title="One checklist row per matching SKU">
+                        Show All
+                      </span>
+                    </label>
+                    <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 rounded border-sf-border-strong"
+                        checked={objectNoCharge[item.id] === true}
+                        disabled={disabled}
+                        onChange={(e) => setObjectNoCharge(item.id, e.target.checked)}
+                      />
+                      <span
+                        className="text-sf-text-weak dark:text-zinc-400"
+                        title="Import line with $0 unit and total price"
+                      >
+                        No Charge
+                      </span>
+                    </label>
+                    <label className="flex shrink-0 items-center gap-1.5 text-xs">
+                      <span className="text-sf-text-weak dark:text-zinc-400">Calc tool</span>
+                      <select
+                        value={objectTools[item.id] ?? ""}
+                        disabled={disabled}
+                        onChange={(e) =>
+                          setObjectTool(item.id, e.target.value as ScopeToolType | "")
+                        }
+                        className="min-h-9 rounded border border-sf-border-strong bg-sf-surface px-2 py-1 text-xs dark:border-zinc-600 dark:bg-zinc-950"
+                      >
+                        <option value="">None</option>
+                        {SCOPE_TOOL_TYPES.map((type) => (
+                          <option key={type} value={type}>
+                            {scopeToolTypeLabel(type)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                ) : null}
                 <button
                   type="button"
                   aria-label="Remove"
                   disabled={disabled}
                   onClick={() => setChecked(item.id, false)}
-                  className="shrink-0 rounded px-1 text-sf-text-secondary hover:bg-sf-border/50 disabled:opacity-50 dark:hover:bg-zinc-700"
+                  className="shrink-0 rounded px-1.5 text-sf-text-secondary hover:bg-sf-border/50 disabled:opacity-50 dark:hover:bg-zinc-700"
                 >
                   ×
                 </button>

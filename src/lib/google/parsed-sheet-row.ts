@@ -4,6 +4,9 @@ export type ParsedSheetRow = {
 
   sheetRowNumber: number;
 
+  /** Row that defined cols A–F (self, or fill-down source for supplier continuation rows). */
+  productKeySourceRowNumber: number;
+
   category: string;
 
   productType: string;
@@ -62,7 +65,7 @@ export type ParsedSheetFieldKey = keyof Omit<
 
   ParsedSheetRow,
 
-  "sheetRowNumber" | "supplierOption" | "priceIncGst" | "priceExcGst"
+  "sheetRowNumber" | "productKeySourceRowNumber" | "supplierOption" | "priceIncGst" | "priceExcGst"
 
 >;
 

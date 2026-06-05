@@ -7,10 +7,12 @@ import { readTooltipFromQuoteObjectData } from "@/lib/server/area-object-tooltip
 import { resolveEffectivePriceLevelId } from "@/lib/server/resolve-effective-price-level";
 import { resolveEffectiveStyleColour } from "@/lib/server/resolve-effective-style-colour";
 import { resolveElevateLevelFromPriceLevelId } from "@/lib/server/resolve-elevate-level-from-price-level";
-import { resolveSkuForQuoteObject } from "@/lib/server/resolve-sku-for-quote-object";
+import {
+  resolveAllSkusForQuoteObject,
+  resolveSkuForQuoteObject,
+} from "@/lib/server/resolve-sku-for-quote-object";
 import {
   resolveQuoteObjectLinesForCategories,
-  resolveQuoteObjectLinesForDocIds,
   resolveQuoteObjectLinesForObjectNames,
 } from "@/lib/server/scope-answer-categories";
 import {
@@ -19,7 +21,8 @@ import {
   type LegacyScopeAnswerPriceLevel,
 } from "@/lib/server/scope-doc";
 import {
-  effectiveMeasurementForQuoteLine,
+  customMeasureForNewProjectLine,
+  effectiveMeasureForLinePricing,
   numOrNull,
   quoteTemplatePricingForPriceLevel,
 } from "@/lib/server/quote-object-doc";
@@ -347,35 +350,114 @@ export async function applyScopeAnswerToProjectArea(
     (id) => !isSystemScopeObjectId(id),
   );
 
-  let linePayloads: { objectid: number; notes1: string; notes2: string }[] = [];
+  type ScopeLineCreateSpec = {
+    objectid: number;
+    notes1: string;
+    notes2: string;
+    sku: { skuId: string; product: string } | null;
+    scopeShowAllSku: boolean;
+    scopeNoCharge: boolean;
+  };
+
+  let lineSpecs: ScopeLineCreateSpec[] = [];
   let noLinesReason: ScopeAnswerNoLinesReason | undefined;
   let answerTierIds: number[] | undefined;
 
+  const skuFilters = async () => {
+    const effectivePl = await resolveEffectivePriceLevelId(db, projectAreaDocId, projectid);
+    const { style, colour } = await resolveEffectiveStyleColour(db, projectAreaDocId, projectid);
+    const elevateLevel = await resolveElevateLevelFromPriceLevelId(db, effectivePl);
+    return { elevateLevel, style, colour };
+  };
+
   if (catalogQuoteObjectIds.length > 0) {
-    linePayloads = await resolveQuoteObjectLinesForDocIds(
-      db,
-      catalogQuoteObjectIds,
-      templateAreaDocId,
-    );
-    if (linePayloads.length === 0 && !hasBlindsSystem) {
+    const filters = await skuFilters();
+    const attachedShowAll = answer.attachedObjectShowAll ?? {};
+    const attachedNoCharge = answer.attachedObjectNoCharge ?? {};
+    const processedObjectIds = new Set<number>();
+
+    for (const docId of catalogQuoteObjectIds) {
+      const trimmed = docId.trim();
+      if (!trimmed) continue;
+      const snap = await db.collection("quote_objects").doc(trimmed).get();
+      if (!snap.exists || isQuoteObjectsMetaDocument(snap.id)) continue;
+      const data = snap.data() as DocumentData;
+      const areaTagIds = data.areaTagIds;
+      const areaTags = Array.isArray(areaTagIds)
+        ? areaTagIds.filter((x): x is string => typeof x === "string" && x.length > 0)
+        : [];
+      if (areaTags.length > 0 && (!templateAreaDocId || !areaTags.includes(templateAreaDocId))) {
+        continue;
+      }
+      const objectid = integerObjectId(data.objectid);
+      if (objectid === undefined || processedObjectIds.has(objectid)) continue;
+      processedObjectIds.add(objectid);
+
+      const seed = {
+        objectid,
+        notes1: String(data.notes1 ?? ""),
+        notes2: String(data.notes2 ?? ""),
+      };
+      const showAll = attachedShowAll[trimmed] === true;
+      const noCharge = attachedNoCharge[trimmed] === true;
+      const lineFlags = { scopeNoCharge: noCharge };
+
+      if (showAll) {
+        const skus = await resolveAllSkusForQuoteObject(db, data, filters);
+        if (skus.length === 0) {
+          lineSpecs.push({ ...seed, sku: null, scopeShowAllSku: false, ...lineFlags });
+        } else {
+          for (const sku of skus) {
+            lineSpecs.push({
+              ...seed,
+              sku: { skuId: sku.skuId, product: sku.product },
+              scopeShowAllSku: true,
+              ...lineFlags,
+            });
+          }
+        }
+      } else {
+        const resolved = await resolveSkuForQuoteObject(db, data, filters);
+        lineSpecs.push({
+          ...seed,
+          sku: resolved ? { skuId: resolved.skuId, product: resolved.product } : null,
+          scopeShowAllSku: false,
+          ...lineFlags,
+        });
+      }
+    }
+
+    if (lineSpecs.length === 0 && !hasBlindsSystem) {
       noLinesReason = "no_objects_for_ids";
     }
   } else if (!hasBlindsSystem && attachedObjectNames.length > 0) {
-    linePayloads = await resolveQuoteObjectLinesForObjectNames(
+    const linePayloads = await resolveQuoteObjectLinesForObjectNames(
       db,
       attachedObjectNames,
       templateAreaDocId,
     );
-    if (linePayloads.length === 0) {
+    lineSpecs = linePayloads.map((pl) => ({
+      ...pl,
+      sku: null as { skuId: string; product: string } | null,
+      scopeShowAllSku: false,
+      scopeNoCharge: false,
+    }));
+    if (lineSpecs.length === 0) {
       noLinesReason = "no_objects_for_names";
     }
   } else if (!hasBlindsSystem && attachedCategories.length > 0) {
-    linePayloads = await resolveQuoteObjectLinesForCategories(
+    const linePayloads = await resolveQuoteObjectLinesForCategories(
       db,
       attachedCategories,
       templateAreaDocId,
     );
-    if (linePayloads.length === 0) {
+    lineSpecs = linePayloads.map((pl) => ({
+      ...pl,
+      sku: null as { skuId: string; product: string } | null,
+      scopeShowAllSku: false,
+      scopeNoCharge: false,
+    }));
+    if (lineSpecs.length === 0) {
       noLinesReason = "no_objects_in_categories";
     }
   } else if (!hasBlindsSystem) {
@@ -399,13 +481,18 @@ export async function applyScopeAnswerToProjectArea(
         effectivePl,
         areaid,
       );
-      linePayloads = legacy.linePayloads;
+      lineSpecs = legacy.linePayloads.map((pl) => ({
+        ...pl,
+        sku: null as { skuId: string; product: string } | null,
+        scopeShowAllSku: false,
+        scopeNoCharge: false,
+      }));
       noLinesReason = legacy.noLinesReason;
       answerTierIds = legacy.answerTierIds;
     }
   }
 
-  if (linePayloads.length === 0 && !hasBlindsSystem) {
+  if (lineSpecs.length === 0 && !hasBlindsSystem) {
     const diag: ScopeAnswerDiagnostics = {
       effectivePriceLevelId: effectivePl,
       noLinesReason,
@@ -435,43 +522,60 @@ export async function applyScopeAnswerToProjectArea(
   const objectLabourRates = await loadAllObjectLabourRates(db);
   let linesAdded = 0;
   const BATCH_MAX = 400;
-  if (linePayloads.length > 0) {
-  for (let i = 0; i < linePayloads.length; i += BATCH_MAX) {
-    const slice = linePayloads.slice(i, i + BATCH_MAX);
+  if (lineSpecs.length > 0) {
+  for (let i = 0; i < lineSpecs.length; i += BATCH_MAX) {
+    const slice = lineSpecs.slice(i, i + BATCH_MAX);
     const batch = db.batch();
     for (const pl of slice) {
       const q = quoteByObjectId.get(pl.objectid);
       const pricing = quoteTemplatePricingForPriceLevel(q, effectivePl);
-      const custommeasure = effectiveMeasurementForQuoteLine(q, pricing.measurement, {
+      const measureCtx = {
         areaM2,
         apartmentTotalM2: projDims.apartmentTotalM2,
         apartmentHardM2: projDims.apartmentHardM2,
         apartmentSoftM2: projDims.apartmentSoftM2,
-      });
+      };
+      const custommeasure = customMeasureForNewProjectLine(q, pricing.measurement, measureCtx);
+      const measureForPricing = effectiveMeasureForLinePricing(
+        q,
+        pricing.measurement,
+        measureCtx,
+        custommeasure,
+      );
+      let customumprice = pricing.customumprice;
       let totalprice: number | null;
-      if (custommeasure != null && pricing.customumprice != null) {
-        totalprice = custommeasure * pricing.customumprice;
+      if (pl.scopeNoCharge) {
+        customumprice = 0;
+        totalprice = 0;
+      } else if (measureForPricing != null && customumprice != null) {
+        totalprice = measureForPricing * customumprice;
       } else {
         totalprice = pricing.totalprice;
       }
       const tooltip = q ? readTooltipFromQuoteObjectData(q) : "";
       const objectName = q ? String(q.objectname ?? "").trim() : "";
+      let resolvedSku = pl.sku;
+      if (!resolvedSku && !pl.scopeShowAllSku) {
+        const hit = await resolveSkuForQuoteObject(db, q, {
+          elevateLevel,
+          style: effectiveStyle,
+          colour: effectiveColour,
+        });
+        resolvedSku = hit ? { skuId: hit.skuId, product: hit.product } : null;
+      }
       const { hours: labourHours } = applyProjectLineLabourHours({
         objectName,
+        skuProduct: resolvedSku?.product ?? null,
         quoteTemplate: q,
         objectLabourRates,
-        custommeasure,
+        custommeasure: measureForPricing,
         lineUom: pricing.customuom,
-      });
-      const resolvedSku = await resolveSkuForQuoteObject(db, q, {
-        elevateLevel,
-        style: effectiveStyle,
-        colour: effectiveColour,
       });
       batch.set(db.collection("projectareaobjects").doc(), {
         projectid,
         projectAreaDocId,
         objectid: pl.objectid,
+        ...(objectName ? { objectname: objectName } : {}),
         areaid,
         linesource: "scope",
         scopeDocId,
@@ -479,10 +583,12 @@ export async function applyScopeAnswerToProjectArea(
         scopeid: scopeNumericId,
         skuId: resolvedSku?.skuId ?? null,
         skuProduct: resolvedSku?.product ?? null,
+        scopeShowAllSku: pl.scopeShowAllSku ? true : null,
+        scopeNoCharge: pl.scopeNoCharge ? true : null,
         dateadded: FieldValue.serverTimestamp(),
         custommeasure,
         customuom: pricing.customuom,
-        customumprice: pricing.customumprice,
+        customumprice,
         totalprice,
         notes1: pl.notes1,
         notes2: pl.notes2,

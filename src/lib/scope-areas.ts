@@ -129,3 +129,34 @@ export function scopeAppliesToProjectTemplate(
   if (templateAreaDocId && s.areaDocId === templateAreaDocId) return true;
   return false;
 }
+
+/** True when a setup scope is tagged for a template area (picker filter / display). */
+export function scopeTaggedForSetupAreaDocId(
+  s: ScopePublic,
+  setupAreaDocId: string,
+  templateArea?: Pick<AreaPublic, "id" | "areaid"> | null,
+): boolean {
+  const docId = setupAreaDocId.trim();
+  if (!docId) return false;
+  const tags = s.areaDocIds ?? [];
+  if (tags.includes(docId)) return true;
+  if (s.areaDocId === docId) return true;
+  const aid = templateArea?.areaid;
+  if (aid != null && Number.isInteger(Number(aid)) && Number(s.areaid) === Number(aid)) {
+    return true;
+  }
+  return false;
+}
+
+export function compareSetupAreasDisplayOrder(a: AreaPublic, b: AreaPublic): number {
+  const ao = a.sortOrder;
+  const bo = b.sortOrder;
+  const aHas = typeof ao === "number" && Number.isFinite(ao);
+  const bHas = typeof bo === "number" && Number.isFinite(bo);
+  if (aHas && bHas && ao !== bo) return ao - bo;
+  if (aHas && !bHas) return -1;
+  if (!aHas && bHas) return 1;
+  return (a.areaname || "").localeCompare(b.areaname || "", undefined, {
+    sensitivity: "base",
+  });
+}

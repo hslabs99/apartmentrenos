@@ -68,27 +68,12 @@ export async function resolveSkuForQuoteObject(
   quoteObjectData: DocumentData | undefined,
   filters: Omit<DataSkuFilterFields, "category" | "productType">,
 ): Promise<ResolvedSkuForQuoteObject> {
-  const category = String(quoteObjectData?.category ?? "").trim();
-  const productType = String(quoteObjectData?.objectname ?? "").trim();
-  if (!category || !productType) return null;
-
-  const fullFilters: DataSkuFilterFields = {
-    category,
-    productType,
-    elevateLevel: filters.elevateLevel,
-    style: filters.style,
-    colour: filters.colour,
-  };
-
-  const skus = await loadCurrentSkus(db);
-  const matches = filterDataSkusWithCascadeFallback(skus, fullFilters);
-  matches.sort((a, b) => a.skuId.localeCompare(b.skuId));
-
+  const matches = await matchingSkusForQuoteObjectData(db, quoteObjectData, filters);
   if (matches.length === 0) return null;
   if (matches.length > 1) {
+    const category = String(quoteObjectData?.category ?? "").trim();
+    const productType = String(quoteObjectData?.objectname ?? "").trim();
     console.warn("[resolveSkuForQuoteObject] multiple SKUs matched; using first", {
-      category,
-      productType,
       filters,
       skuIds: matches.slice(0, 5).map((m) => m.skuId),
     });
@@ -99,4 +84,43 @@ export async function resolveSkuForQuoteObject(
     product: hit.product.trim(),
     uom: hit.uom.trim(),
   };
+}
+
+/** All current SKUs matching a quote object and project filters (Show All expansion). */
+export async function resolveAllSkusForQuoteObject(
+  db: Firestore,
+  quoteObjectData: DocumentData | undefined,
+  filters: Omit<DataSkuFilterFields, "category" | "productType">,
+): Promise<{ skuId: string; product: string; uom: string }[]> {
+  const matches = await matchingSkusForQuoteObjectData(db, quoteObjectData, filters);
+  return matches.map((hit) => ({
+    skuId: hit.skuId,
+    product: hit.product.trim(),
+    uom: hit.uom.trim(),
+  }));
+}
+
+async function matchingSkusForQuoteObjectData(
+  db: Firestore,
+  quoteObjectData: DocumentData | undefined,
+  filters: Omit<DataSkuFilterFields, "category" | "productType">,
+): Promise<SkuRow[]> {
+  const category = String(quoteObjectData?.category ?? "").trim();
+  const productType = String(quoteObjectData?.objectname ?? "").trim();
+  if (!category || !productType) return [];
+
+  const fullFilters: DataSkuFilterFields = {
+    category,
+    productType,
+    elevateLevel: filters.elevateLevel,
+    style: filters.style,
+    colour: filters.colour,
+  };
+
+  const skus = await loadCurrentSkus(db);
+  const matches = filterDataSkusWithCascadeFallback(skus, fullFilters, {
+    includeAllDimensionSkuRows: true,
+  });
+  matches.sort((a, b) => a.skuId.localeCompare(b.skuId));
+  return matches;
 }

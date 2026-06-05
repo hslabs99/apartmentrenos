@@ -8,6 +8,7 @@ import { allocateNextSequence } from "@/lib/firestore/sequences";
 
 export type ImportListsUomResult = {
   tabTitle: string;
+  gid: number;
   range: string;
   parsed: number;
   created: number;
@@ -68,6 +69,7 @@ export async function runImportListsUom(db: Firestore): Promise<ImportListsUomRe
 
   return {
     tabTitle: fetched.tabTitle,
+    gid: fetched.gid,
     range: fetched.range,
     parsed: rows.length,
     created,

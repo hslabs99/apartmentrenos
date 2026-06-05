@@ -17,6 +17,14 @@ export const QUOTE_OBJECT_INHERIT_M2_SOURCES = [
 ] as const;
 export type QuoteObjectInheritM2Source = (typeof QUOTE_OBJECT_INHERIT_M2_SOURCES)[number];
 
+export const QUOTE_OBJECT_INHERIT_M2_LABELS: Record<QuoteObjectInheritM2Source, string> = {
+  none: "None (use default measurement)",
+  apartment_total_m2: "Apartment m² (project total)",
+  apartment_soft_m2: "Apartment M2 (Soft Floor)",
+  apartment_hard_m2: "Apartment M2 (Hard Floor)",
+  area_m2: "Area m² (room)",
+};
+
 export type QuoteObjectPublic = {
   id: string;
   sortOrder?: number | null;

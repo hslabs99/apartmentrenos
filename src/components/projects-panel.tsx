@@ -98,6 +98,7 @@ export function ProjectsPanel() {
   const [projectbrief, setProjectbrief] = useState("");
   /** Drives `defaultpricelevelid` and display name (`projectfinish`) for pricing / scope tiers. */
   const [defaultPriceLevelId, setDefaultPriceLevelId] = useState<number | null>(null);
+  const [defaultProjectFinish, setDefaultProjectFinish] = useState("");
   const [defaultStyle, setDefaultStyle] = useState("");
   const [defaultColour, setDefaultColour] = useState("");
   const [spec2, setSpec2] = useState("");
@@ -226,6 +227,7 @@ export function ProjectsPanel() {
     setProjectemail("");
     setProjectbrief("");
     setDefaultPriceLevelId(null);
+    setDefaultProjectFinish("");
     setDefaultStyle("");
     setDefaultColour("");
     setSpec2("");
@@ -257,6 +259,7 @@ export function ProjectsPanel() {
     setProjectemail(p.projectemail);
     setProjectbrief(p.projectbrief);
     setDefaultPriceLevelId(p.defaultpricelevelid ?? null);
+    setDefaultProjectFinish(p.projectfinish ?? "");
     setDefaultStyle(p.defaultstyle ?? "");
     setDefaultColour(p.defaultcolour ?? "");
     setSpec2(p.spec2);
@@ -289,7 +292,7 @@ export function ProjectsPanel() {
 
   function buildPayload(): Record<string, unknown> {
     const plRow = levels.find((l) => l.pricelevelid === defaultPriceLevelId);
-    const projectfinish = plRow?.pricelevel ?? "";
+    const projectfinish = defaultProjectFinish.trim() || plRow?.pricelevel || "";
     return {
       projectname,
       projectdescription,
@@ -789,6 +792,8 @@ export function ProjectsPanel() {
                 <ProjectDefaultTierFields
                   priceLevelId={defaultPriceLevelId}
                   onPriceLevelIdChange={setDefaultPriceLevelId}
+                  projectFinish={defaultProjectFinish}
+                  onProjectFinishChange={setDefaultProjectFinish}
                   style={defaultStyle}
                   colour={defaultColour}
                   onStyleChange={setDefaultStyle}

@@ -95,9 +95,7 @@ export function parseIncrementalLabourProductsRows(
 
     const category = cellString(row[0]);
     const productType = cellString(row[1]);
-    const productRaw = cellString(row[2]);
-    /** Sheet often leaves Product blank when Product Type is the line item name. */
-    const product = productRaw || productType;
+    const product = cellString(row[2]);
 
     if (!category || !productType) {
       errors.push(`Row ${sheetRow}: missing category or product type.`);

@@ -27,18 +27,54 @@ export function labourSiloCellWarning(
   };
 }
 
-export function labourSiloWarningTitle(w: LabourSiloCellWarning): string | undefined {
+/** Object name on the line used to look up Object Labour Rates (trimmed). */
+export function objectLabourRatesLookupName(objectName: string): string {
+  return objectName.trim();
+}
+
+export function objectLabourDuplicateTooltip(
+  objectName: string,
+  skuProduct?: string | null,
+): string {
+  const typeKey = objectLabourRatesLookupName(objectName) || "(empty)";
+  const sku = skuProduct?.trim();
+  const skuPart = sku
+    ? ` and SKU product "${sku}" (line skuProduct vs labour Product column)`
+    : ` (no SKU product on line — only wildcard Product rows apply)`;
+  return (
+    `Warning: more than one Object Labour Rate row still matches this line. ` +
+    `Match keys: Product Type "${typeKey}"${skuPart}, compared trimmed and case-insensitive. ` +
+    `Blank, All, or — on Product means any SKU for that object. Dollar amount uses the first match — dedupe the table.`
+  );
+}
+
+export function labourSiloWarningTitle(
+  w: LabourSiloCellWarning,
+  objectLabourMatchName?: string,
+  skuProduct?: string | null,
+): string | undefined {
   const parts: string[] = [];
-  if (w.duplicateObjectLabour) parts.push(OBJECT_LABOUR_DUPLICATE_TOOLTIP);
+  if (w.duplicateObjectLabour) {
+    parts.push(
+      objectLabourMatchName != null
+        ? objectLabourDuplicateTooltip(objectLabourMatchName, skuProduct)
+        : OBJECT_LABOUR_DUPLICATE_TOOLTIP,
+    );
+  }
   if (w.missingRate) parts.push(LABOUR_RATE_MISSING_TOOLTIP);
-  return parts.length ? parts.join(" ") : undefined;
+  return parts.length ? parts.join("\n\n") : undefined;
 }
 
 export function objectLabourDuplicateForName(
   objectLabourRates: DataObjectLabourRatePublic[],
   objectName: string,
+  skuProduct?: string | null,
 ): boolean {
-  return findObjectLabourRateByObjectName(objectLabourRates, objectName).duplicateMatch;
+  return findObjectLabourRateByObjectName(
+    objectLabourRates,
+    objectName,
+    skuProduct,
+  ).duplicateMatch;
 }
 
 export { OBJECT_LABOUR_DUPLICATE_TOOLTIP, LABOUR_RATE_MISSING_TOOLTIP };

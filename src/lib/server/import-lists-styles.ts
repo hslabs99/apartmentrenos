@@ -8,6 +8,7 @@ import { allocateNextSequence } from "@/lib/firestore/sequences";
 
 export type ImportListsStylesResult = {
   tabTitle: string;
+  gid: number;
   range: string;
   parsed: number;
   created: number;
@@ -73,6 +74,7 @@ export async function runImportListsStyles(
 
   return {
     tabTitle: fetched.tabTitle,
+    gid: fetched.gid,
     range: fetched.range,
     parsed: rows.length,
     created,

@@ -1,5 +1,14 @@
 import type { PrimarySupplierSummary } from "@/lib/client/primary-supplier-by-sku";
+import {
+  adjustedSupplierPriceExcGst,
+  defaultSupplierDiscountPct,
+  formatSupplierDiscountPctLabel,
+  applySupplierDiscountToPriceExcGst,
+  type SupplierDiscountByKey,
+} from "@/lib/client/supplier-discount-price";
 
+import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
+import { cascadeLevelFromPriceLevel } from "@/lib/cascades/cascade-level-from-price-level";
 import { filterDataSkusWithCascadeFallback } from "@/lib/sku/match-data-sku-filters";
 
 import {
@@ -60,15 +69,23 @@ export function effectiveElevateLevelForLine(
 
   project: ProjectPublic | null,
 
+  cascades?: CascadeRow[],
+
 ): string {
 
   const plId = line.pricelevelid ?? pa.pricelevelid ?? project?.defaultpricelevelid ?? null;
 
-  if (plId == null) return "";
+  return cascadeLevelFromPriceLevel(
 
-  const hit = priceLevels.find((p) => p.pricelevelid === plId);
+    priceLevels,
 
-  return hit?.pricelevel?.trim() ?? "";
+    plId,
+
+    project?.projectfinish,
+
+    cascades,
+
+  );
 
 }
 
@@ -94,19 +111,17 @@ export function matchingSkusForScopeLine(
 
   const currentOnly = catalogSkus.filter((s) => s.isCurrent !== false);
 
-  const matches = filterDataSkusWithCascadeFallback(currentOnly, {
-
-    category,
-
-    productType,
-
-    elevateLevel: filters.elevateLevel,
-
-    style: filters.style,
-
-    colour: filters.colour,
-
-  });
+  const matches = filterDataSkusWithCascadeFallback(
+    currentOnly,
+    {
+      category,
+      productType,
+      elevateLevel: filters.elevateLevel,
+      style: filters.style,
+      colour: filters.colour,
+    },
+    { includeAllDimensionSkuRows: true },
+  );
 
   matches.sort((a, b) => a.skuId.localeCompare(b.skuId, undefined, { sensitivity: "base" }));
 
@@ -139,6 +154,9 @@ export type ScopeLineSkuPick = {
   supplier: string;
 
   priceExcGst: number | null;
+
+  /** Default supplier discount % applied to retail SKU price (when &gt; 0). */
+  discountPctApplied: number | null;
 
 };
 
@@ -226,28 +244,102 @@ export function scopeLineSkuPickAllModeLabel(
 
 
 
+/** Priority 1 supplier, else lowest valid option on file. */
+export function preferredSupplierForSku(
+  suppliers: DataSkuSupplierPublic[],
+): DataSkuSupplierPublic | undefined {
+  const valid = suppliers.filter((s) => isValidSupplierOption(s.supplierOption));
+  if (!valid.length) return undefined;
+  return (
+    valid.find((s) => s.supplierOption === PREFERRED_SUPPLIER_OPTION) ??
+    [...valid].sort((a, b) => a.supplierOption - b.supplierOption)[0]
+  );
+}
+
+/** Unit price (ex GST) for workbench display when the line has not been priced yet. */
+export function resolveScopeLineSkuUnitPriceExcGst(
+  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption" | "customumprice">,
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
+  supplierDiscountByKey: SupplierDiscountByKey = new Map(),
+): number | null {
+  if (line.customumprice != null) return line.customumprice;
+  const row = resolveScopeLineSupplier(line, suppliersBySkuId);
+  if (!row) return null;
+  const pct = defaultSupplierDiscountPct(row.supplier, supplierDiscountByKey);
+  return applySupplierDiscountToPriceExcGst(row.priceExcGst, pct);
+}
+
+/** Supplier row used for pricing on this line (explicit option, else priority 1). */
+export function resolveScopeLineSupplier(
+  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption">,
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
+): DataSkuSupplierPublic | null {
+  const skuId = line.skuId?.trim();
+  if (!skuId) return null;
+  const suppliers = suppliersBySkuId[skuId] ?? [];
+  const opt = line.supplierOption;
+  if (opt != null && isValidSupplierOption(opt)) {
+    const exact = suppliers.find((s) => s.supplierOption === opt);
+    if (exact) return exact;
+  }
+  return preferredSupplierForSku(suppliers) ?? null;
+}
+
+/** Workbench Supplier column label (supplier name + priority). */
+export function resolveScopeLineSupplierLabel(
+  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption">,
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
+  supplierDiscountByKey: SupplierDiscountByKey = new Map(),
+): string {
+  const row = resolveScopeLineSupplier(line, suppliersBySkuId);
+  if (!row) return "—";
+  const name = row.supplier.trim();
+  const base = !name ? `P${row.supplierOption}` : name;
+  const pct = defaultSupplierDiscountPct(row.supplier, supplierDiscountByKey);
+  const pctLabel = formatSupplierDiscountPctLabel(pct);
+  return pctLabel ? `${base} (${pctLabel})` : base;
+}
+
+export function resolveScopeLineSupplierTitle(
+  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption">,
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
+  supplierDiscountByKey: SupplierDiscountByKey = new Map(),
+): string | undefined {
+  const row = resolveScopeLineSupplier(line, suppliersBySkuId);
+  if (!row) return undefined;
+  const parts = [`Priority ${row.supplierOption}`];
+  if (row.supplier.trim()) parts.push(row.supplier.trim());
+  const pct = defaultSupplierDiscountPct(row.supplier, supplierDiscountByKey);
+  if (pct > 0) {
+    parts.push(
+      `Discount ${formatSupplierDiscountPctLabel(pct)} applied to retail ex-GST`,
+    );
+    if (row.priceExcGst != null) {
+      parts.push(`Retail: $${row.priceExcGst.toFixed(2)}`);
+    }
+  }
+  if (row.supplierSku.trim()) parts.push(`Code: ${row.supplierSku.trim()}`);
+  if (row.model.trim()) parts.push(`Model: ${row.model.trim()}`);
+  return parts.join(" · ");
+}
+
 function pickFromSupplier(
-
   sku: DataSkuPublic,
-
   sup: DataSkuSupplierPublic,
-
+  supplierDiscountByKey: SupplierDiscountByKey,
 ): ScopeLineSkuPick {
-
+  const { priceExcGst, discountPctApplied } = adjustedSupplierPriceExcGst(
+    sup,
+    supplierDiscountByKey,
+  );
   return {
-
     skuId: sku.skuId,
-
     product: sku.product?.trim() ?? "",
-
     supplierOption: sup.supplierOption,
-
     supplier: sup.supplier.trim(),
-
-    priceExcGst: sup.priceExcGst,
-
+    priceExcGst,
+    discountPctApplied,
   };
-
 }
 
 
@@ -261,15 +353,11 @@ function pickFromSupplier(
  */
 
 export function buildScopeLineSkuPicks(
-
   catalogMatches: DataSkuPublic[],
-
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
-
   includeAllSupplierOptions: boolean,
-
   line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption">,
-
+  supplierDiscountByKey: SupplierDiscountByKey = new Map(),
 ): ScopeLineSkuPick[] {
 
   const picks: ScopeLineSkuPick[] = [];
@@ -284,20 +372,13 @@ export function buildScopeLineSkuPicks(
 
       for (const sup of suppliers) {
 
-        picks.push(pickFromSupplier(sku, sup));
+        picks.push(pickFromSupplier(sku, sup, supplierDiscountByKey));
 
       }
 
     } else {
-
-      const p1 = suppliers.find(
-
-        (s) => s.supplierOption === PREFERRED_SUPPLIER_OPTION,
-
-      );
-
-      if (p1) picks.push(pickFromSupplier(sku, p1));
-
+      const sup = preferredSupplierForSku(suppliers);
+      if (sup) picks.push(pickFromSupplier(sku, sup, supplierDiscountByKey));
     }
 
   }
@@ -336,7 +417,7 @@ export function buildScopeLineSkuPicks(
 
     const sup = (suppliersBySkuId[selSku] ?? []).find((s) => s.supplierOption === selOpt);
 
-    if (sku && sup) picks.push(pickFromSupplier(sku, sup));
+    if (sku && sup) picks.push(pickFromSupplier(sku, sup, supplierDiscountByKey));
 
     picks.sort((a, b) => {
 

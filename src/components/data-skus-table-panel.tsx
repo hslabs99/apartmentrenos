@@ -226,7 +226,9 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
       <section className={`${sfDataSurface} mx-4 flex flex-col gap-4 p-4 md:mx-6 md:p-5 lg:mx-8`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">Products (data_skus)</h2>
+            <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">
+              Data for Products (<code className="text-xs font-normal">data_skus</code>)
+            </h2>
             <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
               {loading
                 ? "Loading…"
@@ -341,8 +343,10 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
                   dir={sortDir}
                   onSort={onSort}
                 />
+                <th className="py-2 pr-3 font-medium">Supplier</th>
+                <th className="py-2 pr-3 font-medium">$ Inc GST</th>
                 <SortableTh
-                  label="Suppliers"
+                  label="Opts"
                   sortKey="supplierCount"
                   activeKey={sortKey}
                   dir={sortDir}
@@ -370,13 +374,13 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={14} className="py-8 text-center text-sf-text-secondary">
+                  <td colSpan={15} className="py-8 text-center text-sf-text-secondary">
                     Loading data_skus…
                   </td>
                 </tr>
               ) : filteredSorted.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="py-8 text-center text-sf-text-secondary">
+                  <td colSpan={15} className="py-8 text-center text-sf-text-secondary">
                     {rows.length === 0 ? "No data — run Import first." : "No rows match filters."}
                   </td>
                 </tr>
@@ -403,7 +407,24 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
                         <span className="text-sf-text-weak">No</span>
                       )}
                     </td>
-                    <td className="py-2 pr-3 tabular-nums">{row.supplierCount}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      {row.primarySupplier?.supplier ? (
+                        <>
+                          {row.primarySupplier.supplier}
+                          {row.supplierCount > 1 ? (
+                            <span className="ml-1 text-xs text-sf-text-weak">
+                              (+{row.supplierCount - 1})
+                            </span>
+                          ) : null}
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 tabular-nums whitespace-nowrap">
+                      {formatMoney(row.primarySupplier?.priceIncGst ?? null)}
+                    </td>
+                    <td className="py-2 pr-3 tabular-nums">{row.supplierCount || "—"}</td>
                     <td className="max-w-[9rem] py-2 pr-3 text-xs">
                       {row.append1Type || row.append1Spec
                         ? `${row.append1Type || "—"} · ${row.append1Spec || "—"}`
