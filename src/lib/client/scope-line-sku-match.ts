@@ -342,7 +342,42 @@ function pickFromSupplier(
   };
 }
 
+/** Match `data_skus.product` (case-insensitive) and return priority-1 supplier pick. */
+export function preferredSkuPickForProductName(
+  productName: string,
+  catalogSkus: DataSkuPublic[],
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
+  supplierDiscountByKey: SupplierDiscountByKey = new Map(),
+): ScopeLineSkuPick | null {
+  const key = productName.trim().toLowerCase();
+  if (!key) return null;
 
+  const matches = catalogSkus
+    .filter((s) => s.isCurrent !== false && (s.product?.trim().toLowerCase() ?? "") === key)
+    .sort((a, b) => a.skuId.localeCompare(b.skuId, undefined, { sensitivity: "base" }));
+
+  const sku = matches[0];
+  if (!sku) return null;
+
+  const sup = preferredSupplierForSku(suppliersBySkuId[sku.skuId] ?? []);
+  if (!sup) {
+    return {
+      skuId: sku.skuId,
+      product: sku.product?.trim() ?? "",
+      supplierOption: 1,
+      supplier: "",
+      priceExcGst: null,
+      discountPctApplied: null,
+    };
+  }
+  return pickFromSupplier(sku, sup, supplierDiscountByKey);
+}
+
+/** Supplier label for a SKU pick (same as workbench supplier column). */
+export function scopeLineSkuPickSupplierLabel(pick: ScopeLineSkuPick): string {
+  const name = pick.supplier.trim();
+  return name || `P${pick.supplierOption}`;
+}
 
 /**
 

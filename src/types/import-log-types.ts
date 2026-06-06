@@ -89,6 +89,7 @@ export type ImportLogKind =
   | "data_skus_import_painting"
   | "supporting_labour_rates"
   | "supporting_product_contractor_rates"
+  | "supporting_building_elements"
   | "supporting_cascades"
   | "supporting_supplier_discounts"
   | "supporting_lists"

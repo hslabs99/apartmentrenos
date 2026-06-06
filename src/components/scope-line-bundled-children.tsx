@@ -1,5 +1,6 @@
 "use client";
 
+import { ClTotalPriceCell } from "@/components/cl-total-price-cell";
 import { CascadeColourSelect } from "@/components/cascade-style-colour-fields";
 import {
   clFieldsGridClass,
@@ -18,9 +19,11 @@ import {
   clMeasureFieldClass,
   clUomFieldClass,
 } from "@/components/cl-checklist-layout";
-import { IconNotes, IconTrash } from "@/components/icons/lightning-icons";
+import { IconNotes } from "@/components/icons/lightning-icons";
+import { WbLineRowMenu } from "@/components/wb-line-row-menu";
 import { CascadeElevateSelect } from "@/components/cascade-elevate-select";
 import { ScopeLineSkuPicker } from "@/components/scope-line-sku-picker";
+import { WbBuildingElementSkuCell } from "@/components/wb-building-element-sku-cell";
 import { formatCurrencyInput, parseCurrencyInput } from "@/lib/client/format-money";
 import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
 import {
@@ -30,7 +33,6 @@ import {
 import { ChecklistMeasureInput } from "@/components/checklist-measure-input";
 import { cascadeLevelFromPriceLevel } from "@/lib/cascades/cascade-level-from-price-level";
 import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
-import { sfRowIconBtnDanger } from "@/lib/sf-row-actions";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { DataSkuSupplierPublic } from "@/types/data-sku-supplier-public";
 import type { PriceLevelPublic } from "@/types/price-level";
@@ -42,6 +44,7 @@ import { WbLabourSiloRowCells } from "@/components/wb-labour-silo-row-cells";
 import { WbLineSupplierCell } from "@/components/wb-line-supplier-cell";
 import type { SupplierDiscountByKey } from "@/lib/client/supplier-discount-price";
 import { WbObjectName } from "@/components/wb-object-name";
+import type { DataBuildingElementPublic } from "@/types/data-building-element-public";
 import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
 import type { DataObjectLabourRatePublic } from "@/types/data-object-labour-rate-public";
 
@@ -73,6 +76,7 @@ type ChecklistProps = {
   objectLabel: (row: ProjectAreaObjectPublic, quoteObjects: QuoteObjectPublic[]) => string;
   onPatchLine: (id: string, body: Record<string, unknown>) => void;
   onValidationError: (message: string) => void;
+  marginPct: number;
 };
 
 export type WorkbenchBundledContext = {
@@ -112,9 +116,13 @@ export type WorkbenchBundledContext = {
   onOpenLineNotes: (lineId: string, label: string, draft: string) => void;
   lineNotesCombined: (row: ProjectAreaObjectPublic) => string;
   onDeleteLine: (lineId: string) => void;
+  onCloneLine: (lineId: string) => void;
+  wbCloningLineId: string | null;
   onValidationError: (message: string) => void;
   contractLabourRates: DataLabourRatePublic[];
   objectLabourRates: DataObjectLabourRatePublic[];
+  buildingElementBySkuName: Map<string, DataBuildingElementPublic>;
+  onOpenBuildingElementConsumption: (lineId: string) => void;
 };
 
 type WorkbenchProps = {
@@ -159,6 +167,7 @@ function ChecklistBundledLine({
   objectLabel,
   onPatchLine,
   onValidationError,
+  marginPct,
 }: {
   child: ProjectAreaObjectPublic;
   quoteObjects: QuoteObjectPublic[];
@@ -176,6 +185,7 @@ function ChecklistBundledLine({
   objectLabel: (row: ProjectAreaObjectPublic, quoteObjects: QuoteObjectPublic[]) => string;
   onPatchLine: (id: string, body: Record<string, unknown>) => void;
   onValidationError: (message: string) => void;
+  marginPct: number;
 }) {
   const qObj = quoteObjects.find((o) => o.objectid === child.objectid);
   const measureKey =
@@ -257,6 +267,7 @@ function ChecklistBundledLine({
           />
         </label>
         <div className={`${clScopeNonStdColClass}`} aria-hidden />
+        <ClTotalPriceCell line={child} marginPct={marginPct} />
         <div className={`${clToolCellClass} ${clScopeToolColClass}`} aria-hidden />
       </div>
     </div>
@@ -379,33 +390,41 @@ function WorkbenchBundledLine({
       </td>
       <td className={wb.wbCellSku}>
         {qObj ? (
-          <ScopeLineSkuPicker
+          <WbBuildingElementSkuCell
             line={child}
-            quoteObject={qObj}
             catalogSkus={catalogSkus}
-            suppliersBySkuId={suppliersBySkuId}
-            priceLevels={priceLevels}
-            cascades={wb.cascades}
-            supplierDiscountByKey={supplierDiscountByKey}
-            pa={pa}
-            project={project}
+            buildingElementBySkuName={wb.buildingElementBySkuName}
             disabled={lineSaving}
-            selectClassName={wb.wbSelectRow}
-            variant="compact"
-            showSupplierPrice
-            shortMatchLabels
-            inlineRow
-            syncUnitPriceFromPick
-            showIncludeAllSupplierOptions={wb.isAdminMode}
-            includeAllSupplierOptions={wb.includeAllSuppliersForLine(child.id)}
-            onIncludeAllSupplierOptionsChange={(checked) =>
-              wb.setIncludeAllSuppliersForLine(child.id, checked)
-            }
-            lockToSkuId={child.scopeShowAllSku ? child.skuId : null}
-            onSelectSku={(pick: ScopeLineSkuPick) => {
-              onPatchLine(child.id, patchBodyForScopeLineSku(child, pick));
-            }}
-          />
+            onOpenConsumption={wb.onOpenBuildingElementConsumption}
+          >
+            <ScopeLineSkuPicker
+              line={child}
+              quoteObject={qObj}
+              catalogSkus={catalogSkus}
+              suppliersBySkuId={suppliersBySkuId}
+              priceLevels={priceLevels}
+              cascades={wb.cascades}
+              supplierDiscountByKey={supplierDiscountByKey}
+              pa={pa}
+              project={project}
+              disabled={lineSaving}
+              selectClassName={wb.wbSelectRow}
+              variant="compact"
+              showSupplierPrice
+              shortMatchLabels
+              inlineRow
+              syncUnitPriceFromPick
+              showIncludeAllSupplierOptions={wb.isAdminMode}
+              includeAllSupplierOptions={wb.includeAllSuppliersForLine(child.id)}
+              onIncludeAllSupplierOptionsChange={(checked) =>
+                wb.setIncludeAllSuppliersForLine(child.id, checked)
+              }
+              lockToSkuId={child.scopeShowAllSku ? child.skuId : null}
+              onSelectSku={(pick: ScopeLineSkuPick) => {
+                onPatchLine(child.id, patchBodyForScopeLineSku(child, pick));
+              }}
+            />
+          </WbBuildingElementSkuCell>
         ) : (
           <span className="text-xs">—</span>
         )}
@@ -522,16 +541,16 @@ function WorkbenchBundledLine({
               className={`h-4 w-4 ${wb.lineHasNotes(child) ? "text-sf-destructive dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}`}
             />
           </button>
-          <button
-            type="button"
-            onClick={() => wb.onDeleteLine(child.id)}
-            disabled={lineSaving || wb.paoDeleting}
-            className={sfRowIconBtnDanger}
-            aria-label={`Remove ${wb.objectLabel(child, quoteObjects)}`}
-            title="Remove bundled line"
-          >
-            <IconTrash className="h-4 w-4" />
-          </button>
+          <WbLineRowMenu
+            lineLabel={wb.objectLabel(child, quoteObjects)}
+            disabled={
+              lineSaving ||
+              wb.paoDeleting ||
+              wb.wbCloningLineId === child.id
+            }
+            onClone={() => wb.onCloneLine(child.id)}
+            onDelete={() => wb.onDeleteLine(child.id)}
+          />
         </div>
       </td>
       <WbLineSupplierCell
@@ -570,6 +589,7 @@ export function ScopeLineBundledChildren(props: Props) {
             objectLabel={props.objectLabel}
             onPatchLine={props.onPatchLine}
             onValidationError={props.onValidationError}
+            marginPct={props.marginPct}
           />
         ))}
       </div>

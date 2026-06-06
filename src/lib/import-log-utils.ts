@@ -28,6 +28,7 @@ export function parseStoredImportLogKind(raw: string): ImportLogKind {
   if (raw === "data_skus_import_painting") return "data_skus_import_painting";
   if (raw === "supporting_labour_rates") return "supporting_labour_rates";
   if (raw === "supporting_product_contractor_rates") return "supporting_product_contractor_rates";
+  if (raw === "supporting_building_elements") return "supporting_building_elements";
   if (raw === "supporting_cascades") return "supporting_cascades";
   if (raw === "supporting_supplier_discounts") return "supporting_supplier_discounts";
   if (raw === "supporting_lists") return "supporting_lists";

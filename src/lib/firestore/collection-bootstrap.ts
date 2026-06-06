@@ -13,6 +13,7 @@ import { IMPORTLOG_COLLECTION_META_ID } from "@/lib/firestore/importlog-collecti
 import { CASCADES_COLLECTION_META_ID } from "@/lib/firestore/cascades-collection";
 import { DATA_LABOURRATES_COLLECTION_META_ID } from "@/lib/firestore/data-labourrates-collection";
 import { DATA_PRODUCTCONTRACTORRATES_COLLECTION_META_ID } from "@/lib/firestore/data-productcontractorrates-collection";
+import { DATA_BUILDING_ELEMENTS_COLLECTION_META_ID } from "@/lib/firestore/data-building-elements-collection";
 import { DATA_OBJECTLABOURRATES_COLLECTION_META_ID } from "@/lib/firestore/data-objectlabourrates-collection";
 import { DATA_SUPPLIER_DISCOUNTS_COLLECTION_META_ID } from "@/lib/firestore/data-supplier-discounts-collection";
 import { DATA_SUPPLIER_DISCOUNT_RANGES_COLLECTION_META_ID } from "@/lib/firestore/data-supplier-discount-ranges-collection";
@@ -93,6 +94,14 @@ export async function ensureDataProductcontractorratesBootstrap(db: Firestore): 
     db,
     "data_productcontractorrates",
     DATA_PRODUCTCONTRACTORRATES_COLLECTION_META_ID,
+  );
+}
+
+export async function ensureDataBuildingElementsBootstrap(db: Firestore): Promise<void> {
+  await ensureMetaDoc(
+    db,
+    "data_building_elements",
+    DATA_BUILDING_ELEMENTS_COLLECTION_META_ID,
   );
 }
 

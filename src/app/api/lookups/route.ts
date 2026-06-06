@@ -6,6 +6,8 @@ import { isLookupsMetaDocument } from "@/lib/firestore/lookups-collection";
 import { allocateNextSequence } from "@/lib/firestore/sequences";
 import { lookupDocToPublic } from "@/lib/server/lookup-doc";
 import { lookupTypeCreateSchema } from "@/lib/lookup-types";
+import { orphanedObjectCategoryLookupIds } from "@/lib/server/orphaned-object-category-lookups";
+import { collectQuoteObjectCategoryNorms } from "@/lib/server/quote-object-categories";
 import type { LookupPublic } from "@/types/lookup";
 
 export const runtime = "nodejs";
@@ -32,7 +34,16 @@ export async function GET() {
           sensitivity: "base",
         });
       });
-    return NextResponse.json({ lookups });
+    const objectCategoryNorms = await collectQuoteObjectCategoryNorms(db);
+    const orphanedObjectCategoryLookupIdsList = orphanedObjectCategoryLookupIds(
+      lookups,
+      objectCategoryNorms,
+    );
+    return NextResponse.json({
+      lookups,
+      objectCategoryInUse: [...objectCategoryNorms].sort(),
+      orphanedObjectCategoryLookupIds: orphanedObjectCategoryLookupIdsList,
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to list lookups";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -9,11 +9,13 @@ import {
 } from "@/lib/lookup-types";
 import {
   sfDataSurface,
+  sfNeutralToolbarButton,
   sfPrimaryToolbarButton,
   sfSectionHeading,
   sfSectionLead,
 } from "@/lib/sf-layout";
 import { sfRowIconBtn, sfRowIconBtnDanger } from "@/lib/sf-row-actions";
+import { clearLookupsCache } from "@/lib/client/use-lookups";
 import type { LookupPublic } from "@/types/lookup";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -38,12 +40,17 @@ function isApprovedType(t: string): t is ApprovedLookupType {
 
 export function LookupsPanel() {
   const [lookups, setLookups] = useState<LookupPublic[]>([]);
+  const [orphanedObjectCategoryLookupIds, setOrphanedObjectCategoryLookupIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("idle");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteLegacyConfirmOpen, setDeleteLegacyConfirmOpen] = useState(false);
+  const [deletingLegacy, setDeletingLegacy] = useState(false);
 
   const [lookuptype, setLookuptype] = useState<ApprovedLookupType | "">("");
   const [lookupvalue, setLookupvalue] = useState("");
@@ -60,9 +67,16 @@ export function LookupsPanel() {
     setLoading(true);
     try {
       const res = await fetch("/api/lookups");
-      const data = (await res.json()) as { lookups?: LookupPublic[]; error?: string };
+      const data = (await res.json()) as {
+        lookups?: LookupPublic[];
+        orphanedObjectCategoryLookupIds?: string[];
+        error?: string;
+      };
       if (!res.ok) throw new Error(data.error ?? "Failed to load lookups");
       setLookups(data.lookups ?? []);
+      setOrphanedObjectCategoryLookupIds(
+        new Set(data.orphanedObjectCategoryLookupIds ?? []),
+      );
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load lookups");
@@ -260,6 +274,31 @@ export function LookupsPanel() {
     }
   }
 
+  async function confirmDeleteLegacyObjectCategories() {
+    setDeletingLegacy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/lookups/delete-legacy-object-categories", {
+        method: "POST",
+      });
+      const data = (await res.json()) as {
+        deleted?: number;
+        deletedValues?: string[];
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to delete legacy ObjectCategory lookups");
+      }
+      setDeleteLegacyConfirmOpen(false);
+      clearLookupsCache();
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete legacy ObjectCategory lookups");
+    } finally {
+      setDeletingLegacy(false);
+    }
+  }
+
   const inputClass =
     "min-h-12 w-full rounded-lg border border-sf-border-strong bg-sf-surface px-3 py-2.5 text-base dark:border-zinc-600 dark:bg-zinc-950";
 
@@ -277,11 +316,26 @@ export function LookupsPanel() {
           <p className={sfSectionLead}>
             Object categories, trades, styles, UOM codes, and relationship types. Import UOM from
             Import Master Prices → Import Lists. Legacy <strong>Area</strong> rows may still appear.
+            ObjectCategory rows with no matching <code className="text-xs">quote_objects</code>{" "}
+            category are flagged as legacy.
           </p>
         </div>
-        <button type="button" onClick={openCreate} className={sfPrimaryToolbarButton}>
-          Add lookup
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setDeleteLegacyConfirmOpen(true)}
+            disabled={loading || saving || orphanedObjectCategoryLookupIds.size === 0}
+            className={`${sfNeutralToolbarButton} text-red-700 dark:text-red-400`}
+          >
+            Delete legacy ObjectCategory
+            {orphanedObjectCategoryLookupIds.size > 0
+              ? ` (${orphanedObjectCategoryLookupIds.size})`
+              : ""}
+          </button>
+          <button type="button" onClick={openCreate} className={sfPrimaryToolbarButton}>
+            Add lookup
+          </button>
+        </div>
       </div>
 
       {error ? (
@@ -310,6 +364,14 @@ export function LookupsPanel() {
               {filteredRows.length === lookups.length
                 ? `${lookups.length} lookup${lookups.length === 1 ? "" : "s"}`
                 : `Showing ${filteredRows.length} of ${lookups.length} matching column filters`}
+              {orphanedObjectCategoryLookupIds.size > 0 ? (
+                <span className="text-red-800 dark:text-red-300">
+                  {" "}
+                  · {orphanedObjectCategoryLookupIds.size} ObjectCategory lookup
+                  {orphanedObjectCategoryLookupIds.size === 1 ? "" : "s"} with no quote_objects
+                  match (legacy)
+                </span>
+              ) : null}
             </p>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[720px] text-left text-sm md:text-base">
@@ -426,16 +488,31 @@ export function LookupsPanel() {
                       </td>
                     </tr>
                   ) : null}
-                  {displayRows.map((l) => (
+                  {displayRows.map((l) => {
+                    const isOrphanObjectCategory = orphanedObjectCategoryLookupIds.has(l.id);
+                    return (
                     <tr
                       key={l.id}
-                      className="border-b border-sf-border last:border-0 dark:border-zinc-700/80"
+                      className={`border-b border-sf-border last:border-0 dark:border-zinc-700/80 ${
+                        isOrphanObjectCategory
+                          ? "bg-red-50/80 dark:bg-red-950/20"
+                          : ""
+                      }`}
                     >
                       <td className="px-4 py-3 font-mono text-sm md:px-5 md:py-3.5">
                         {numToInput(l.lookupid)}
                       </td>
                       <td className="px-4 py-3 font-medium md:px-5 md:py-3.5">{l.lookuptype}</td>
-                      <td className="px-4 py-3 md:px-5 md:py-3.5">{l.lookupvalue}</td>
+                      <td className="px-4 py-3 md:px-5 md:py-3.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{l.lookupvalue}</span>
+                          {isOrphanObjectCategory ? (
+                            <span className="rounded border border-red-300 bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-900 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200">
+                              No quote_objects match
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
                       <td className="max-w-xs px-4 py-3 text-sf-text-secondary dark:text-zinc-300 md:px-5 md:py-3.5">
                         {l.notes?.trim() ? l.notes : "—"}
                       </td>
@@ -460,7 +537,8 @@ export function LookupsPanel() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -572,6 +650,44 @@ export function LookupsPanel() {
           </div>
         </div>
       )}
+
+      {deleteLegacyConfirmOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="delete-legacy-object-category-title"
+        >
+          <div className="w-full max-w-md rounded-lg border border-sf-border bg-sf-surface p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <h2 id="delete-legacy-object-category-title" className="text-lg font-semibold">
+              Delete legacy ObjectCategory lookups?
+            </h2>
+            <p className="mt-2 text-sm text-sf-text-secondary dark:text-zinc-400">
+              This removes {orphanedObjectCategoryLookupIds.size} ObjectCategory lookup
+              {orphanedObjectCategoryLookupIds.size === 1 ? "" : "s"} that have no matching{" "}
+              <code className="text-xs">quote_objects</code> category. This cannot be undone.
+            </p>
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setDeleteLegacyConfirmOpen(false)}
+                disabled={deletingLegacy}
+                className="min-h-12 rounded-lg border border-sf-border-strong px-4 py-3 text-base font-medium dark:border-zinc-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDeleteLegacyObjectCategories()}
+                disabled={deletingLegacy}
+                className="min-h-12 rounded-lg bg-red-600 px-5 py-3 text-base font-medium text-white disabled:opacity-50"
+              >
+                {deletingLegacy ? "Deleting…" : "Delete legacy"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {deleteId && (
         <div

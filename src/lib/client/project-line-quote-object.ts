@@ -39,7 +39,7 @@ export function projectLineObjectLabel(
   catalogSkus?: DataSkuPublic[],
 ): string {
   if (isBlindsSystemLine(row)) {
-    return row.blindType?.trim() || "Blinds";
+    return "Blinds";
   }
   const q = quoteObjectForProjectLine(row, quoteObjects);
   const live = q?.objectname?.trim();

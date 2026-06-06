@@ -29,6 +29,7 @@ import {
   isBlindsQuoteObject,
   quoteObjectSkuPipelineKey,
 } from "@/lib/server/quote-object-sku-pipeline";
+import { syncObjectCategoryLookupsFromQuoteObjects } from "@/lib/server/sync-object-category-lookups-from-quote-objects";
 import { syncQuoteObjectFromDataObject } from "@/lib/server/sync-quote-object-from-data-object";
 
 const DELETE_BATCH_SIZE = 500;
@@ -58,6 +59,8 @@ export type PrepareDataObjectsResult = {
   quoteObjectsCreated: number;
   quoteObjectsUpdated: number;
   removedQuoteObjects: number;
+  objectCategoryLookupsCreated: number;
+  objectCategoryLookupsAlreadyPresent: number;
 };
 
 type DistinctRow = DataObjectKeyFields & { uom: string };
@@ -211,6 +214,8 @@ export async function runPrepareDataObjects(
     removedQuoteObjects = await removeQuoteObjectsNotInDataObjectKeys(db, dataObjectKeys);
   }
 
+  const objectCategoryLookups = await syncObjectCategoryLookupsFromQuoteObjects(db);
+
   return {
     distinctFromSkus: distinctByKey.size,
     created,
@@ -220,5 +225,7 @@ export async function runPrepareDataObjects(
     quoteObjectsCreated,
     quoteObjectsUpdated,
     removedQuoteObjects,
+    objectCategoryLookupsCreated: objectCategoryLookups.lookupsCreated,
+    objectCategoryLookupsAlreadyPresent: objectCategoryLookups.lookupsAlreadyPresent,
   };
 }

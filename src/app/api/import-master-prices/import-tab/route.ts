@@ -9,6 +9,7 @@ import {
   MASTER_PRICES_CASCADES_TAB_TITLE,
   MASTER_PRICES_LABOUR_TAB_TITLE,
   MASTER_PRICES_CONTRACTOR_RATES_TAB_TITLE,
+  MASTER_PRICES_BUILDING_ELEMENTS_TAB_TITLE,
   MASTER_PRICES_PAINTING_TAB_TITLE,
   MASTER_PRICES_SKU_TAB_TITLE,
   MASTER_PRICES_LISTS_TAB_TITLE,
@@ -22,6 +23,7 @@ import {
   resolveCascadingRestrictionsSheetTab,
   resolveLabourImportSheetTab,
   resolveProductContractorRatesSheetTab,
+  resolveBuildingElementsSheetTab,
   resolvePaintingImportSheetTab,
   resolveSkuImportSheetTab,
   resolveListsSheetTab,
@@ -222,6 +224,21 @@ export async function GET() {
         e instanceof Error ? e.message : "Failed to resolve contractor rates tab";
     }
 
+    let buildingElements: ImportTabPayload | null = null;
+    let buildingElementsError: string | null = null;
+    try {
+      const buildingElementsTab = await resolveBuildingElementsSheetTab(
+        MASTER_PRICES_SPREADSHEET_ID,
+      );
+      buildingElements = tabPayloadFromResolve(
+        buildingElementsTab,
+        MASTER_PRICES_BUILDING_ELEMENTS_TAB_TITLE,
+      );
+    } catch (e) {
+      buildingElementsError =
+        e instanceof Error ? e.message : "Failed to resolve building elements tab";
+    }
+
     return NextResponse.json({
       skuAll,
       building,
@@ -240,6 +257,8 @@ export async function GET() {
       incrementalLabourProductsError,
       contractorRates,
       contractorRatesError,
+      buildingElements,
+      buildingElementsError,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to resolve import tab";

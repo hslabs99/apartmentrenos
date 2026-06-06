@@ -4,6 +4,7 @@ import {
   MASTER_PRICES_CASCADES_TAB_TITLE,
   MASTER_PRICES_LABOUR_TAB_TITLE,
   MASTER_PRICES_CONTRACTOR_RATES_TAB_TITLE,
+  MASTER_PRICES_BUILDING_ELEMENTS_TAB_TITLE,
   MASTER_PRICES_PAINTING_TAB_TITLE,
   MASTER_PRICES_LISTS_TAB_TITLE,
   MASTER_PRICES_SKU_TAB_TITLE,
@@ -117,6 +118,13 @@ export async function resolveProductContractorRatesSheetTab(
   spreadsheetId: string,
 ): Promise<ResolvedSheetTab> {
   return resolveSheetTabByTitle(spreadsheetId, MASTER_PRICES_CONTRACTOR_RATES_TAB_TITLE);
+}
+
+/** Resolve the building elements worksheet (`Building Elements`). */
+export async function resolveBuildingElementsSheetTab(
+  spreadsheetId: string,
+): Promise<ResolvedSheetTab> {
+  return resolveSheetTabByTitle(spreadsheetId, MASTER_PRICES_BUILDING_ELEMENTS_TAB_TITLE);
 }
 
 /** Resolve the painting SKU import worksheet (`Products_Painting`). */

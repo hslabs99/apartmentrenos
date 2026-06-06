@@ -11,9 +11,13 @@ import {
   hasClNonStandardTierStyleColour,
   type ClNonStdModalTarget,
 } from "@/components/cl-non-std-tier-style-colour";
+import { ClTotalPriceCell } from "@/components/cl-total-price-cell";
 import { BlindsScopeEditModal } from "@/components/blinds-scope-edit-modal";
 import { BlindsScopeFields } from "@/components/blinds-scope-fields";
 import { BlindsWorkbenchSkuLink } from "@/components/blinds-workbench-sku-link";
+import { WbBuildingElementConsumptionModal } from "@/components/wb-building-element-consumption-modal";
+import { WbBuildingElementSkuCell } from "@/components/wb-building-element-sku-cell";
+import { WbLineRowMenu } from "@/components/wb-line-row-menu";
 import { AddObjectPickerModal } from "@/components/add-object-picker-modal";
 import { AddScopePickerModal } from "@/components/add-scope-picker-modal";
 import {
@@ -34,6 +38,8 @@ import {
   clScopeMeasureColClass,
   clScopeNonStdColClass,
   clScopeToolColClass,
+  clScopeTotalPriceColClass,
+  clTotalPriceFieldClass,
   clToolCellClass,
   clScopeQuestionAnswerGroupClass,
   clScopeQuestionAnswerGroupBlindsClass,
@@ -53,7 +59,12 @@ import {
   type WorkbenchBundledContext,
 } from "@/components/scope-line-bundled-children";
 import { applyScopeLineSkuWithBundledChildren } from "@/lib/client/apply-scope-line-sku-selection";
+import {
+  buildBuildingElementIndex,
+  findBuildingElementForLine,
+} from "@/lib/client/building-element-index";
 import { partitionAreaLines } from "@/lib/client/partition-area-lines";
+import { lineFinalPrice } from "@/lib/client/line-final-price";
 import {
   resolveScopeLineSkuUnitPriceExcGst,
   scopeLineMatchesSkuPick,
@@ -100,12 +111,14 @@ import {
 import { scopeSelectionUsesSystemBlinds } from "@/lib/blinds/blinds-scope-answer";
 import { isBlindsSystemLine, blindsSkuDisplayLabel } from "@/lib/blinds/blinds-data-utils";
 import type { DataBlindPublic } from "@/types/data-blind-public";
+import type { DataBuildingElementPublic } from "@/types/data-building-element-public";
 import type { AreaPublic } from "@/types/area";
 import {
   formatCurrencyInput,
   parseCurrencyInput,
 } from "@/lib/client/format-money";
 import { loadCatalogSkuData } from "@/lib/client/load-catalog-sku-data";
+import { downloadProjectWorkbenchXls } from "@/lib/project-workbench-export-xls";
 import { supplierDiscountByKeyFromRows } from "@/lib/client/supplier-discount-price";
 import type { DataSupplierDiscountPublic } from "@/types/data-supplier-discount-public";
 import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
@@ -212,16 +225,6 @@ function includedLineTotal(row: ProjectAreaObjectPublic): number {
   if (row.included === false) return 0;
   const t = row.totalprice;
   return typeof t === "number" && Number.isFinite(t) ? t : 0;
-}
-
-function lineFinalPrice(
-  row: ProjectAreaObjectPublic,
-  marginPct: number,
-): number | null {
-  if (row.included === false) return null;
-  const t = row.totalprice;
-  if (t == null || !Number.isFinite(t)) return null;
-  return t * (1 + marginPct / 100);
 }
 
 function parseOptionalNumber(raw: string): number | null {
@@ -426,7 +429,11 @@ export function ProjectChecklistPanel({
   /** Checklist: Non Std tier/style/colour popup target (area or line). */
   const [clNonStdModal, setClNonStdModal] = useState<ClNonStdModalTarget | null>(null);
   const [blindsData, setBlindsData] = useState<DataBlindPublic[]>([]);
+  const [buildingElements, setBuildingElements] = useState<DataBuildingElementPublic[]>([]);
   const [wbBlindsEditLineId, setWbBlindsEditLineId] = useState<string | null>(null);
+  const [wbBuildingElementLineId, setWbBuildingElementLineId] = useState<string | null>(null);
+  const [wbExporting, setWbExporting] = useState(false);
+  const [wbCloningLineId, setWbCloningLineId] = useState<string | null>(null);
   const includeAllSuppliersForLine = useCallback(
     (lineId: string) => skuShowAllByLineId[lineId] === true,
     [skuShowAllByLineId],
@@ -499,6 +506,17 @@ export function ProjectChecklistPanel({
       setBlindsData(data.items ?? []);
     } catch {
       setBlindsData([]);
+    }
+  }, []);
+
+  const loadBuildingElements = useCallback(async () => {
+    try {
+      const res = await fetch("/api/building-elements");
+      const data = (await res.json()) as { items?: DataBuildingElementPublic[]; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed to load building elements");
+      setBuildingElements(data.items ?? []);
+    } catch {
+      setBuildingElements([]);
     }
   }, []);
 
@@ -927,6 +945,7 @@ export function ProjectChecklistPanel({
           loadPriceLevels(),
           loadCatalogSkus(),
           loadBlindsData(),
+          loadBuildingElements(),
           (async () => {
             const res = await fetch(`/api/projects/${projectDocId}`);
             const data = await readApiResponse<{ project?: ProjectPublic; error?: string }>(res);
@@ -1002,6 +1021,7 @@ export function ProjectChecklistPanel({
     loadPriceLevels,
     loadCatalogSkus,
     loadBlindsData,
+    loadBuildingElements,
     reloadProjectAreaAnswers,
     mode,
   ]);
@@ -1253,6 +1273,21 @@ export function ProjectChecklistPanel({
     }
   }
 
+  const cloneLineItem = useCallback(async (lineId: string) => {
+    setWbCloningLineId(lineId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projectareaobjects/${lineId}/clone`, { method: "POST" });
+      const data = await readApiResponse<{ id?: string; error?: string }>(res);
+      if (!res.ok) throw new Error(data.error ?? "Clone failed");
+      await reloadLineItems();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to clone line");
+    } finally {
+      setWbCloningLineId(null);
+    }
+  }, [reloadLineItems]);
+
   async function addProjectAreaFromTemplate(areaDocId: string) {
     if (!projectDocId) return;
     const inheritedPl = project?.defaultpricelevelid ?? null;
@@ -1350,6 +1385,11 @@ export function ProjectChecklistPanel({
     [catalogSkus],
   );
 
+  const buildingElementBySkuName = useMemo(
+    () => buildBuildingElementIndex(buildingElements),
+    [buildingElements],
+  );
+
   const workbenchBundledCtx = useMemo((): WorkbenchBundledContext => {
     return {
       wbSelectRow,
@@ -1385,9 +1425,15 @@ export function ProjectChecklistPanel({
         setLineNotesModal({ lineId, label, draft }),
       lineNotesCombined,
       onDeleteLine: (lineId) => setPaoDeleteId(lineId),
+      onCloneLine: (lineId) => {
+        void cloneLineItem(lineId);
+      },
+      wbCloningLineId,
       onValidationError: setError,
       contractLabourRates,
       objectLabourRates,
+      buildingElementBySkuName,
+      onOpenBuildingElementConsumption: setWbBuildingElementLineId,
     };
   }, [
     objectLabel,
@@ -1400,6 +1446,9 @@ export function ProjectChecklistPanel({
     setIncludeAllSuppliersForLine,
     contractLabourRates,
     objectLabourRates,
+    buildingElementBySkuName,
+    wbCloningLineId,
+    cloneLineItem,
   ]);
 
   return (
@@ -1422,25 +1471,61 @@ export function ProjectChecklistPanel({
           <span className="sr-only">Workbench</span>
         )}
         {projectDocId && project && numericProjectId != null && !loading ? (
-          <button
-            type="button"
-            onClick={openPickAreaModal}
-            className="min-h-11 shrink-0 rounded-lg bg-sf-brand px-4 py-2.5 text-sm font-medium text-white"
-          >
-            Add area…
-          </button>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {mode === "workbench" ? (
+              <button
+                type="button"
+                disabled={wbExporting}
+                onClick={() => {
+                  void (async () => {
+                    setWbExporting(true);
+                    setError(null);
+                    try {
+                      await downloadProjectWorkbenchXls(
+                        projectDocId,
+                        project.projectname || "project",
+                      );
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Workbench export failed");
+                    } finally {
+                      setWbExporting(false);
+                    }
+                  })();
+                }}
+                className="min-h-11 rounded-lg border border-sf-border-strong bg-sf-surface px-4 py-2.5 text-sm font-medium text-sf-text hover:bg-sf-page disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+              >
+                {wbExporting ? "Exporting…" : "Export workbench (.xls)"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={openPickAreaModal}
+              className="min-h-11 shrink-0 rounded-lg bg-sf-brand px-4 py-2.5 text-sm font-medium text-white"
+            >
+              Add area…
+            </button>
+          </div>
         ) : null}
       </div>
 
       <p className="text-xs text-sf-text-weak dark:text-zinc-400">
-        Edits save when you leave a cell (Tab or click away). Unchecked lines are excluded from
-        subtotals. Line total updates from measure × unit price when both are set.{" "}
-        <span className="font-medium text-sf-text-secondary dark:text-zinc-300">
-          Margin {marginPct}%
-        </span>{" "}
-        (System → Settings) applies to Final price.{" "}
-        <span className="font-medium text-sf-text-secondary dark:text-zinc-300">Load rates</span>{" "}
-        ($/unit) show as dollar lines under each load total when set.
+        {mode === "workbench" ? (
+          <>
+            Edits save when you leave a cell (Tab or click away). Unchecked lines are excluded from
+            subtotals. Line total updates from measure × unit price when both are set.{" "}
+            <span className="font-medium text-sf-text-secondary dark:text-zinc-300">
+              Margin {marginPct}%
+            </span>{" "}
+            (System → Settings) applies to Final price.{" "}
+            <span className="font-medium text-sf-text-secondary dark:text-zinc-300">Load rates</span>{" "}
+            ($/unit) show as dollar lines under each load total when set.
+          </>
+        ) : (
+          <>
+            Total price includes margin ({marginPct}% from System → Settings) — client-facing
+            totals only. Internal line costs are on Workbench.
+          </>
+        )}
       </p>
 
       {error ? (
@@ -1593,6 +1678,34 @@ export function ProjectChecklistPanel({
               </colgroup>
             )}
             <tbody>
+              {mode !== "workbench" && project ? (
+                <tr className="border-b border-sf-border bg-sf-page dark:border-zinc-700 dark:bg-zinc-900/60">
+                  <td colSpan={WB_TABLE_COLS} className="px-4 py-3">
+                    <div className="flex flex-wrap items-end justify-between gap-3">
+                      <div>
+                        <span className="block text-[10px] font-semibold uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
+                          Project
+                        </span>
+                        <span className="mt-0.5 block text-lg font-semibold text-sf-text dark:text-zinc-50">
+                          {project.projectname}
+                          {numericProjectId != null ? (
+                            <span className="font-normal text-sf-text-secondary dark:text-zinc-400">
+                              {" "}
+                              · ID {numericProjectId}
+                            </span>
+                          ) : null}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className={wbHdrLabel}>Total price</span>
+                        <span className="block text-lg font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
+                          {grandFinalTotal > 0 ? formatMoney(grandFinalTotal) : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              ) : null}
               {mode === "workbench" && project ? (
                 <tr className={wbProjectHdrRow}>
                   <td colSpan={3} className={`${wbAreaHdrCell} pl-2.5`}>
@@ -1778,6 +1891,7 @@ export function ProjectChecklistPanel({
                           <div
                             className={`${wbAreaHdrBand} border-b border-sf-border px-3 py-3 dark:border-zinc-700`}
                           >
+                            <div className="flex w-full flex-wrap items-end justify-between gap-x-4 gap-y-2">
                             <div className="inline-flex max-w-full flex-wrap items-end gap-x-4 gap-y-2">
                               <span
                                 className="shrink-0 text-[1.09375rem] font-semibold leading-snug text-sf-text dark:text-zinc-50"
@@ -1827,6 +1941,13 @@ export function ProjectChecklistPanel({
                               </div>
                               {checklistAreaAddButtons(pa, areaBusy)}
                               {checklistAreaRemoveButton(pa, areaBusy)}
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <span className={wbHdrLabel}>Total price</span>
+                              <span className="block text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
+                                {hasIncludedMoney ? formatMoney(areaFinalSubtotal) : "—"}
+                              </span>
+                            </div>
                             </div>
                           </div>
                           <div className={`${wbAreaObjectBand} space-y-3 px-3 py-3`}>
@@ -1987,6 +2108,10 @@ export function ProjectChecklistPanel({
                                           />
                                           <div
                                             className={`${clNonStdCellClass} ${clScopeNonStdColClass}`}
+                                            aria-hidden
+                                          />
+                                          <div
+                                            className={`${clTotalPriceFieldClass} ${clScopeTotalPriceColClass}`}
                                             aria-hidden
                                           />
                                           <div
@@ -2247,6 +2372,7 @@ export function ProjectChecklistPanel({
                                                 }
                                               />
                                             </div>
+                                            <ClTotalPriceCell line={lineRow} marginPct={marginPct} />
                                             <div className={`${clToolCellClass} ${clScopeToolColClass}`}>
                                               <ScopeLineMeasureTool
                                                 scope={scope}
@@ -2382,7 +2508,9 @@ export function ProjectChecklistPanel({
                                             }}
                                           />
                                         </label>
-                                        <div className={`flex items-end justify-end pb-0.5 ${clScopeNonStdColClass}`}>
+                                        <div className={`${clNonStdCellClass} ${clScopeNonStdColClass}`} aria-hidden />
+                                        <ClTotalPriceCell line={lineRow} marginPct={marginPct} />
+                                        <div className={`flex items-end justify-end pb-0.5 ${clScopeToolColClass}`}>
                                           <button
                                             type="button"
                                             onClick={() => setPaoDeleteId(lineRow.id)}
@@ -2900,37 +3028,45 @@ export function ProjectChecklistPanel({
                                   );
                                 }
                                 return (
-                                  <ScopeLineSkuPicker
+                                  <WbBuildingElementSkuCell
                                     line={row}
-                                    quoteObject={qObj}
                                     catalogSkus={catalogSkus}
-                                    suppliersBySkuId={suppliersBySkuId}
-                                    priceLevels={priceLevels}
-                                    cascades={cascades}
-                                    supplierDiscountByKey={supplierDiscountByKey}
-                                    pa={pa}
-                                    project={project}
+                                    buildingElementBySkuName={buildingElementBySkuName}
                                     disabled={saving}
-                                    selectClassName={wbSelectRow}
-                                    variant="compact"
-                                    showSupplierPrice
-                                    shortMatchLabels
-                                    inlineRow
-                                    autoApplySingleMatch
-                                    autoApplyOnlyWhenEmptySku
-                                    syncUnitPriceFromPick
-                                    lockToSkuId={row.scopeShowAllSku ? row.skuId : null}
-                                    showIncludeAllSupplierOptions={isAdminMode}
-                                    includeAllSupplierOptions={includeAllSuppliersForLine(
-                                      row.id,
-                                    )}
-                                    onIncludeAllSupplierOptionsChange={(checked) =>
-                                      setIncludeAllSuppliersForLine(row.id, checked)
-                                    }
-                                    onSelectSku={(pick) => {
-                                      void applyLineSkuSelection(row, pa, pick);
-                                    }}
-                                  />
+                                    onOpenConsumption={setWbBuildingElementLineId}
+                                  >
+                                    <ScopeLineSkuPicker
+                                      line={row}
+                                      quoteObject={qObj}
+                                      catalogSkus={catalogSkus}
+                                      suppliersBySkuId={suppliersBySkuId}
+                                      priceLevels={priceLevels}
+                                      cascades={cascades}
+                                      supplierDiscountByKey={supplierDiscountByKey}
+                                      pa={pa}
+                                      project={project}
+                                      disabled={saving}
+                                      selectClassName={wbSelectRow}
+                                      variant="compact"
+                                      showSupplierPrice
+                                      shortMatchLabels
+                                      inlineRow
+                                      autoApplySingleMatch
+                                      autoApplyOnlyWhenEmptySku
+                                      syncUnitPriceFromPick
+                                      lockToSkuId={row.scopeShowAllSku ? row.skuId : null}
+                                      showIncludeAllSupplierOptions={isAdminMode}
+                                      includeAllSupplierOptions={includeAllSuppliersForLine(
+                                        row.id,
+                                      )}
+                                      onIncludeAllSupplierOptionsChange={(checked) =>
+                                        setIncludeAllSuppliersForLine(row.id, checked)
+                                      }
+                                      onSelectSku={(pick) => {
+                                        void applyLineSkuSelection(row, pa, pick);
+                                      }}
+                                    />
+                                  </WbBuildingElementSkuCell>
                                 );
                               })()}
                             </td>
@@ -3055,16 +3191,14 @@ export function ProjectChecklistPanel({
                                     className={`h-4 w-4 ${lineHasNotes(row) ? "text-sf-destructive dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}`}
                                   />
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setPaoDeleteId(row.id)}
-                                  disabled={saving || paoDeleting}
-                                  className={sfRowIconBtnDanger}
-                                  aria-label={`Remove ${objectLabel(row, quoteObjects)}`}
-                                  title="Remove line from area"
-                                >
-                                  <IconTrash className="h-4 w-4" />
-                                </button>
+                                <WbLineRowMenu
+                                  lineLabel={objectLabel(row, quoteObjects)}
+                                  disabled={
+                                    saving || paoDeleting || wbCloningLineId === row.id
+                                  }
+                                  onClone={() => void cloneLineItem(row.id)}
+                                  onDelete={() => setPaoDeleteId(row.id)}
+                                />
                               </div>
                             </td>
                             <WbLineSupplierCell
@@ -3191,6 +3325,7 @@ export function ProjectChecklistPanel({
               })
               )}
               {sortedProjectAreas.length > 0 ? (
+              mode === "workbench" ? (
               <tr className="border-t-2 border-t-zinc-400 bg-sf-page font-semibold dark:border-t-zinc-500 dark:bg-zinc-800">
                 <td colSpan={10} className={`${cell} bg-sf-page text-right align-top dark:bg-zinc-800`}>
                   <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
@@ -3241,6 +3376,25 @@ export function ProjectChecklistPanel({
                 <td className={`${cell} bg-sf-page dark:bg-zinc-800`} />
                 <td className={`${wbSpacerCell} bg-sf-page dark:bg-zinc-800`} />
               </tr>
+              ) : (
+              <tr className="border-t-2 border-t-zinc-400 bg-sf-page font-semibold dark:border-t-zinc-500 dark:bg-zinc-800">
+                <td colSpan={WB_TABLE_COLS - 1} className={`${cell} bg-sf-page text-right align-top dark:bg-zinc-800`}>
+                  <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
+                    Project total
+                  </span>
+                </td>
+                <td
+                  className={`${cell} bg-sf-page text-right align-top text-base tabular-nums text-emerald-900 dark:text-emerald-100 dark:bg-zinc-800`}
+                >
+                  <span className="block text-xs font-medium uppercase tracking-wide text-emerald-900/80 dark:text-emerald-200/90">
+                    Total price
+                  </span>
+                  <span className="text-base font-semibold">
+                    {formatMoney(grandFinalTotal)}
+                  </span>
+                </td>
+              </tr>
+              )
               ) : null}
             </tbody>
           </table>
@@ -3260,6 +3414,29 @@ export function ProjectChecklistPanel({
                 selectClassName={wbSelectRow}
                 onClose={() => setWbBlindsEditLineId(null)}
                 onPatch={(patch) => patchLineItem(line.id, patch)}
+              />
+            );
+          })()
+        : null}
+
+      {wbBuildingElementLineId && mode === "workbench"
+        ? (() => {
+            const line = allObjects.find((o) => o.id === wbBuildingElementLineId);
+            if (!line) return null;
+            const element = findBuildingElementForLine(
+              line,
+              catalogSkus,
+              buildingElementBySkuName,
+            );
+            if (!element) return null;
+            return (
+              <WbBuildingElementConsumptionModal
+                line={line}
+                element={element}
+                catalogSkus={catalogSkus}
+                suppliersBySkuId={suppliersBySkuId}
+                supplierDiscountByKey={supplierDiscountByKey}
+                onClose={() => setWbBuildingElementLineId(null)}
               />
             );
           })()

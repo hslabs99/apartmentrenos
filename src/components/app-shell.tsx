@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 
 import { ViewModeToggle } from "@/components/view-mode-toggle";
 import { useViewMode } from "@/lib/view-mode";
@@ -24,52 +24,19 @@ function isProjectScopePath(pathname: string) {
   );
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
+function AppShellSearchParamRedirects({
+  pathname,
+  canViewProjectWorkbench,
+  isSalesMode,
+  isPurchasingMode,
+}: {
+  pathname: string;
+  canViewProjectWorkbench: boolean;
+  isSalesMode: boolean;
+  isPurchasingMode: boolean;
+}) {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const {
-    isSalesMode,
-    isPurchasingMode,
-    canViewAdminPages,
-    canViewProjectWorkbench,
-  } = useViewMode();
-  const projectScopeMode = isProjectScopePath(pathname);
-  const [navCollapsed, setNavCollapsed] = useState(false);
-  const [navHydrated, setNavHydrated] = useState(false);
-
-  /** Project workspace + admin setup: full-width main content (desktop). */
-  const projectWorkspaceFullWidth =
-    pathname.startsWith("/projects/project") ||
-    pathname === "/import-master-prices" ||
-    pathname.startsWith("/import-master-prices/") ||
-    pathname === "/setup" ||
-    pathname.startsWith("/setup/") ||
-    pathname === "/system" ||
-    pathname.startsWith("/system/");
-
-  const visibleNav = useMemo(() => {
-    if (canViewAdminPages) return NAV;
-    return NAV.filter((x) => x.href === "/projects");
-  }, [canViewAdminPages]);
-
-  useEffect(() => {
-    try {
-      setNavCollapsed(localStorage.getItem(NAV_COLLAPSED_KEY) === "1");
-    } catch {
-      /* ignore */
-    }
-    setNavHydrated(true);
-  }, []);
-
-  useEffect(() => {
-    if (!navHydrated) return;
-    try {
-      localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  }, [navCollapsed, navHydrated]);
 
   useEffect(() => {
     if (!isSalesMode && !isPurchasingMode) return;
@@ -117,10 +84,66 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     canViewProjectWorkbench,
   ]);
 
+  return null;
+}
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const {
+    isSalesMode,
+    isPurchasingMode,
+    canViewAdminPages,
+    canViewProjectWorkbench,
+  } = useViewMode();
+  const projectScopeMode = isProjectScopePath(pathname);
+  const [navCollapsed, setNavCollapsed] = useState(false);
+  const [navHydrated, setNavHydrated] = useState(false);
+
+  /** Project workspace + admin setup: full-width main content (desktop). */
+  const projectWorkspaceFullWidth =
+    pathname.startsWith("/projects/project") ||
+    pathname === "/import-master-prices" ||
+    pathname.startsWith("/import-master-prices/") ||
+    pathname === "/setup" ||
+    pathname.startsWith("/setup/") ||
+    pathname === "/system" ||
+    pathname.startsWith("/system/");
+
+  const visibleNav = useMemo(() => {
+    if (canViewAdminPages) return NAV;
+    return NAV.filter((x) => x.href === "/projects");
+  }, [canViewAdminPages]);
+
+  useEffect(() => {
+    try {
+      setNavCollapsed(localStorage.getItem(NAV_COLLAPSED_KEY) === "1");
+    } catch {
+      /* ignore */
+    }
+    setNavHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!navHydrated) return;
+    try {
+      localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [navCollapsed, navHydrated]);
+
   const sidebarCollapsed = projectScopeMode && navCollapsed;
 
   return (
     <div className="flex min-h-[100dvh] flex-col bg-sf-page text-sf-text lg:flex-row dark:bg-zinc-950 dark:text-zinc-100">
+      <Suspense fallback={null}>
+        <AppShellSearchParamRedirects
+          pathname={pathname}
+          canViewProjectWorkbench={canViewProjectWorkbench}
+          isSalesMode={isSalesMode}
+          isPurchasingMode={isPurchasingMode}
+        />
+      </Suspense>
       <div className="fixed right-3 top-3 z-50">
         <ViewModeToggle />
       </div>

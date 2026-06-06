@@ -10,6 +10,7 @@ import {
 } from "@/components/icons/lightning-icons";
 import { NewProjectDialog } from "@/components/new-project-dialog";
 import { downloadProjectChecklistXls } from "@/lib/project-checklist-export-xls";
+import { downloadProjectWorkbenchXls } from "@/lib/project-workbench-export-xls";
 import type { ProjectListItem } from "@/types/project";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -147,6 +148,28 @@ function ProjectTileOverflowMenu({
                   }}
                 >
                   {exporting ? "Exporting…" : "Jobs checklist (.xls)"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={exporting}
+                  className="block w-full px-3 py-2 text-left text-sm font-normal text-sf-text-secondary hover:bg-sf-surface disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  onClick={() => {
+                    void (async () => {
+                      setExporting(true);
+                      setOpen(false);
+                      setExportSubOpen(false);
+                      try {
+                        await downloadProjectWorkbenchXls(projectDocId, projectName);
+                      } catch (e) {
+                        onExportError(e instanceof Error ? e.message : "Export failed");
+                      } finally {
+                        setExporting(false);
+                      }
+                    })();
+                  }}
+                >
+                  {exporting ? "Exporting…" : "Jobs workbench (.xls)"}
                 </button>
               </div>
             ) : null}

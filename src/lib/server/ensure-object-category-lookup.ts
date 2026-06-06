@@ -2,10 +2,7 @@ import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import { isLookupsMetaDocument } from "@/lib/firestore/lookups-collection";
 import { LOOKUP_TYPE_OBJECT_CATEGORY } from "@/lib/lookup-types";
 import { allocateNextSequence } from "@/lib/firestore/sequences";
-
-function normalizeLookupValue(value: string): string {
-  return value.trim().toLowerCase();
-}
+import { normalizeObjectCategoryValue } from "@/lib/server/quote-object-categories";
 
 /**
  * Ensure `lookups` has an ObjectCategory row for `category` (trim + case-insensitive).
@@ -19,13 +16,13 @@ export async function ensureObjectCategoryLookup(
   if (!trimmed) return "";
 
   const snap = await db.collection("lookups").get();
-  const norm = normalizeLookupValue(trimmed);
+  const norm = normalizeObjectCategoryValue(trimmed);
   for (const doc of snap.docs) {
     if (isLookupsMetaDocument(doc.id)) continue;
     const data = doc.data();
     if (String(data.lookuptype ?? "") !== LOOKUP_TYPE_OBJECT_CATEGORY) continue;
     const existing = String(data.lookupvalue ?? "").trim();
-    if (normalizeLookupValue(existing) === norm) return existing;
+    if (normalizeObjectCategoryValue(existing) === norm) return existing;
   }
 
   const lookupid = await allocateNextSequence(db, "lookupid");

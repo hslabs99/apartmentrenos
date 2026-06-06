@@ -11,12 +11,13 @@ export const CL_SKU_WIDTH = "88ch";
 export const CL_UOM_WIDTH = "10ch";
 export const CL_MEASURE_WIDTH = "10ch";
 export const CL_NON_STD_WIDTH = "5.5rem";
+export const CL_TOTAL_PRICE_WIDTH = "10ch";
 export const CL_TOOL_WIDTH = "2.25rem";
 
 /** Shared control height for checklist SKU / measure / UOM inputs (one row). */
 export const CL_FIELD_CONTROL_HEIGHT_CLASS = "h-[1.625rem]";
 
-export const CL_FIELDS_GRID_COLUMNS = `${CL_SKU_WIDTH} ${CL_MEASURE_WIDTH} ${CL_UOM_WIDTH} ${CL_NON_STD_WIDTH} ${CL_TOOL_WIDTH}`;
+export const CL_FIELDS_GRID_COLUMNS = `${CL_SKU_WIDTH} ${CL_MEASURE_WIDTH} ${CL_UOM_WIDTH} ${CL_NON_STD_WIDTH} ${CL_TOTAL_PRICE_WIDTH} ${CL_TOOL_WIDTH}`;
 
 export const clFieldsGridStyle = {
   gridTemplateColumns: CL_FIELDS_GRID_COLUMNS,
@@ -99,6 +100,9 @@ export const clActionBtnDangerClass =
 export const clNonStdCellClass =
   "flex shrink-0 items-end self-end pb-0.5 pr-3";
 
+export const clTotalPriceFieldClass =
+  "flex w-[10ch] max-w-[10ch] shrink-0 flex-col gap-0.5 overflow-hidden";
+
 export const clScopeSkuColClass = "col-start-1";
 
 export const clScopeMeasureColClass = "col-start-2";
@@ -107,7 +111,9 @@ export const clScopeUomColClass = "col-start-3";
 
 export const clScopeNonStdColClass = "col-start-4";
 
-export const clScopeToolColClass = "col-start-5";
+export const clScopeTotalPriceColClass = "col-start-5";
+
+export const clScopeToolColClass = "col-start-6";
 
 export const clToolCellClass =
   "flex shrink-0 items-end self-end pb-0.5";
