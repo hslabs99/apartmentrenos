@@ -61,8 +61,10 @@ export async function syncQuoteObjectFromDataObject(
   const fields: DataObjectKeyFields = canonicalDataObjectFields({
     category: dataObject.category,
     productType: dataObject.productType,
+    product: dataObject.product,
   });
   const objectKey = buildDataObjectKey(fields);
+  const objectname = fields.product?.trim() ? fields.product : fields.productType;
   const uom = mapSkuUomToQuoteUom(dataObject.uom);
   const categoryForLookup = await ensureObjectCategoryLookup(db, fields.category);
 
@@ -108,7 +110,7 @@ export async function syncQuoteObjectFromDataObject(
   const { firestorePatch } = priceRowsAndLegacyTopLevel(measurement, []);
   const ref = db.collection("quote_objects").doc();
   await ref.set({
-    objectname: fields.productType,
+    objectname,
     product: "",
     objecttype: DEFAULT_OBJECT_TYPE,
     category: categoryForLookup,

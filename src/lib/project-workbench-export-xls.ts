@@ -7,14 +7,11 @@ import { loadCatalogSkuData } from "@/lib/client/load-catalog-sku-data";
 import { partitionAreaLines } from "@/lib/client/partition-area-lines";
 import { projectLineObjectLabel } from "@/lib/client/project-line-quote-object";
 import {
-  resolveScopeLineSupplierLabel,
-  scopeLineSkuPickSupplierLabel,
+  preferredSupplierForSku,
+  resolveScopeLineSupplier,
+  type ScopeLineSkuPick,
 } from "@/lib/client/scope-line-sku-match";
-import {
-  formatSupplierDiscountPctLabel,
-  supplierDiscountByKeyFromRows,
-  type SupplierDiscountByKey,
-} from "@/lib/client/supplier-discount-price";
+import { supplierDiscountByKeyFromRows } from "@/lib/client/supplier-discount-price";
 import { WB_WORKBENCH_LABOUR_SILO_HEADERS } from "@/lib/labour-silo";
 import { compareProjectAreasDisplayOrder } from "@/lib/project-area-display-order";
 import { marginPercentFromSettings } from "@/lib/settings-margin";
@@ -95,6 +92,41 @@ function lineNotes(row: ProjectAreaObjectPublic): string {
   return [row.notes1, row.notes2].filter(Boolean).join("\n");
 }
 
+/** Supplier name, model, and supplier SKU code for ordering (from line’s supplier option). */
+function supplierOrderCells(
+  line: Pick<
+    ProjectAreaObjectPublic,
+    "skuId" | "supplierOption" | "manualSupplier" | "manualSupplierSku"
+  >,
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
+): [string, string, string] {
+  const row = resolveScopeLineSupplier(line, suppliersBySkuId);
+  if (row) {
+    const code = line.manualSupplierSku?.trim() || row.supplierSku.trim();
+    return [row.supplier.trim(), row.model.trim(), code];
+  }
+  const manual = line.manualSupplier?.trim();
+  if (manual) {
+    return [manual, "", line.manualSupplierSku?.trim() ?? ""];
+  }
+  return ["", "", ""];
+}
+
+function pickSupplierOrderCells(
+  pick: ScopeLineSkuPick | null | undefined,
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
+): [string, string, string] {
+  if (!pick?.skuId) return ["", "", ""];
+  const suppliers = suppliersBySkuId[pick.skuId] ?? [];
+  const row =
+    suppliers.find((s) => s.supplierOption === pick.supplierOption) ??
+    preferredSupplierForSku(suppliers);
+  if (!row) {
+    return [pick.supplier.trim(), "", ""];
+  }
+  return [row.supplier.trim(), row.model.trim(), row.supplierSku.trim()];
+}
+
 function labourCells(row: ProjectAreaObjectPublic): ExportCell[] {
   return WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key }) => row[key] ?? "");
 }
@@ -115,14 +147,16 @@ const HEADER: string[] = [
   "Colour",
   "Product / SKU",
   "SKU ID",
+  "Supplier",
+  "Model",
+  "SKU",
   "Measure",
   "UOM",
   "Unit price",
   "Line total",
   ...LABOUR_HEADERS,
   "Final price",
-  "Notes",
-  "Supplier",
+  "Notes/Actions",
 ];
 
 type RowContext = {
@@ -140,12 +174,12 @@ function primaryExportRow(
   priceLevels: PriceLevelPublic[],
   marginPct: number,
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
-  supplierDiscountByKey: SupplierDiscountByKey,
   options?: { bundled?: boolean },
 ): ExportCell[] {
   const description = options?.bundled
     ? `↳ ${projectLineObjectLabel(row, quoteObjects, catalogSkus)}`
     : projectLineObjectLabel(row, quoteObjects, catalogSkus);
+  const [supplier, model, supplierSku] = supplierOrderCells(row, suppliersBySkuId);
 
   return [
     "Primary",
@@ -161,6 +195,9 @@ function primaryExportRow(
     row.colour?.trim() ?? "",
     lineSkuProduct(row, catalogSkus),
     row.skuId?.trim() ?? "",
+    supplier,
+    model,
+    supplierSku,
     row.custommeasure ?? "",
     row.customuom ?? "",
     row.customumprice ?? "",
@@ -168,7 +205,6 @@ function primaryExportRow(
     ...labourCells(row),
     lineFinalPrice(row, marginPct) ?? "",
     lineNotes(row),
-    resolveScopeLineSupplierLabel(row, suppliersBySkuId, supplierDiscountByKey),
   ];
 }
 
@@ -177,20 +213,14 @@ function partsExportRow(
   part: ReturnType<typeof buildBuildingElementConsumptionRows>[number],
   ctx: RowContext,
   parentProduct: string,
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
 ): ExportCell[] {
   const pick = part.skuPick;
   const discountedUnit =
     part.lineTotalExcGst != null && part.extendedQty > 0
       ? Math.round((part.lineTotalExcGst / part.extendedQty) * 100) / 100
       : pick?.priceExcGst ?? part.retailPriceExcGst ?? "";
-
-  let supplier = "—";
-  if (pick) {
-    supplier = scopeLineSkuPickSupplierLabel(pick);
-    if (part.discountPctApplied != null && part.discountPctApplied > 0) {
-      supplier = `${supplier} (${formatSupplierDiscountPctLabel(part.discountPctApplied)})`;
-    }
-  }
+  const [supplier, model, supplierSku] = pickSupplierOrderCells(pick, suppliersBySkuId);
 
   return [
     "Parts",
@@ -206,6 +236,9 @@ function partsExportRow(
     "",
     part.skuProduct,
     pick?.skuId ?? "",
+    supplier,
+    model,
+    supplierSku,
     part.extendedQty,
     part.lineUom || "",
     discountedUnit,
@@ -213,7 +246,6 @@ function partsExportRow(
     ...WB_WORKBENCH_LABOUR_SILO_HEADERS.map(() => ""),
     "",
     "",
-    supplier,
   ];
 }
 
@@ -368,7 +400,6 @@ export async function downloadProjectWorkbenchXls(
             priceLevels,
             marginPct,
             suppliersBySkuId,
-            supplierDiscountByKey,
           ),
         );
 
@@ -383,7 +414,7 @@ export async function downloadProjectWorkbenchXls(
             supplierDiscountByKey,
           );
           for (const part of partRows) {
-            rows.push(partsExportRow(row, part, ctx, parentProduct));
+            rows.push(partsExportRow(row, part, ctx, parentProduct, suppliersBySkuId));
           }
         }
 
@@ -399,7 +430,6 @@ export async function downloadProjectWorkbenchXls(
               priceLevels,
               marginPct,
               suppliersBySkuId,
-              supplierDiscountByKey,
               { bundled: true },
             ),
           );

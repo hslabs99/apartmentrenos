@@ -1,5 +1,7 @@
 import type { ScopeToolType } from "@/lib/scope-tools";
 import type { SystemScopeType } from "@/lib/system-scope-types";
+import type { InheritMeasureSource } from "@/types/scope-metric";
+import type { ScopeMetricPublic } from "@/types/scope-metric";
 
 export type { ScopeToolType, SystemScopeType };
 
@@ -32,6 +34,21 @@ export type ScopeAnswerPublic = {
   attachedObjectShowAll?: Partial<Record<string, boolean>>;
   /** When true, scope lines for this quote object import with $0 unit and line price. */
   attachedObjectNoCharge?: Partial<Record<string, boolean>>;
+  /**
+   * When true, the answer is disabled in the checklist unless this quote object has
+   * at least one matching SKU at the project/area tier, style, and colour.
+   */
+  attachedObjectForce?: Partial<Record<string, boolean>>;
+  /**
+   * Per attached quote object: inherit measure source (apartment/area m² or scope metric).
+   * Omitted keys inherit from the quote object template.
+   */
+  attachedObjectInheritM2Source?: Partial<Record<string, InheritMeasureSource>>;
+  /**
+   * When inheriting a scope metric: `false` lets checklist users override the default measure.
+   * Omitted or `true` keeps the measure locked to the scope metric (default).
+   */
+  attachedObjectInheritMeasureLocked?: Partial<Record<string, boolean>>;
 };
 
 /** `header` / `footer` = section markers only (no answers); `question` = normal scope with answers. */
@@ -59,6 +76,8 @@ export type ScopePublic = {
   areaNamesDisplay?: string;
   question: string;
   answers: ScopeAnswerPublic[];
+  /** Up to 4 metrics (e.g. Tiled Area m²) shown on checklist when tagged answers are selected. */
+  scopeMetrics?: ScopeMetricPublic[];
   /** When true, this scope is tagged for built-in system rules (see `systemScopeType`). */
   systemScope?: boolean;
   /** Rule set key when `systemScope` is true (e.g. Blinds). */

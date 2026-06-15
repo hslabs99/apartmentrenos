@@ -24,6 +24,8 @@ type Props = {
   inputKey?: string;
   /** Forces readonly hour text to refresh when hours change (e.g. after measure edit). */
   displayKey?: string;
+  /** Typed over lookup import in workbench. */
+  manualOverride?: boolean;
   onHoursChange?: (next: number | null) => void;
 };
 
@@ -38,6 +40,10 @@ function formatMoney(n: number): string {
 
 const wbLabourMoneyClass =
   "text-xs font-normal tabular-nums text-sf-text dark:text-zinc-100";
+const wbLabourMoneyManualClass =
+  "text-xs font-semibold tabular-nums text-red-600 dark:text-red-400";
+const wbLabourInputManualClass =
+  "text-red-600 dark:text-red-400";
 
 function hasPositiveLabourHours(hours: number | null): boolean {
   return hours != null && Number.isFinite(hours) && hours > 0;
@@ -62,6 +68,7 @@ function wbLabourCellTitle(
 type WbLabourSiloValueProps = {
   hours: number | null;
   cost: number | null;
+  manualOverride?: boolean;
   /** @deprecated Use default money styling; only override for exceptional cases. */
   primaryClassName?: string;
 };
@@ -70,9 +77,12 @@ type WbLabourSiloValueProps = {
 export function WbLabourSiloValue({
   hours,
   cost,
+  manualOverride = false,
   primaryClassName,
 }: WbLabourSiloValueProps) {
-  const moneyClass = primaryClassName ?? wbLabourMoneyClass;
+  const moneyClass =
+    primaryClassName ??
+    (manualOverride ? wbLabourMoneyManualClass : wbLabourMoneyClass);
   const showCost =
     hasPositiveLabourHours(hours) && cost != null && Number.isFinite(cost) && cost > 0;
   return (
@@ -95,6 +105,7 @@ export function WbLabourSiloCell({
   inputClassName = "",
   inputKey,
   displayKey,
+  manualOverride = false,
   onHoursChange,
 }: Props) {
   const warn = labourSiloCellWarning(
@@ -109,7 +120,12 @@ export function WbLabourSiloCell({
   const hasHours = hasPositiveLabourHours(hours);
   const showBang =
     warn.duplicateObjectLabour || (warn.missingRate && hasHours);
-  const cellTitle = wbLabourCellTitle(hours, showBang ? warningTitle : undefined);
+  const manualTitle = manualOverride ? "Manually edited labour hours" : undefined;
+  const cellTitle = wbLabourCellTitle(
+    hours,
+    [manualTitle, showBang ? warningTitle : undefined].filter(Boolean).join("\n\n") ||
+      undefined,
+  );
 
   if (editable && onHoursChange) {
     return (
@@ -133,7 +149,8 @@ export function WbLabourSiloCell({
             disabled={disabled}
             defaultValue={hours != null ? String(hours) : ""}
             placeholder="—"
-            className={inputClassName}
+            className={`${inputClassName} ${manualOverride ? wbLabourInputManualClass : ""}`.trim()}
+            title={manualTitle}
             onBlur={(e) => {
               const t = e.target.value.trim();
               const next = t === "" ? null : Number(t);
@@ -143,7 +160,7 @@ export function WbLabourSiloCell({
             }}
           />
         </div>
-        <WbLabourSiloValue hours={hours} cost={cost} />
+        <WbLabourSiloValue hours={hours} cost={cost} manualOverride={manualOverride} />
       </td>
     );
   }
@@ -164,7 +181,11 @@ export function WbLabourSiloCell({
           </span>
         ) : null}
         <span key={displayKey}>
-          <WbLabourSiloValue hours={hours} cost={cost} />
+          <WbLabourSiloValue
+            hours={hours}
+            cost={cost}
+            manualOverride={manualOverride}
+          />
         </span>
       </div>
     </td>

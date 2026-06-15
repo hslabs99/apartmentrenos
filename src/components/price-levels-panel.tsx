@@ -216,16 +216,19 @@ export function PriceLevelsPanel() {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[480px] text-left text-sm md:text-base">
+            <table className="w-max max-w-full table-fixed text-left text-sm md:text-base">
+              <colgroup>
+                <col className="w-[10ch]" />
+                <col className="w-[50ch]" />
+                <col className="w-[50ch]" />
+                <col className="w-[9.5rem]" />
+              </colgroup>
               <thead className="border-b border-sf-border bg-sf-page dark:border-zinc-700 dark:bg-zinc-900">
                 <tr>
-                  <th className="w-px whitespace-nowrap px-2 py-3 text-center text-xs font-semibold md:px-3 md:py-4">
-                    Order
-                  </th>
-                  <th className="px-4 py-3 font-semibold md:px-5 md:py-4">ID</th>
-                  <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Price level</th>
-                  <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Description</th>
-                  <th className="px-4 py-3 text-right font-semibold md:px-5 md:py-4">
+                  <th className="px-1 py-3 font-semibold md:px-1.5 md:py-4">ID</th>
+                  <th className="max-w-[50ch] px-2 py-3 font-semibold md:px-3 md:py-4">Price level</th>
+                  <th className="max-w-[50ch] px-2 py-3 font-semibold md:px-3 md:py-4">Description</th>
+                  <th className="whitespace-nowrap px-1 py-3 text-right font-semibold md:px-1.5 md:py-4">
                     Actions
                   </th>
                 </tr>
@@ -236,33 +239,40 @@ export function PriceLevelsPanel() {
                     key={r.id}
                     className="border-b border-sf-border last:border-0 dark:border-zinc-700/80"
                   >
-                    <td className="px-2 py-2 align-middle md:px-3 md:py-3">
-                      <ReorderArrows
-                        dense
-                        itemLabel={r.pricelevel}
-                        disabledUp={reordering || index === 0}
-                        disabledDown={reordering || index === rows.length - 1}
-                        onUp={() => void movePriceLevel(r.id, "up")}
-                        onDown={() => void movePriceLevel(r.id, "down")}
-                      />
+                    <td className="px-1 py-3 font-mono text-sm tabular-nums md:px-1.5 md:py-3.5">
+                      <span
+                        className="block truncate"
+                        title={numToInput(r.pricelevelid) || undefined}
+                      >
+                        {numToInput(r.pricelevelid)}
+                      </span>
                     </td>
-                    <td className="px-4 py-3 font-mono text-sm md:px-5 md:py-3.5">
-                      {numToInput(r.pricelevelid)}
-                    </td>
-                    <td className="px-4 py-3 font-medium md:px-5 md:py-3.5">
+                    <td className="max-w-[50ch] px-2 py-3 font-medium md:px-3 md:py-3.5">
                       <button
                         type="button"
                         onClick={() => openEdit(r)}
-                        className="text-left text-base font-medium text-blue-700 underline decoration-blue-700/70 underline-offset-2 hover:text-blue-900 dark:text-blue-400 dark:decoration-blue-400/70 dark:hover:text-blue-300"
+                        title={r.pricelevel}
+                        className="block max-w-full truncate text-left text-base font-medium text-blue-700 underline decoration-blue-700/70 underline-offset-2 hover:text-blue-900 dark:text-blue-400 dark:decoration-blue-400/70 dark:hover:text-blue-300"
                       >
                         {r.pricelevel}
                       </button>
                     </td>
-                    <td className="max-w-xs truncate px-4 py-3 text-sf-text-secondary md:px-5 md:py-3.5 dark:text-zinc-300">
-                      {r.description || "—"}
+                    <td
+                      className="max-w-[50ch] px-2 py-3 text-sf-text-secondary md:px-3 md:py-3.5 dark:text-zinc-300"
+                      title={r.description || undefined}
+                    >
+                      <span className="block truncate">{r.description || "—"}</span>
                     </td>
-                    <td className="px-4 py-3 text-right md:px-5 md:py-3.5">
-                      <div className="flex justify-end gap-1.5">
+                    <td className="whitespace-nowrap px-1 py-3 text-right md:px-1.5 md:py-3.5">
+                      <div className="inline-flex items-center justify-end gap-1">
+                        <ReorderArrows
+                          dense
+                          itemLabel={r.pricelevel}
+                          disabledUp={reordering || index === 0}
+                          disabledDown={reordering || index === rows.length - 1}
+                          onUp={() => void movePriceLevel(r.id, "up")}
+                          onDown={() => void movePriceLevel(r.id, "down")}
+                        />
                         <button
                           type="button"
                           onClick={() => openEdit(r)}

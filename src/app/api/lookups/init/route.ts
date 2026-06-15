@@ -2,6 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { LOOKUPS_COLLECTION_META_ID } from "@/lib/firestore/lookups-collection";
+import { ensureNoteTypesLookups } from "@/lib/server/ensure-note-types-lookup";
 
 export const runtime = "nodejs";
 
@@ -18,8 +19,10 @@ export async function POST() {
         kind: "collection_bootstrap",
         createdAt: FieldValue.serverTimestamp(),
       });
+      await ensureNoteTypesLookups(db);
       return NextResponse.json({ created: true });
     }
+    await ensureNoteTypesLookups(db);
     return NextResponse.json({ created: false });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to initialize lookups collection";

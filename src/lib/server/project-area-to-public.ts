@@ -1,6 +1,13 @@
+import { parseScopeMetricValuesFromFirestore } from "@/lib/server/scope-metric-values";
 import type { DocumentData, Timestamp } from "firebase-admin/firestore";
 import { parseScopeAnswersFromFirestore } from "@/lib/server/project-area-scope-answers";
-import type { ProjectAreaPublic } from "@/types/project-area";
+import { readScopeToolBenchSections } from "@/lib/scope-tools";
+import type { ProjectAreaPublic, ProjectAreaStatus } from "@/types/project-area";
+
+function parseAreaStatus(raw: unknown): ProjectAreaStatus | null {
+  if (raw === "completed" || raw === "escalated") return raw;
+  return null;
+}
 
 function tsToIso(t: Timestamp | undefined): string | null {
   if (!t) return null;
@@ -40,12 +47,19 @@ export function projectAreaDocToPublic(id: string, data: DocumentData): ProjectA
     sortOrder: numOrNull(data.sortOrder) ?? null,
     areanotes1: String(data.areanotes1 ?? ""),
     areanotes2: String(data.areanotes2 ?? ""),
+    areaStatus: parseAreaStatus(data.areaStatus),
     aream2: numOrNull(data.aream2),
+    aream2calcsections: readScopeToolBenchSections(data.aream2calcsections) ?? undefined,
+    ceilingheightm: numOrNull(data.ceilingheightm) ?? null,
     areafinish: String(data.areafinish ?? ""),
     pricelevelid: numOrNull(data.pricelevelid) ?? null,
     style: typeof data.style === "string" && data.style.trim() ? data.style.trim() : null,
     colour: typeof data.colour === "string" && data.colour.trim() ? data.colour.trim() : null,
     scopeAnswers: parseScopeAnswersFromFirestore(data.scopeAnswers),
+    scopeMetricValues: (() => {
+      const v = parseScopeMetricValuesFromFirestore(data.scopeMetricValues);
+      return v.length > 0 ? v : undefined;
+    })(),
     extraScopeDocIds: extraScopeDocIdsFromFirestore(data.extraScopeDocIds),
     createdAt: tsToIso(data.createdAt as Timestamp | undefined),
     updatedAt: tsToIso(data.updatedAt as Timestamp | undefined),

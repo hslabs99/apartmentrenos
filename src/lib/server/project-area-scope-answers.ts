@@ -6,7 +6,8 @@ import { isScopesMetaDocument } from "@/lib/firestore/scopes-collection";
 import { readTooltipFromQuoteObjectData } from "@/lib/server/area-object-tooltip";
 import { resolveEffectivePriceLevelId } from "@/lib/server/resolve-effective-price-level";
 import { resolveEffectiveStyleColour } from "@/lib/server/resolve-effective-style-colour";
-import { resolveElevateLevelFromPriceLevelId } from "@/lib/server/resolve-elevate-level-from-price-level";
+import { resolveEffectiveElevateLevel } from "@/lib/server/resolve-effective-elevate-level";
+import { primarySupplierPriceExcGst } from "@/lib/server/materialize-line-sku";
 import {
   resolveAllSkusForQuoteObject,
   resolveSkuForQuoteObject,
@@ -18,27 +19,41 @@ import {
 import {
   firestoreAnswersToPublic,
   firestoreLegacyByPriceLevel,
+  firestoreScopeMetricsToPublic,
   type LegacyScopeAnswerPriceLevel,
 } from "@/lib/server/scope-doc";
+import {
+  parseScopeMetricValuesFromFirestore,
+  pruneScopeMetricValuesForAnswer,
+} from "@/lib/server/scope-metric-values";
+import type { InheritMeasureSource } from "@/types/scope-metric";
+import { isInheritMeasureSource } from "@/lib/scope-metrics";
+import { scopeMetricValuesMap } from "@/lib/inherit-m2-source";
 import {
   customMeasureForNewProjectLine,
   effectiveMeasureForLinePricing,
   numOrNull,
   quoteTemplatePricingForPriceLevel,
+  resolveScopeShowAllLineCustomUom,
 } from "@/lib/server/quote-object-doc";
+import { loadSkuCalcM2Fields } from "@/lib/server/sku-calc-m2-fields";
 import { loadProjectDimensionsByProjectId } from "@/lib/server/project-dimensions";
 import {
   applyProjectLineLabourHours,
   labourHoursToFirestore,
+  loadAllContractLabourRates,
   loadAllObjectLabourRates,
 } from "@/lib/server/labour-hours";
+import { labourLineCatalogFields } from "@/lib/server/labour-checklist-line";
 import { emptyLabourHours } from "@/lib/labour-silo";
 import {
   BLINDS_DEFAULT_MEASURE,
   BLINDS_DEFAULT_UOM,
 } from "@/lib/blinds/blinds-defaults";
 import { isSystemScopeObjectId, systemScopeObjectId } from "@/lib/system-scope-types";
+import { matchesScopeInstance } from "@/lib/scope-instance";
 import type { ProjectAreaScopeAnswerPublic } from "@/types/project-area";
+import type { QuoteObjectInheritM2Source } from "@/types/quote-object";
 
 export function parseScopeAnswersFromFirestore(raw: unknown): ProjectAreaScopeAnswerPublic[] {
   if (!Array.isArray(raw)) return [];
@@ -48,8 +63,17 @@ export function parseScopeAnswersFromFirestore(raw: unknown): ProjectAreaScopeAn
     const rec = item as Record<string, unknown>;
     const scopeDocId = String(rec.scopeDocId ?? "").trim();
     const answerid = String(rec.answerid ?? "").trim();
+    const scopeInstanceIdRaw = rec.scopeInstanceId;
+    const scopeInstanceId =
+      typeof scopeInstanceIdRaw === "string" && scopeInstanceIdRaw.trim()
+        ? scopeInstanceIdRaw.trim()
+        : null;
     if (!scopeDocId || !answerid) continue;
-    out.push({ scopeDocId, answerid });
+    out.push({
+      scopeDocId,
+      answerid,
+      ...(scopeInstanceId ? { scopeInstanceId } : {}),
+    });
   }
   return out;
 }
@@ -77,7 +101,7 @@ async function loadQuoteByObjectIdMap(
   return quoteByObjectId;
 }
 
-/** Legacy: only the row matching effective PL — no fallback. */
+/** Legacy: only the row matching effective PL; no fallback. */
 function pickExactPriceLevelRow(
   byPriceLevel: LegacyScopeAnswerPriceLevel[],
   effectivePl: number | null,
@@ -184,6 +208,7 @@ async function deleteScopeLinesForScope(
   projectid: number,
   projectAreaDocId: string,
   scopeDocId: string,
+  scopeInstanceId?: string | null,
 ): Promise<number> {
   const snap = await db
     .collection("projectareaobjects")
@@ -192,9 +217,22 @@ async function deleteScopeLinesForScope(
     .get();
   let removed = 0;
   const BATCH_MAX = 400;
+  const scopeLineIds = new Set<string>();
+  for (const d of snap.docs) {
+    const x = d.data();
+    if (
+      x.linesource === "scope" &&
+      String(x.scopeDocId ?? "") === scopeDocId &&
+      matchesScopeInstance(x.scopeInstanceId as string | null | undefined, scopeInstanceId)
+    ) {
+      scopeLineIds.add(d.id);
+    }
+  }
   const toDelete = snap.docs.filter((d) => {
     const x = d.data();
-    return x.linesource === "scope" && String(x.scopeDocId ?? "") === scopeDocId;
+    if (scopeLineIds.has(d.id)) return true;
+    const parentId = String(x.bundledFromLineId ?? "").trim();
+    return x.linesource === "bundled" && parentId && scopeLineIds.has(parentId);
   });
   for (let i = 0; i < toDelete.length; i += BATCH_MAX) {
     const slice = toDelete.slice(i, i + BATCH_MAX);
@@ -225,7 +263,7 @@ export type ScopeAnswerDiagnostics = {
   noLinesReason?: ScopeAnswerNoLinesReason;
   attachedCategories?: string[];
   attachedObjectNames?: string[];
-  /** Legacy price-level rows on the answer (pre–category scopes). */
+  /** Legacy price-level rows on the answer (pre-category scopes). */
   answerTierIds?: number[];
 };
 
@@ -245,6 +283,7 @@ export async function applyScopeAnswerToProjectArea(
   projectAreaDocId: string,
   scopeDocId: string,
   answerid: string | null,
+  scopeInstanceId?: string | null,
 ): Promise<ApplyScopeAnswerResult> {
   if (isProjectAreasMetaDocument(projectAreaDocId)) {
     throw new Error("Invalid project area");
@@ -295,6 +334,8 @@ export async function applyScopeAnswerToProjectArea(
 
   let current = parseScopeAnswersFromFirestore(paData.scopeAnswers);
   const answers = firestoreAnswersToPublic(scopeData.answers);
+  const scopeMetrics = firestoreScopeMetricsToPublic(scopeData.scopeMetrics);
+  let scopeMetricValues = parseScopeMetricValuesFromFirestore(paData.scopeMetricValues);
 
   if (answerid === null || answerid === "") {
     const linesRemoved = await deleteScopeLinesForScope(
@@ -302,10 +343,25 @@ export async function applyScopeAnswerToProjectArea(
       projectid,
       projectAreaDocId,
       scopeDocId,
+      scopeInstanceId,
     );
-    current = current.filter((e) => e.scopeDocId !== scopeDocId);
+    current = current.filter(
+      (e) =>
+        !(
+          e.scopeDocId === scopeDocId &&
+          matchesScopeInstance(e.scopeInstanceId, scopeInstanceId)
+        ),
+    );
+    scopeMetricValues = pruneScopeMetricValuesForAnswer(
+      scopeMetricValues,
+      scopeDocId,
+      scopeInstanceId,
+      scopeMetrics,
+      null,
+    );
     await paRef.update({
       scopeAnswers: current,
+      scopeMetricValues,
       updatedAt: FieldValue.serverTimestamp(),
     });
     const clearedPl = await resolveEffectivePriceLevelId(db, projectAreaDocId, projectid);
@@ -330,15 +386,34 @@ export async function applyScopeAnswerToProjectArea(
     projectid,
     projectAreaDocId,
     scopeDocId,
+    scopeInstanceId,
   );
 
-  current = current.filter((e) => e.scopeDocId !== scopeDocId);
-  current.push({ scopeDocId, answerid });
+  current = current.filter(
+    (e) =>
+      !(
+        e.scopeDocId === scopeDocId &&
+        matchesScopeInstance(e.scopeInstanceId, scopeInstanceId)
+      ),
+  );
+  const nextAnswer: ProjectAreaScopeAnswerPublic = { scopeDocId, answerid };
+  const inst = scopeInstanceId?.trim();
+  if (inst) nextAnswer.scopeInstanceId = inst;
+  current.push(nextAnswer);
+  scopeMetricValues = pruneScopeMetricValuesForAnswer(
+    scopeMetricValues,
+    scopeDocId,
+    scopeInstanceId,
+    scopeMetrics,
+    answerid,
+  );
   await paRef.update({
     scopeAnswers: current,
+    scopeMetricValues,
     updatedAt: FieldValue.serverTimestamp(),
   });
 
+  const metricMap = scopeMetricValuesMap(scopeMetricValues);
   const effectivePl = await resolveEffectivePriceLevelId(db, projectAreaDocId, projectid);
   const attachedQuoteObjectIds = answer.attachedQuoteObjectIds ?? [];
   const attachedObjectNames = answer.attachedObjectNames ?? [];
@@ -352,9 +427,11 @@ export async function applyScopeAnswerToProjectArea(
 
   type ScopeLineCreateSpec = {
     objectid: number;
+    quoteObjectDocId?: string;
+    quoteData?: DocumentData;
     notes1: string;
     notes2: string;
-    sku: { skuId: string; product: string } | null;
+    sku: { skuId: string; product: string; uom?: string } | null;
     scopeShowAllSku: boolean;
     scopeNoCharge: boolean;
   };
@@ -362,11 +439,12 @@ export async function applyScopeAnswerToProjectArea(
   let lineSpecs: ScopeLineCreateSpec[] = [];
   let noLinesReason: ScopeAnswerNoLinesReason | undefined;
   let answerTierIds: number[] | undefined;
+  const scopeInheritByObjectId = new Map<number, InheritMeasureSource>();
+  const scopeInheritMeasureLockedByObjectId = new Map<number, boolean>();
 
   const skuFilters = async () => {
-    const effectivePl = await resolveEffectivePriceLevelId(db, projectAreaDocId, projectid);
     const { style, colour } = await resolveEffectiveStyleColour(db, projectAreaDocId, projectid);
-    const elevateLevel = await resolveElevateLevelFromPriceLevelId(db, effectivePl);
+    const elevateLevel = await resolveEffectiveElevateLevel(db, projectAreaDocId, projectid);
     return { elevateLevel, style, colour };
   };
 
@@ -374,6 +452,8 @@ export async function applyScopeAnswerToProjectArea(
     const filters = await skuFilters();
     const attachedShowAll = answer.attachedObjectShowAll ?? {};
     const attachedNoCharge = answer.attachedObjectNoCharge ?? {};
+    const attachedInheritM2 = answer.attachedObjectInheritM2Source ?? {};
+    const attachedInheritMeasureLocked = answer.attachedObjectInheritMeasureLocked ?? {};
     const processedObjectIds = new Set<number>();
 
     for (const docId of catalogQuoteObjectIds) {
@@ -393,8 +473,18 @@ export async function applyScopeAnswerToProjectArea(
       if (objectid === undefined || processedObjectIds.has(objectid)) continue;
       processedObjectIds.add(objectid);
 
+      const scopeInherit = attachedInheritM2[trimmed];
+      if (scopeInherit !== undefined && isInheritMeasureSource(scopeInherit)) {
+        scopeInheritByObjectId.set(objectid, scopeInherit);
+      }
+      if (attachedInheritMeasureLocked[trimmed] === false) {
+        scopeInheritMeasureLockedByObjectId.set(objectid, false);
+      }
+
       const seed = {
         objectid,
+        quoteObjectDocId: trimmed,
+        quoteData: data,
         notes1: String(data.notes1 ?? ""),
         notes2: String(data.notes2 ?? ""),
       };
@@ -410,7 +500,7 @@ export async function applyScopeAnswerToProjectArea(
           for (const sku of skus) {
             lineSpecs.push({
               ...seed,
-              sku: { skuId: sku.skuId, product: sku.product },
+              sku: { skuId: sku.skuId, product: sku.product, uom: sku.uom },
               scopeShowAllSku: true,
               ...lineFlags,
             });
@@ -516,10 +606,11 @@ export async function applyScopeAnswerToProjectArea(
     projectAreaDocId,
     projectid,
   );
-  const elevateLevel = await resolveElevateLevelFromPriceLevelId(db, effectivePl);
+  const elevateLevel = await resolveEffectiveElevateLevel(db, projectAreaDocId, projectid);
   const areaM2 = numOrNull(paData.aream2);
   const projDims = await loadProjectDimensionsByProjectId(db, projectid);
   const objectLabourRates = await loadAllObjectLabourRates(db);
+  const contractLabourRates = await loadAllContractLabourRates(db);
   let linesAdded = 0;
   const BATCH_MAX = 400;
   if (lineSpecs.length > 0) {
@@ -527,7 +618,7 @@ export async function applyScopeAnswerToProjectArea(
     const slice = lineSpecs.slice(i, i + BATCH_MAX);
     const batch = db.batch();
     for (const pl of slice) {
-      const q = quoteByObjectId.get(pl.objectid);
+      const q = pl.quoteData ?? quoteByObjectId.get(pl.objectid);
       const pricing = quoteTemplatePricingForPriceLevel(q, effectivePl);
       const measureCtx = {
         areaM2,
@@ -535,27 +626,19 @@ export async function applyScopeAnswerToProjectArea(
         apartmentHardM2: projDims.apartmentHardM2,
         apartmentSoftM2: projDims.apartmentSoftM2,
       };
-      const custommeasure = customMeasureForNewProjectLine(q, pricing.measurement, measureCtx);
-      const measureForPricing = effectiveMeasureForLinePricing(
-        q,
-        pricing.measurement,
-        measureCtx,
-        custommeasure,
-      );
-      let customumprice = pricing.customumprice;
-      let totalprice: number | null;
-      if (pl.scopeNoCharge) {
-        customumprice = 0;
-        totalprice = 0;
-      } else if (measureForPricing != null && customumprice != null) {
-        totalprice = measureForPricing * customumprice;
-      } else {
-        totalprice = pricing.totalprice;
-      }
+      const scopeInheritMeasureSource = scopeInheritByObjectId.get(pl.objectid);
+      const scopeInheritMeasureLocked = scopeInheritMeasureLockedByObjectId.get(pl.objectid);
       const tooltip = q ? readTooltipFromQuoteObjectData(q) : "";
       const objectName = q ? String(q.objectname ?? "").trim() : "";
-      let resolvedSku = pl.sku;
-      if (!resolvedSku && !pl.scopeShowAllSku) {
+      const labourCatalog = labourLineCatalogFields(q, contractLabourRates, {
+        scopeNoCharge: pl.scopeNoCharge,
+      });
+      let resolvedSku: { skuId: string | null; product: string | null } | null = pl.sku
+        ? { skuId: pl.sku.skuId, product: pl.sku.product }
+        : null;
+      if (labourCatalog) {
+        resolvedSku = { skuId: null, product: labourCatalog.skuProduct };
+      } else if (!resolvedSku && !pl.scopeShowAllSku) {
         const hit = await resolveSkuForQuoteObject(db, q, {
           elevateLevel,
           style: effectiveStyle,
@@ -563,13 +646,72 @@ export async function applyScopeAnswerToProjectArea(
         });
         resolvedSku = hit ? { skuId: hit.skuId, product: hit.product } : null;
       }
+      const skuCalcM2 = await loadSkuCalcM2Fields(db, resolvedSku?.skuId);
+      const custommeasure = customMeasureForNewProjectLine(
+        q,
+        pricing.measurement,
+        measureCtx,
+        undefined,
+        scopeInheritMeasureSource,
+        metricMap,
+        scopeMetrics,
+        skuCalcM2,
+        scopeInheritMeasureLocked,
+      );
+      const measureForPricing = effectiveMeasureForLinePricing(
+        q,
+        pricing.measurement,
+        measureCtx,
+        custommeasure,
+        scopeInheritMeasureSource,
+        metricMap,
+        scopeMetrics,
+        skuCalcM2,
+        scopeInheritMeasureLocked,
+      );
+      let customumprice = pricing.customumprice;
+      let customuom =
+        pl.scopeShowAllSku && pl.sku?.uom?.trim()
+          ? resolveScopeShowAllLineCustomUom(pl.sku.uom)
+          : pricing.customuom;
+      let totalprice: number | null;
+      if (pl.scopeNoCharge) {
+        customumprice = 0;
+        totalprice = 0;
+      } else if (labourCatalog) {
+        if (labourCatalog.customumprice != null) customumprice = labourCatalog.customumprice;
+        if (labourCatalog.customuom) customuom = labourCatalog.customuom;
+        if (measureForPricing != null && customumprice != null) {
+          totalprice = measureForPricing * customumprice;
+        } else {
+          totalprice = null;
+        }
+      } else if (measureForPricing != null && customumprice != null) {
+        totalprice = measureForPricing * customumprice;
+      } else {
+        totalprice = pricing.totalprice;
+      }
+      if (
+        resolvedSku?.skuId &&
+        customumprice == null &&
+        !pl.scopeNoCharge &&
+        !labourCatalog
+      ) {
+        const supplierPrice = await primarySupplierPriceExcGst(db, resolvedSku.skuId);
+        if (supplierPrice != null) {
+          customumprice = supplierPrice;
+          if (measureForPricing != null) {
+            totalprice = measureForPricing * supplierPrice;
+          }
+        }
+      }
       const { hours: labourHours } = applyProjectLineLabourHours({
         objectName,
         skuProduct: resolvedSku?.product ?? null,
         quoteTemplate: q,
         objectLabourRates,
         custommeasure: measureForPricing,
-        lineUom: pricing.customuom,
+        lineUom: customuom,
       });
       batch.set(db.collection("projectareaobjects").doc(), {
         projectid,
@@ -579,6 +721,7 @@ export async function applyScopeAnswerToProjectArea(
         areaid,
         linesource: "scope",
         scopeDocId,
+        ...(inst ? { scopeInstanceId: inst } : {}),
         answerid,
         scopeid: scopeNumericId,
         skuId: resolvedSku?.skuId ?? null,
@@ -587,7 +730,7 @@ export async function applyScopeAnswerToProjectArea(
         scopeNoCharge: pl.scopeNoCharge ? true : null,
         dateadded: FieldValue.serverTimestamp(),
         custommeasure,
-        customuom: pricing.customuom,
+        customuom,
         customumprice,
         totalprice,
         notes1: pl.notes1,
@@ -613,6 +756,7 @@ export async function applyScopeAnswerToProjectArea(
       linesource: "scope",
       systemObjectKind: "blinds",
       scopeDocId,
+      ...(inst ? { scopeInstanceId: inst } : {}),
       answerid,
       scopeid: scopeNumericId,
       skuId: null,
@@ -649,4 +793,95 @@ export async function applyScopeAnswerToProjectArea(
       answerTierIds,
     },
   };
+}
+
+async function deleteAllScopeLinesForScopeDoc(
+  db: Firestore,
+  projectid: number,
+  projectAreaDocId: string,
+  scopeDocId: string,
+): Promise<number> {
+  const snap = await db
+    .collection("projectareaobjects")
+    .where("projectid", "==", projectid)
+    .where("projectAreaDocId", "==", projectAreaDocId)
+    .get();
+  let removed = 0;
+  const BATCH_MAX = 400;
+  const scopeLineIds = new Set<string>();
+  for (const d of snap.docs) {
+    const x = d.data();
+    if (x.linesource === "scope" && String(x.scopeDocId ?? "") === scopeDocId) {
+      scopeLineIds.add(d.id);
+    }
+  }
+  const toDelete = snap.docs.filter((d) => {
+    const x = d.data();
+    if (scopeLineIds.has(d.id)) return true;
+    const parentId = String(x.bundledFromLineId ?? "").trim();
+    return x.linesource === "bundled" && parentId && scopeLineIds.has(parentId);
+  });
+  for (let i = 0; i < toDelete.length; i += BATCH_MAX) {
+    const slice = toDelete.slice(i, i + BATCH_MAX);
+    const batch = db.batch();
+    for (const d of slice) {
+      batch.delete(d.ref);
+      removed += 1;
+    }
+    await batch.commit();
+  }
+  return removed;
+}
+
+/** Remove stale scope question data from a project area (no template-tag check). */
+export async function purgeScopeQuestionFromProjectArea(
+  db: Firestore,
+  projectAreaDocId: string,
+  scopeDocId: string,
+): Promise<{ linesRemoved: number; scopeAnswers: ProjectAreaScopeAnswerPublic[] }> {
+  if (isProjectAreasMetaDocument(projectAreaDocId)) {
+    throw new Error("Invalid project area");
+  }
+  const docId = scopeDocId.trim();
+  if (!docId || isScopesMetaDocument(docId)) {
+    throw new Error("Invalid scope");
+  }
+
+  const paRef = db.collection("projectareas").doc(projectAreaDocId);
+  const paSnap = await paRef.get();
+  if (!paSnap.exists) throw new Error("Project area not found");
+  const paData = paSnap.data() as DocumentData;
+  const projectid = Number(paData.projectid);
+  if (!Number.isInteger(projectid)) throw new Error("Invalid project area data");
+
+  const linesRemoved = await deleteAllScopeLinesForScopeDoc(
+    db,
+    projectid,
+    projectAreaDocId,
+    docId,
+  );
+
+  let current = parseScopeAnswersFromFirestore(paData.scopeAnswers);
+  current = current.filter((e) => e.scopeDocId !== docId);
+
+  let scopeMetricValues = parseScopeMetricValuesFromFirestore(paData.scopeMetricValues);
+  scopeMetricValues = scopeMetricValues.filter((v) => v.scopeDocId !== docId);
+
+  const extraRaw = paData.extraScopeDocIds;
+  let extraUpdate: string[] | ReturnType<typeof FieldValue.delete> | undefined;
+  if (Array.isArray(extraRaw) && extraRaw.some((x) => x === docId)) {
+    const nextExtra = extraRaw.filter((x) => x !== docId);
+    extraUpdate = nextExtra.length > 0 ? nextExtra : FieldValue.delete();
+  }
+
+  const update: Record<string, unknown> = {
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  update.scopeAnswers = current.length > 0 ? current : FieldValue.delete();
+  update.scopeMetricValues =
+    scopeMetricValues.length > 0 ? scopeMetricValues : FieldValue.delete();
+  if (extraUpdate !== undefined) update.extraScopeDocIds = extraUpdate;
+
+  await paRef.update(update);
+  return { linesRemoved, scopeAnswers: current };
 }

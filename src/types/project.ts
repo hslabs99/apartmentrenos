@@ -30,7 +30,7 @@ export type ProjectPublic = {
   projectnotes: string;
   quotedby: string;
   quotedon?: string | null;
-  /** Default Setup → Price Levels tier for new areas/lines unless overridden per area. */
+  /** Default System → Price Levels tier for new areas/lines unless overridden per area. */
   defaultpricelevelid?: number | null;
   /** Default Style for areas/lines unless overridden per area/line. Empty = not set. */
   defaultstyle?: string;

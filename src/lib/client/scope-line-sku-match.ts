@@ -10,6 +10,8 @@ import {
 import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
 import { cascadeLevelFromPriceLevel } from "@/lib/cascades/cascade-level-from-price-level";
 import { filterDataSkusWithCascadeFallback } from "@/lib/sku/match-data-sku-filters";
+import type { ColourLookupIndex } from "@/lib/sku/colour-lookup-index";
+import { normalizeSkuPart } from "@/lib/sku/normalize-sku-part";
 
 import {
 
@@ -91,6 +93,98 @@ export function effectiveElevateLevelForLine(
 
 
 
+export type AppendSkuMatchContext = {
+  /** Parent line category (e.g. Bathroom). */
+  parentCategory?: string;
+  /** Append spec product name — binds to `data_skus.product` for that slot. */
+  appendProductSpec: string;
+};
+
+export type ScopeLineSkuMatchOptions = {
+  colourLookupIndex?: ColourLookupIndex | null;
+  /** Bundled append child: union spec-bound SKUs (style-open) with type cascade matches. */
+  appendMatch?: AppendSkuMatchContext;
+};
+
+function mergeSkuMatchLists(...lists: DataSkuPublic[][]): DataSkuPublic[] {
+  const seen = new Set<string>();
+  const merged: DataSkuPublic[] = [];
+  for (const list of lists) {
+    for (const sku of list) {
+      if (seen.has(sku.skuId)) continue;
+      seen.add(sku.skuId);
+      merged.push(sku);
+    }
+  }
+  merged.sort((a, b) => a.skuId.localeCompare(b.skuId, undefined, { sensitivity: "base" }));
+  return merged;
+}
+
+function queryCatalogSkus(
+  catalogSkus: DataSkuPublic[],
+  query: {
+    category: string;
+    productType: string;
+    elevateLevel: string;
+    style: string;
+    colour: string;
+    product?: string;
+  },
+  colourLookupIndex: ColourLookupIndex | null,
+): DataSkuPublic[] {
+  const currentOnly = catalogSkus.filter((s) => s.isCurrent !== false);
+  return filterDataSkusWithCascadeFallback(
+    currentOnly,
+    {
+      category: query.category,
+      productType: query.productType,
+      product: query.product,
+      elevateLevel: query.elevateLevel,
+      style: query.style,
+      colour: query.colour,
+    },
+    { includeAllDimensionSkuRows: true, colourLookupIndex },
+  );
+}
+
+/** Append spec product only (style-open) — used to auto-select bundled append children. */
+export function matchingSkusForAppendSpecOnly(
+  catalogSkus: DataSkuPublic[],
+  quoteObject: QuoteObjectPublic | undefined,
+  filters: { elevateLevel: string; style: string; colour: string },
+  append: AppendSkuMatchContext,
+  options?: Pick<ScopeLineSkuMatchOptions, "colourLookupIndex">,
+): DataSkuPublic[] {
+  const category = append.parentCategory?.trim() || quoteObject?.category?.trim() || "";
+  const productType = quoteObject?.objectname?.trim() ?? "";
+  const appendSpec = append.appendProductSpec.trim();
+  if (!category || !productType || !appendSpec) return [];
+
+  const matches = queryCatalogSkus(
+    catalogSkus,
+    {
+      category,
+      productType,
+      product: appendSpec,
+      elevateLevel: filters.elevateLevel,
+      style: "",
+      colour: filters.colour,
+    },
+    options?.colourLookupIndex ?? null,
+  );
+  matches.sort((a, b) => a.skuId.localeCompare(b.skuId, undefined, { sensitivity: "base" }));
+  return matches;
+}
+
+export function skuProductMatchesAppendSpec(
+  sku: DataSkuPublic,
+  appendProductSpec: string,
+): boolean {
+  const spec = appendProductSpec.trim();
+  if (!spec) return false;
+  return normalizeSkuPart(sku.product) === normalizeSkuPart(spec);
+}
+
 export function matchingSkusForScopeLine(
 
   catalogSkus: DataSkuPublic[],
@@ -99,20 +193,44 @@ export function matchingSkusForScopeLine(
 
   filters: { elevateLevel: string; style: string; colour: string },
 
+  options?: ScopeLineSkuMatchOptions,
+
 ): DataSkuPublic[] {
 
-  const category = quoteObject?.category?.trim() ?? "";
+  const category =
+    options?.appendMatch?.parentCategory?.trim() || quoteObject?.category?.trim() || "";
 
   const productType = quoteObject?.objectname?.trim() ?? "";
 
   if (!category || !productType) return [];
 
+  const colourLookupIndex = options?.colourLookupIndex ?? null;
+  const appendSpec = options?.appendMatch?.appendProductSpec?.trim() ?? "";
 
+  if (appendSpec) {
+    const specMatches = matchingSkusForAppendSpecOnly(
+      catalogSkus,
+      quoteObject,
+      filters,
+      { parentCategory: category, appendProductSpec: appendSpec },
+      { colourLookupIndex },
+    );
+    const typeMatches = queryCatalogSkus(
+      catalogSkus,
+      {
+        category,
+        productType,
+        elevateLevel: filters.elevateLevel,
+        style: filters.style,
+        colour: filters.colour,
+      },
+      colourLookupIndex,
+    );
+    return mergeSkuMatchLists(specMatches, typeMatches);
+  }
 
-  const currentOnly = catalogSkus.filter((s) => s.isCurrent !== false);
-
-  const matches = filterDataSkusWithCascadeFallback(
-    currentOnly,
+  return queryCatalogSkus(
+    catalogSkus,
     {
       category,
       productType,
@@ -120,12 +238,8 @@ export function matchingSkusForScopeLine(
       style: filters.style,
       colour: filters.colour,
     },
-    { includeAllDimensionSkuRows: true },
+    colourLookupIndex,
   );
-
-  matches.sort((a, b) => a.skuId.localeCompare(b.skuId, undefined, { sensitivity: "base" }));
-
-  return matches;
 
 }
 
@@ -162,14 +276,29 @@ export type ScopeLineSkuPick = {
 
 /** True when the line already reflects this SKU pick (avoids auto-apply loops). */
 export function scopeLineMatchesSkuPick(
-  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption" | "customumprice">,
+  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption" | "customumprice" | "totalprice">,
   pick: ScopeLineSkuPick,
 ): boolean {
   if ((line.skuId ?? "").trim() !== pick.skuId) return false;
   if (line.supplierOption !== pick.supplierOption) return false;
+  if (line.totalprice == null) return false;
   if (pick.priceExcGst == null) return true;
   if (line.customumprice == null) return false;
-  return Math.abs(line.customumprice - pick.priceExcGst) < 1e-6;
+  if (Math.abs(line.customumprice - pick.priceExcGst) >= 1e-6) return false;
+  return true;
+}
+
+/** Fill missing pick unit price from supplier rows or the line's stored price. */
+export function scopeLineSkuPickWithResolvedPrice(
+  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption" | "customumprice">,
+  pick: ScopeLineSkuPick,
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
+  supplierDiscountByKey: SupplierDiscountByKey = new Map(),
+): ScopeLineSkuPick {
+  if (pick.priceExcGst != null) return pick;
+  const price = resolveScopeLineSkuUnitPriceExcGst(line, suppliersBySkuId, supplierDiscountByKey);
+  if (price == null) return pick;
+  return { ...pick, priceExcGst: price };
 }
 
 
@@ -287,40 +416,61 @@ export function resolveScopeLineSupplier(
 
 /** Workbench Supplier column label (supplier name + priority). */
 export function resolveScopeLineSupplierLabel(
-  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption">,
+  line: Pick<
+    ProjectAreaObjectPublic,
+    "skuId" | "supplierOption" | "manualSupplier" | "manualSupplierSku"
+  >,
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
   supplierDiscountByKey: SupplierDiscountByKey = new Map(),
 ): string {
   const row = resolveScopeLineSupplier(line, suppliersBySkuId);
-  if (!row) return "—";
-  const name = row.supplier.trim();
-  const base = !name ? `P${row.supplierOption}` : name;
-  const pct = defaultSupplierDiscountPct(row.supplier, supplierDiscountByKey);
-  const pctLabel = formatSupplierDiscountPctLabel(pct);
-  return pctLabel ? `${base} (${pctLabel})` : base;
+  if (row) {
+    const name = row.supplier.trim();
+    const base = !name ? `P${row.supplierOption}` : name;
+    const pct = defaultSupplierDiscountPct(row.supplier, supplierDiscountByKey);
+    const pctLabel = formatSupplierDiscountPctLabel(pct);
+    return pctLabel ? `${base} (${pctLabel})` : base;
+  }
+  const manual = line.manualSupplier?.trim();
+  if (manual) return manual;
+  return "—";
 }
 
 export function resolveScopeLineSupplierTitle(
-  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption">,
+  line: Pick<
+    ProjectAreaObjectPublic,
+    "skuId" | "supplierOption" | "manualSupplier" | "manualSupplierSku"
+  >,
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
   supplierDiscountByKey: SupplierDiscountByKey = new Map(),
 ): string | undefined {
   const row = resolveScopeLineSupplier(line, suppliersBySkuId);
-  if (!row) return undefined;
-  const parts = [`Priority ${row.supplierOption}`];
-  if (row.supplier.trim()) parts.push(row.supplier.trim());
-  const pct = defaultSupplierDiscountPct(row.supplier, supplierDiscountByKey);
-  if (pct > 0) {
-    parts.push(
-      `Discount ${formatSupplierDiscountPctLabel(pct)} applied to retail ex-GST`,
-    );
-    if (row.priceExcGst != null) {
-      parts.push(`Retail: $${row.priceExcGst.toFixed(2)}`);
+  if (row) {
+    const parts = [`Priority ${row.supplierOption}`];
+    if (row.supplier.trim()) parts.push(row.supplier.trim());
+    const pct = defaultSupplierDiscountPct(row.supplier, supplierDiscountByKey);
+    if (pct > 0) {
+      parts.push(
+        `Discount ${formatSupplierDiscountPctLabel(pct)} applied to retail ex-GST`,
+      );
+      if (row.priceExcGst != null) {
+        parts.push(`Retail: $${row.priceExcGst.toFixed(2)}`);
+      }
     }
+    if (row.supplierSku.trim()) parts.push(`Code: ${row.supplierSku.trim()}`);
+    const override = line.manualSupplierSku?.trim();
+    if (override && override !== row.supplierSku.trim()) {
+      parts.push(`Code override: ${override}`);
+    }
+    if (row.model.trim()) parts.push(`Model: ${row.model.trim()}`);
+    return parts.join(" · ");
   }
-  if (row.supplierSku.trim()) parts.push(`Code: ${row.supplierSku.trim()}`);
-  if (row.model.trim()) parts.push(`Model: ${row.model.trim()}`);
-  return parts.join(" · ");
+  const manual = line.manualSupplier?.trim();
+  if (manual) {
+    const code = line.manualSupplierSku?.trim();
+    return code ? `${manual} · Code: ${code}` : manual;
+  }
+  return undefined;
 }
 
 function pickFromSupplier(
@@ -340,6 +490,38 @@ function pickFromSupplier(
     priceExcGst,
     discountPctApplied,
   };
+}
+
+/** Match `data_skus.product` (case-insensitive) and return the first current catalog row. */
+export function matchCatalogSkuByProductName(
+  productName: string,
+  catalogSkus: DataSkuPublic[],
+): DataSkuPublic | null {
+  const key = productName.trim().toLowerCase();
+  if (!key) return null;
+
+  const matches = catalogSkus
+    .filter((s) => s.isCurrent !== false && (s.product?.trim().toLowerCase() ?? "") === key)
+    .sort((a, b) => a.skuId.localeCompare(b.skuId, undefined, { sensitivity: "base" }));
+
+  return matches[0] ?? null;
+}
+
+/** Supplier row on a catalog SKU matched by supplier name (case-insensitive). */
+export function findSupplierRowByName(
+  skuId: string,
+  supplierName: string,
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
+): DataSkuSupplierPublic | null {
+  const skuKey = skuId.trim();
+  const supplierKey = supplierName.trim().toLowerCase();
+  if (!skuKey || !supplierKey) return null;
+
+  const rows = (suppliersBySkuId[skuKey] ?? []).filter(
+    (s) => s.supplier.trim().toLowerCase() === supplierKey,
+  );
+  if (!rows.length) return null;
+  return preferredSupplierForSku(rows) ?? rows[0];
 }
 
 /** Match `data_skus.product` (case-insensitive) and return priority-1 supplier pick. */
@@ -413,7 +595,18 @@ export function buildScopeLineSkuPicks(
 
     } else {
       const sup = preferredSupplierForSku(suppliers);
-      if (sup) picks.push(pickFromSupplier(sku, sup, supplierDiscountByKey));
+      if (sup) {
+        picks.push(pickFromSupplier(sku, sup, supplierDiscountByKey));
+      } else {
+        picks.push({
+          skuId: sku.skuId,
+          product: sku.product?.trim() ?? "",
+          supplierOption: PREFERRED_SUPPLIER_OPTION,
+          supplier: "",
+          priceExcGst: null,
+          discountPctApplied: null,
+        });
+      }
     }
 
   }

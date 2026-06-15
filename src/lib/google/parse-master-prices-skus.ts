@@ -1,4 +1,10 @@
 import { buildSkuImportFromSheetRows } from "@/lib/google/build-sku-import-from-sheet";
+import {
+  normalizeSkuSheetHeaderLabel,
+  resolveSkuSheetHeaderField,
+  SKU_APPEND_FIELD_KEYS,
+  type SkuSheetFieldKey,
+} from "@/lib/google/resolve-sku-sheet-header-field";
 import { normalizeSupplierOption } from "@/lib/sku/supplier-option";
 import { normalizeProductKeyPart } from "@/lib/sku/product-key";
 import { MASTER_PRICES_SKU_TAB_TITLE } from "@/lib/google/master-prices-spreadsheet";
@@ -19,69 +25,7 @@ const HEADER_SCAN_MAX_ROWS = 25;
 const MAX_SKIPPED_SAMPLES = 150;
 const MAX_CUSTOM_ELEVATE_SAMPLES_STORED = 500;
 
-type SheetFieldKey = keyof Omit<ParsedSheetRow, "sheetRowNumber" | "productKeySourceRowNumber">;
-
-const HEADER_ALIASES: Record<string, SheetFieldKey> = {
-  category: "category",
-  "product type": "productType",
-  product: "product",
-  specification: "product",
-  description: "product",
-  "product description": "product",
-  "product name": "product",
-  "elevate level": "elevateLevel",
-  style: "style",
-  "colour options": "colourOptions",
-  "color options": "colourOptions",
-  priority: "supplierOption",
-  supplier: "supplier",
-  model: "model",
-  sku: "supplierSku",
-  link: "link",
-  $: "priceIncGst",
-  "price inc gst": "priceIncGst",
-  "price (inc gst)": "priceIncGst",
-  "$ exc gst": "priceExcGst",
-  "price exc gst": "priceExcGst",
-  "price (exc gst)": "priceExcGst",
-  uom: "uom",
-  apend1type: "append1Type",
-  append1type: "append1Type",
-  "apend1 type": "append1Type",
-  "append1 type": "append1Type",
-  apend1spec: "append1Spec",
-  append1spec: "append1Spec",
-  "apend1 spec": "append1Spec",
-  "append1 spec": "append1Spec",
-  apend2type: "append2Type",
-  append2type: "append2Type",
-  "apend2 type": "append2Type",
-  "append2 type": "append2Type",
-  apend2spec: "append2Spec",
-  append2spec: "append2Spec",
-  "apend2 spec": "append2Spec",
-  "append2 spec": "append2Spec",
-  apend3type: "append3Type",
-  append3type: "append3Type",
-  "apend3 type": "append3Type",
-  "append3 type": "append3Type",
-  apend3spec: "append3Spec",
-  append3spec: "append3Spec",
-  "apend3 spec": "append3Spec",
-  "append3 spec": "append3Spec",
-  "sheet width": "sheetWidth",
-  "stock available": "stockAvailable",
-  "lead time": "leadTime",
-  location: "location",
-  comments: "comments",
-};
-
-function normalizeHeaderLabel(raw: unknown): string {
-  return String(raw ?? "")
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
-}
+type SheetFieldKey = SkuSheetFieldKey;
 
 function parseNumberOrNull(v: unknown): number | null {
   if (v == null || v === "") return null;
@@ -197,7 +141,7 @@ function readElevateLevelCell(
 function scoreHeaderRow(cells: unknown[]): number {
   let score = 0;
   for (const cell of cells) {
-    const label = normalizeHeaderLabel(cell);
+    const label = normalizeSkuSheetHeaderLabel(cell);
     if (!label) continue;
     if (
       label === "sku" ||
@@ -208,7 +152,7 @@ function scoreHeaderRow(cells: unknown[]): number {
     ) {
       score += 10;
     }
-    if (HEADER_ALIASES[label]) score += 2;
+    if (resolveSkuSheetHeaderField(label)) score += 2;
   }
   return score;
 }
@@ -345,9 +289,9 @@ export function parseMasterPricesSkuRows(
     const rawLabel = parseText(cell);
     if (!rawLabel) return;
     detectedHeaderLabels.push(rawLabel);
-    const label = normalizeHeaderLabel(cell);
+    const label = normalizeSkuSheetHeaderLabel(cell);
     headerMap[label] = colIndex;
-    const field = HEADER_ALIASES[label];
+    const field = resolveSkuSheetHeaderField(label);
     if (field) {
       if (fieldToColIndex.has(field)) {
         duplicateHeaderFields.push(
@@ -377,6 +321,21 @@ export function parseMasterPricesSkuRows(
         `Expected column "${field}" was not found in header row ${headerRow1Based}.`,
       );
     }
+  }
+
+  const mappedAppendCount = SKU_APPEND_FIELD_KEYS.filter((f) =>
+    mappedFieldNames.includes(f),
+  ).length;
+  const appendLikeUnmapped = unmappedHeaders.filter((h) => /ap+p+end/i.test(h));
+  if (mappedAppendCount === 0 && appendLikeUnmapped.length > 0) {
+    warnings.push(
+      `Append columns were not mapped on header row ${headerRow1Based} (${appendLikeUnmapped.slice(0, 6).join("; ")}). Expected headers like "Append 1 Type" / "Append1 Spec".`,
+    );
+  } else if (mappedAppendCount > 0 && mappedAppendCount < SKU_APPEND_FIELD_KEYS.length) {
+    const missing = SKU_APPEND_FIELD_KEYS.filter((f) => !mappedFieldNames.includes(f));
+    warnings.push(
+      `Some append columns were not mapped (${missing.join(", ")}).`,
+    );
   }
 
   if (headerRow1Based !== SKU_HEADER_ROW_1_BASED) {

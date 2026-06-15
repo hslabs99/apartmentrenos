@@ -15,6 +15,12 @@ function parseSourceSheetRows(v: unknown): number[] {
     .map((n) => Math.round(n as number));
 }
 
+function parseCalculatedM2(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = typeof v === "number" ? v : Number.parseFloat(String(v));
+  return Number.isFinite(n) ? n : null;
+}
+
 export function dataSkuDocToPublic(
   id: string,
   data: DocumentData,
@@ -45,6 +51,8 @@ export function dataSkuDocToPublic(
     comments: parseText(data.comments),
     sourceSheetRows: parseSourceSheetRows(data.sourceSheetRows),
     isCurrent: data.isCurrent === true,
+    calcM2: data.calcM2 === true,
+    calculatedM2: parseCalculatedM2(data.calculatedM2),
     supplierCount,
     primarySupplier,
   };

@@ -19,18 +19,22 @@ import {
   clMeasureFieldClass,
   clUomFieldClass,
 } from "@/components/cl-checklist-layout";
-import { IconNotes } from "@/components/icons/lightning-icons";
+import type { ReactNode } from "react";
 import { WbLineRowMenu } from "@/components/wb-line-row-menu";
 import { CascadeElevateSelect } from "@/components/cascade-elevate-select";
 import { ScopeLineSkuPicker } from "@/components/scope-line-sku-picker";
 import { WbBuildingElementSkuCell } from "@/components/wb-building-element-sku-cell";
 import { formatCurrencyInput, parseCurrencyInput } from "@/lib/client/format-money";
+import { quoteObjectCategory } from "@/lib/client/quote-object-category";
+import { bundledAppendSkuPickerHint } from "@/lib/client/resolve-append-child-sku-picks";
+import { appendSpecForSlot } from "@/lib/sku/data-sku-append-slots";
 import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
 import {
   resolveScopeLineSkuUnitPriceExcGst,
   type ScopeLineSkuPick,
 } from "@/lib/client/scope-line-sku-match";
 import { ChecklistMeasureInput } from "@/components/checklist-measure-input";
+import { ScopeLineMeasureTool } from "@/components/scope-tool-modal";
 import { cascadeLevelFromPriceLevel } from "@/lib/cascades/cascade-level-from-price-level";
 import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
 import type { DataSkuPublic } from "@/types/data-sku-public";
@@ -43,6 +47,7 @@ import type { QuoteObjectPublic } from "@/types/quote-object";
 import { WbLabourSiloRowCells } from "@/components/wb-labour-silo-row-cells";
 import { WbLineSupplierCell } from "@/components/wb-line-supplier-cell";
 import type { SupplierDiscountByKey } from "@/lib/client/supplier-discount-price";
+import type { ColourLookupIndex } from "@/lib/sku/colour-lookup-index";
 import { WbObjectName } from "@/components/wb-object-name";
 import type { DataBuildingElementPublic } from "@/types/data-building-element-public";
 import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
@@ -58,8 +63,25 @@ function parseOptionalNumber(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function BundledAppendSkuAlert({
+  title,
+}: {
+  title: string;
+}) {
+  return (
+    <span
+      className="ml-1 inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-amber-200 text-[11px] font-bold leading-none text-amber-950 dark:bg-amber-900/70 dark:text-amber-100"
+      title={title}
+      aria-label={title}
+    >
+      !
+    </span>
+  );
+}
+
 type ChecklistProps = {
   mode: "checklist";
+  parentLine: ProjectAreaObjectPublic;
   bundledLines: ProjectAreaObjectPublic[];
   quoteObjects: QuoteObjectPublic[];
   catalogSkus: DataSkuPublic[];
@@ -77,6 +99,7 @@ type ChecklistProps = {
   onPatchLine: (id: string, body: Record<string, unknown>) => void;
   onValidationError: (message: string) => void;
   marginPct: number;
+  colourLookupIndex?: ColourLookupIndex | null;
 };
 
 export type WorkbenchBundledContext = {
@@ -110,11 +133,10 @@ export type WorkbenchBundledContext = {
   ) => string;
   wbLineColourEmptyLabel: (pa: ProjectAreaPublic, project: ProjectPublic | null) => string;
   formatMoney: (n: number | null | undefined) => string;
-  lineHasNotes: (row: ProjectAreaObjectPublic) => boolean;
-  lineNotesTooltip: (row: ProjectAreaObjectPublic) => string;
-  lineNotesIconBtnClass: (hasNotes: boolean) => string;
-  onOpenLineNotes: (lineId: string, label: string, draft: string) => void;
-  lineNotesCombined: (row: ProjectAreaObjectPublic) => string;
+  renderObjectNotesButton: (
+    row: ProjectAreaObjectPublic,
+    label: string,
+  ) => ReactNode;
   onDeleteLine: (lineId: string) => void;
   onCloneLine: (lineId: string) => void;
   wbCloningLineId: string | null;
@@ -123,10 +145,12 @@ export type WorkbenchBundledContext = {
   objectLabourRates: DataObjectLabourRatePublic[];
   buildingElementBySkuName: Map<string, DataBuildingElementPublic>;
   onOpenBuildingElementConsumption: (lineId: string) => void;
+  colourLookupIndex?: ColourLookupIndex | null;
 };
 
 type WorkbenchProps = {
   mode: "workbench";
+  parentLine: ProjectAreaObjectPublic;
   bundledLines: ProjectAreaObjectPublic[];
   quoteObjects: QuoteObjectPublic[];
   catalogSkus: DataSkuPublic[];
@@ -138,6 +162,7 @@ type WorkbenchProps = {
   rowSavingId: string | null;
   workbench: WorkbenchBundledContext;
   onPatchLine: (id: string, body: Record<string, unknown>) => void;
+  colourLookupIndex?: ColourLookupIndex | null;
 };
 
 type Props = ChecklistProps | WorkbenchProps;
@@ -151,6 +176,7 @@ function bundledLabel(
 }
 
 function ChecklistBundledLine({
+  parentLine,
   child,
   quoteObjects,
   catalogSkus,
@@ -168,7 +194,10 @@ function ChecklistBundledLine({
   onPatchLine,
   onValidationError,
   marginPct,
+  supplierDiscountByKey,
+  colourLookupIndex = null,
 }: {
+  parentLine: ProjectAreaObjectPublic;
   child: ProjectAreaObjectPublic;
   quoteObjects: QuoteObjectPublic[];
   catalogSkus: DataSkuPublic[];
@@ -186,8 +215,34 @@ function ChecklistBundledLine({
   onPatchLine: (id: string, body: Record<string, unknown>) => void;
   onValidationError: (message: string) => void;
   marginPct: number;
+  supplierDiscountByKey?: SupplierDiscountByKey;
+  colourLookupIndex?: ColourLookupIndex | null;
 }) {
   const qObj = quoteObjects.find((o) => o.objectid === child.objectid);
+  const parentSku = parentLine.skuId
+    ? catalogSkus.find((s) => s.skuId === parentLine.skuId)
+    : undefined;
+  const parentCategory = quoteObjectCategory(parentLine, quoteObjects) ?? "";
+  const appendProductSpec =
+    parentSku && child.bundledAppendSlot != null
+      ? appendSpecForSlot(parentSku, child.bundledAppendSlot)
+      : "";
+  const appendHint = bundledAppendSkuPickerHint({
+    parentLine,
+    childLine: child,
+    parentSku,
+    parentCategory,
+    catalogSkus,
+    suppliersBySkuId,
+    priceLevels,
+    cascades,
+    quoteObjects,
+    pa,
+    project,
+    preferredSupplierOption: parentLine.supplierOption ?? null,
+    supplierDiscountByKey,
+    colourLookupIndex,
+  });
   const measureKey =
     child.custommeasure != null
       ? inputKey(child, "bundled-m")
@@ -206,7 +261,7 @@ function ChecklistBundledLine({
       <div className={clFieldsGridClass} style={clFieldsGridStyle}>
         <div className={`${clSkuFieldClass} ${clScopeSkuColClass}`}>
           <span className={wbHdrLabel}>SKU</span>
-          <div className={clSkuPickerWrapClass}>
+          <div className={`${clSkuPickerWrapClass} flex items-center gap-0.5`}>
             {qObj ? (
               <ScopeLineSkuPicker
                 line={child}
@@ -223,13 +278,19 @@ function ChecklistBundledLine({
                 showSupplierPrice={false}
                 shortMatchLabels
                 inlineRow
+                autoApplySingleMatch
+                autoApplyOnlyWhenEmptySku
                 onSelectSku={(pick: ScopeLineSkuPick) => {
                   onPatchLine(child.id, patchBodyForScopeLineSku(child, pick));
                 }}
+                colourLookupIndex={colourLookupIndex}
+                appendProductSpec={appendProductSpec}
+                appendParentCategory={parentCategory}
               />
             ) : (
               <span className="text-xs text-sf-text-weak">No quote object</span>
             )}
+            {appendHint ? <BundledAppendSkuAlert title={appendHint} /> : null}
           </div>
         </div>
         <label className={`${clMeasureFieldClass} ${clScopeMeasureColClass}`}>
@@ -239,9 +300,11 @@ function ChecklistBundledLine({
             quoteObject={qObj}
             pa={pa}
             project={project}
+            scopeMeasureExtras={{ catalogSkus }}
             measureKey={measureKey}
             inputClassName={clMeasureInput}
             disabled={lineSaving}
+            ynMeasureDropdown
             onPatch={(custommeasure) => {
               onPatchLine(child.id, { custommeasure });
             }}
@@ -268,13 +331,32 @@ function ChecklistBundledLine({
         </label>
         <div className={`${clScopeNonStdColClass}`} aria-hidden />
         <ClTotalPriceCell line={child} marginPct={marginPct} />
-        <div className={`${clToolCellClass} ${clScopeToolColClass}`} aria-hidden />
+        <div className={`${clToolCellClass} ${clScopeToolColClass}`}>
+          <ScopeLineMeasureTool
+            line={child}
+            quoteObjects={quoteObjects}
+            objectLabel={objectLabel(child, quoteObjects)}
+            disabled={lineSaving}
+            onApplyMeasure={(payload) => {
+              onPatchLine(child.id, {
+                custommeasure: payload.m2,
+                ...(payload.scopeToolBenchSections !== undefined
+                  ? { scopeToolBenchSections: payload.scopeToolBenchSections }
+                  : {}),
+                ...(payload.scopeToolWallMm !== undefined
+                  ? { scopeToolWallMm: payload.scopeToolWallMm }
+                  : {}),
+              });
+            }}
+          />
+        </div>
       </div>
     </div>
   );
 }
 
 function WorkbenchBundledLine({
+  parentLine,
   child,
   quoteObjects,
   catalogSkus,
@@ -287,6 +369,7 @@ function WorkbenchBundledLine({
   wb,
   onPatchLine,
 }: {
+  parentLine: ProjectAreaObjectPublic;
   child: ProjectAreaObjectPublic;
   quoteObjects: QuoteObjectPublic[];
   catalogSkus: DataSkuPublic[];
@@ -301,6 +384,30 @@ function WorkbenchBundledLine({
 }) {
   const included = child.included !== false;
   const qObj = quoteObjects.find((o) => o.objectid === child.objectid);
+  const parentSku = parentLine.skuId
+    ? catalogSkus.find((s) => s.skuId === parentLine.skuId)
+    : undefined;
+  const parentCategory = quoteObjectCategory(parentLine, quoteObjects) ?? "";
+  const appendProductSpec =
+    parentSku && child.bundledAppendSlot != null
+      ? appendSpecForSlot(parentSku, child.bundledAppendSlot)
+      : "";
+  const appendHint = bundledAppendSkuPickerHint({
+    parentLine,
+    childLine: child,
+    parentSku,
+    parentCategory,
+    catalogSkus,
+    suppliersBySkuId,
+    priceLevels,
+    cascades: wb.cascades,
+    quoteObjects,
+    pa,
+    project,
+    preferredSupplierOption: parentLine.supplierOption ?? null,
+    supplierDiscountByKey,
+    colourLookupIndex: wb.colourLookupIndex ?? null,
+  });
   const lf = wb.lineFinalPrice(child, wb.marginPct);
 
   return (
@@ -390,6 +497,7 @@ function WorkbenchBundledLine({
       </td>
       <td className={wb.wbCellSku}>
         {qObj ? (
+          <div className="flex min-w-0 items-center gap-0.5">
           <WbBuildingElementSkuCell
             line={child}
             catalogSkus={catalogSkus}
@@ -413,6 +521,8 @@ function WorkbenchBundledLine({
               showSupplierPrice
               shortMatchLabels
               inlineRow
+              autoApplySingleMatch
+              autoApplyOnlyWhenEmptySku
               syncUnitPriceFromPick
               showIncludeAllSupplierOptions={wb.isAdminMode}
               includeAllSupplierOptions={wb.includeAllSuppliersForLine(child.id)}
@@ -423,8 +533,13 @@ function WorkbenchBundledLine({
               onSelectSku={(pick: ScopeLineSkuPick) => {
                 onPatchLine(child.id, patchBodyForScopeLineSku(child, pick));
               }}
+              colourLookupIndex={wb.colourLookupIndex ?? null}
+              appendProductSpec={appendProductSpec}
+              appendParentCategory={parentCategory}
             />
           </WbBuildingElementSkuCell>
+          {appendHint ? <BundledAppendSkuAlert title={appendHint} /> : null}
+          </div>
         ) : (
           <span className="text-xs">—</span>
         )}
@@ -525,22 +640,15 @@ function WorkbenchBundledLine({
       <td className={`${wb.wbCellNum} font-medium text-emerald-800 dark:text-emerald-200`}>
         {lf != null ? wb.formatMoney(lf) : "—"}
       </td>
+      <WbLineSupplierCell
+        row={child}
+        suppliersBySkuId={suppliersBySkuId}
+        supplierDiscountByKey={supplierDiscountByKey}
+        cellClassName={wb.wbCellMid}
+      />
       <td className={wb.wbCellMid}>
         <div className="flex items-center justify-end gap-0.5">
-          <button
-            type="button"
-            className={wb.lineNotesIconBtnClass(wb.lineHasNotes(child))}
-            disabled={lineSaving || wb.paoDeleting}
-            title={wb.lineNotesTooltip(child)}
-            aria-label={`Notes for ${wb.objectLabel(child, quoteObjects)}`}
-            onClick={() =>
-              wb.onOpenLineNotes(child.id, wb.objectLabel(child, quoteObjects), wb.lineNotesCombined(child))
-            }
-          >
-            <IconNotes
-              className={`h-4 w-4 ${wb.lineHasNotes(child) ? "text-sf-destructive dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}`}
-            />
-          </button>
+          {wb.renderObjectNotesButton(child, wb.objectLabel(child, quoteObjects))}
           <WbLineRowMenu
             lineLabel={wb.objectLabel(child, quoteObjects)}
             disabled={
@@ -553,12 +661,6 @@ function WorkbenchBundledLine({
           />
         </div>
       </td>
-      <WbLineSupplierCell
-        row={child}
-        suppliersBySkuId={suppliersBySkuId}
-        supplierDiscountByKey={supplierDiscountByKey}
-        cellClassName={wb.wbCellMid}
-      />
       <td className={wb.wbSpacerCell} />
     </tr>
   );
@@ -573,6 +675,7 @@ export function ScopeLineBundledChildren(props: Props) {
         {props.bundledLines.map((child) => (
           <ChecklistBundledLine
             key={child.id}
+            parentLine={props.parentLine}
             child={child}
             quoteObjects={props.quoteObjects}
             catalogSkus={props.catalogSkus}
@@ -590,6 +693,7 @@ export function ScopeLineBundledChildren(props: Props) {
             onPatchLine={props.onPatchLine}
             onValidationError={props.onValidationError}
             marginPct={props.marginPct}
+            colourLookupIndex={props.colourLookupIndex ?? null}
           />
         ))}
       </div>
@@ -601,6 +705,7 @@ export function ScopeLineBundledChildren(props: Props) {
       {props.bundledLines.map((child) => (
         <WorkbenchBundledLine
           key={child.id}
+          parentLine={props.parentLine}
           child={child}
           quoteObjects={props.quoteObjects}
           catalogSkus={props.catalogSkus}

@@ -1,3 +1,4 @@
+/** Workbook columns A–F (all six required for a complete key). Column G (UOM) is not part of the key. */
 const PRODUCT_KEY_FIELDS = [
   "category",
   "productType",

@@ -27,7 +27,7 @@ async function loadPriceLevels(): Promise<PriceLevelPublic[]> {
   return inflight;
 }
 
-/** Shared fetch for Setup price levels; dedupes in-flight requests across components. */
+/** Shared fetch for System price levels; dedupes in-flight requests across components. */
 export function usePriceLevels(): { levels: PriceLevelPublic[]; loading: boolean } {
   const [levels, setLevels] = useState<PriceLevelPublic[]>(cache ?? []);
   const [loading, setLoading] = useState(cache === null);

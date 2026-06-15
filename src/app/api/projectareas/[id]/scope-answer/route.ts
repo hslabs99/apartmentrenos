@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 const bodySchema = z.object({
   scopeDocId: z.string().min(1),
   answerid: z.union([z.string().uuid(), z.null()]),
+  scopeInstanceId: z.string().uuid().optional().nullable(),
 });
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
       id,
       parsed.data.scopeDocId,
       parsed.data.answerid,
+      parsed.data.scopeInstanceId ?? null,
     );
     const paSnap = await db.collection("projectareas").doc(id).get();
     if (!paSnap.exists) {

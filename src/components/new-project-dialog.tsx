@@ -62,7 +62,7 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
     try {
       if (!priceLevelsLoading && priceLevels.length === 0) {
         throw new Error(
-          "Add at least one price level under Setup → Price Levels before creating a project.",
+          "Add at least one price level under System → Price Levels before creating a project.",
         );
       }
       if (defaultPriceLevelId == null) {

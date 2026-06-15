@@ -4,9 +4,14 @@ import {
   isDataSkusMetaDocument,
 } from "@/lib/firestore/data-skus-collection";
 import {
+  LABOUR_PREPARE_OBJECT_PRODUCT_TYPE,
+  LABOUR_RATE_CATEGORY,
+} from "@/lib/labour-silo";
+import {
   filterDataSkusWithCascadeFallback,
   type DataSkuFilterFields,
 } from "@/lib/sku/match-data-sku-filters";
+import { loadColourLookupIndex } from "@/lib/server/load-colour-lookup-index";
 
 export type ResolvedSkuForQuoteObject = {
   skuId: string;
@@ -69,15 +74,7 @@ export async function resolveSkuForQuoteObject(
   filters: Omit<DataSkuFilterFields, "category" | "productType">,
 ): Promise<ResolvedSkuForQuoteObject> {
   const matches = await matchingSkusForQuoteObjectData(db, quoteObjectData, filters);
-  if (matches.length === 0) return null;
-  if (matches.length > 1) {
-    const category = String(quoteObjectData?.category ?? "").trim();
-    const productType = String(quoteObjectData?.objectname ?? "").trim();
-    console.warn("[resolveSkuForQuoteObject] multiple SKUs matched; using first", {
-      filters,
-      skuIds: matches.slice(0, 5).map((m) => m.skuId),
-    });
-  }
+  if (matches.length !== 1) return null;
   const hit = matches[0]!;
   return {
     skuId: hit.skuId,
@@ -103,23 +100,36 @@ export async function resolveAllSkusForQuoteObject(
 async function matchingSkusForQuoteObjectData(
   db: Firestore,
   quoteObjectData: DocumentData | undefined,
-  filters: Omit<DataSkuFilterFields, "category" | "productType">,
+  filters: Omit<DataSkuFilterFields, "category" | "productType" | "product">,
 ): Promise<SkuRow[]> {
   const category = String(quoteObjectData?.category ?? "").trim();
-  const productType = String(quoteObjectData?.objectname ?? "").trim();
-  if (!category || !productType) return [];
+  const objectname = String(quoteObjectData?.objectname ?? "").trim();
+  if (!category || !objectname) return [];
 
-  const fullFilters: DataSkuFilterFields = {
-    category,
-    productType,
-    elevateLevel: filters.elevateLevel,
-    style: filters.style,
-    colour: filters.colour,
-  };
+  const isLabourObject =
+    category.localeCompare(LABOUR_RATE_CATEGORY, undefined, { sensitivity: "base" }) === 0;
+  const fullFilters: DataSkuFilterFields = isLabourObject
+    ? {
+        category,
+        productType: LABOUR_PREPARE_OBJECT_PRODUCT_TYPE,
+        product: objectname,
+        elevateLevel: filters.elevateLevel,
+        style: filters.style,
+        colour: filters.colour,
+      }
+    : {
+        category,
+        productType: objectname,
+        elevateLevel: filters.elevateLevel,
+        style: filters.style,
+        colour: filters.colour,
+      };
 
   const skus = await loadCurrentSkus(db);
+  const colourLookupIndex = await loadColourLookupIndex(db);
   const matches = filterDataSkusWithCascadeFallback(skus, fullFilters, {
     includeAllDimensionSkuRows: true,
+    colourLookupIndex,
   });
   matches.sort((a, b) => a.skuId.localeCompare(b.skuId));
   return matches;

@@ -2,14 +2,14 @@
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { IconPencil, IconTrash } from "@/components/icons/lightning-icons";
-import { ReorderArrows } from "@/components/reorder-arrows";
+import { DragReorderHandle } from "@/components/drag-reorder-handle";
 import {
   ScopeFormModal,
   scopeFormModeForScope,
   type ScopeFormMode,
 } from "@/components/scope-form-modal";
 import { readApiJson } from "@/lib/client/read-api-json";
-import { useTemplateReorder } from "@/lib/client/use-template-reorder";
+import { useDragListReorder } from "@/lib/client/use-drag-list-reorder";
 import { sortOrderInArea } from "@/lib/scope-areas";
 import { sfTabStripClass, sfUnderlineTabClass } from "@/lib/sf-tabs";
 import {
@@ -30,29 +30,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 type Mode = "idle" | "create" | "edit";
 type EditTab = "details" | "objects" | "questions" | "scopes";
 type AreaScopeFormMode = "idle" | ScopeFormMode;
-
-function scopeAreaGroupKey(s: ScopePublic, contextAreaDocId: string | null): string {
-  if (contextAreaDocId) return `ctx:${contextAreaDocId}`;
-  const id = String(s.areaDocId ?? "").trim();
-  if (id) return `d:${id}`;
-  return `a:${Number(s.areaid)}`;
-}
-
-function scopeReorderEdges(
-  rows: ScopePublic[],
-  idx: number,
-  contextAreaDocId: string | null,
-): { disabledUp: boolean; disabledDown: boolean } {
-  const cur = rows[idx];
-  if (!cur) return { disabledUp: true, disabledDown: true };
-  const k = scopeAreaGroupKey(cur, contextAreaDocId);
-  const prev = idx > 0 ? rows[idx - 1] : null;
-  const next = idx < rows.length - 1 ? rows[idx + 1] : null;
-  return {
-    disabledUp: !prev || scopeAreaGroupKey(prev, contextAreaDocId) !== k,
-    disabledDown: !next || scopeAreaGroupKey(next, contextAreaDocId) !== k,
-  };
-}
 
 function numToInput(v: number | null | undefined): string {
   if (v === null || v === undefined) return "";
@@ -120,6 +97,9 @@ export function AreasPanel() {
   const [scopeFormMode, setScopeFormMode] = useState<AreaScopeFormMode>("idle");
   const [scopeEditingId, setScopeEditingId] = useState<string | null>(null);
   const [selectedScopeRowId, setSelectedScopeRowId] = useState<string | null>(null);
+  const [scopeRemovePending, setScopeRemovePending] = useState<ScopePublic | null>(null);
+  const [scopeRemoveAlsoDelete, setScopeRemoveAlsoDelete] = useState(false);
+  const [scopeRemoveSaving, setScopeRemoveSaving] = useState(false);
 
   const quoteObjectsSortedByName = useCallback(() => {
     return [...quoteObjects].sort((a, b) =>
@@ -245,13 +225,13 @@ export function AreasPanel() {
     if (displayAreaid != null) await loadAreaObjects(displayAreaid);
   }, [displayAreaid, loadAreaObjects]);
 
-  const reorderAreas = useTemplateReorder(
+  const reorderAreas = useDragListReorder(
     "/api/areas/reorder",
     () => void load(),
     (msg) => setError(msg),
   );
 
-  const reorderAreaObjects = useTemplateReorder(
+  const reorderAreaObjects = useDragListReorder(
     "/api/areaobjects/reorder",
     reloadAreaObjectsForEdit,
     (msg) => setError(msg),
@@ -261,12 +241,15 @@ export function AreasPanel() {
     return editingId ? { contextAreaDocId: editingId } : {};
   }, [editingId]);
 
-  const scopeReorder = useTemplateReorder(
+  const scopeReorder = useDragListReorder(
     "/api/scopes/reorder",
     () => void loadScopes(),
     (msg) => setError(msg),
     { getExtraBody: getScopeReorderExtraBody },
   );
+
+  const areaIds = useMemo(() => areas.map((a) => a.id), [areas]);
+  const areaObjectIds = useMemo(() => areaObjects.map((row) => row.id), [areaObjects]);
 
   const areaScopeCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -289,6 +272,11 @@ export function AreasPanel() {
         return (a.scopeid ?? 0) - (b.scopeid ?? 0) || a.id.localeCompare(b.id);
       });
   }, [scopes, editingId]);
+
+  const scopeIdsForSelectedArea = useMemo(
+    () => scopesForSelectedArea.map((s) => s.id),
+    [scopesForSelectedArea],
+  );
 
   const editingScope = useMemo(
     () => (scopeEditingId ? scopes.find((s) => s.id === scopeEditingId) ?? null : null),
@@ -347,6 +335,45 @@ export function AreasPanel() {
   function openScopeCreate() {
     setScopeEditingId(null);
     setScopeFormMode("create");
+  }
+
+  function openScopeRemove(s: ScopePublic) {
+    setScopeRemovePending(s);
+    const onlyThisArea =
+      editingId != null && (s.areaDocIds ?? []).filter((ad) => ad !== editingId).length === 0;
+    setScopeRemoveAlsoDelete(
+      onlyThisArea || s.kind === "header" || s.kind === "footer",
+    );
+  }
+
+  async function confirmScopeRemoveFromArea() {
+    const s = scopeRemovePending;
+    if (!s || !editingId) return;
+    setScopeRemoveSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/scopes/${encodeURIComponent(s.id)}/remove-from-area`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            areaDocId: editingId,
+            deleteScope: scopeRemoveAlsoDelete,
+          }),
+        },
+      );
+      const data = await readApiJson<{ error?: string }>(res);
+      if (!res.ok) throw new Error(data.error ?? "Failed to remove scope from area");
+      if (selectedScopeRowId === s.id) setSelectedScopeRowId(null);
+      if (scopeEditingId === s.id) closeScopeForm();
+      setScopeRemovePending(null);
+      await loadScopes();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to remove scope from area");
+    } finally {
+      setScopeRemoveSaving(false);
+    }
   }
 
   function openCreate() {
@@ -811,45 +838,45 @@ export function AreasPanel() {
                       </tr>
                     </thead>
                     <tbody>
-                      {areas.map((a, i) => {
+                      {areas.map((a) => {
                         const active = mode === "edit" && editingId === a.id;
                         const objectCount =
                           a.areaid != null ? (areaObjectCounts[a.areaid] ?? 0) : "—";
                         const scopeCount = areaScopeCounts[a.id] ?? 0;
+                        const dragging = reorderAreas.dragId === a.id;
                         return (
                           <tr
                             key={a.id}
                             tabIndex={0}
                             onClick={() => void selectArea(a)}
+                            onDragOver={reorderAreas.onDragOver}
+                            onDrop={(e) => reorderAreas.onDrop(e, areaIds, a.id)}
+                            onDragEnd={reorderAreas.onDragEnd}
                             onKeyDown={(e) => {
                               if (e.key === "Enter" || e.key === " ") {
                                 e.preventDefault();
                                 void selectArea(a);
                                 return;
                               }
-                              reorderAreas.onRowKeyDown(a.id, e);
+                              reorderAreas.onRowKeyDown(areaIds, a.id, e);
                             }}
-                            aria-label={`${a.areaname}. Click to view details. Arrow keys also reorder.`}
+                            aria-label={`${a.areaname}. Click to view details. Drag handle or arrow keys to reorder.`}
                             aria-current={active ? "true" : undefined}
                             className={`cursor-pointer border-b border-sf-border last:border-0 outline-none dark:border-zinc-700/80 ${
                               active
                                 ? "bg-sf-brand/10 dark:bg-sf-brand/20"
                                 : "hover:bg-sf-page/80 dark:hover:bg-zinc-800/50"
-                            } focus-visible:bg-sf-page focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sf-brand/40 dark:focus-visible:bg-zinc-800/40 dark:focus-visible:ring-sf-brand/40`}
+                            } ${dragging ? "opacity-60 ring-2 ring-inset ring-sf-brand/40" : ""} focus-visible:bg-sf-page focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sf-brand/40 dark:focus-visible:bg-zinc-800/40 dark:focus-visible:ring-sf-brand/40`}
                           >
                             <td className="px-2 py-2 font-medium">
-                              <div className="flex w-full min-w-0 items-center justify-between gap-1">
+                              <div className="flex w-full min-w-0 items-center gap-2">
+                                <DragReorderHandle
+                                  dense
+                                  itemLabel={a.areaname}
+                                  dragging={dragging}
+                                  onDragStart={(e) => reorderAreas.onDragStart(e, a.id)}
+                                />
                                 <span className="min-w-0 truncate">{a.areaname}</span>
-                                <div onClick={(e) => e.stopPropagation()}>
-                                  <ReorderArrows
-                                    dense
-                                    itemLabel={a.areaname}
-                                    onUp={() => void reorderAreas.moveRow(a.id, "up")}
-                                    onDown={() => void reorderAreas.moveRow(a.id, "down")}
-                                    disabledUp={i === 0}
-                                    disabledDown={i === areas.length - 1}
-                                  />
-                                </div>
                               </div>
                             </td>
                             <td className="px-1 py-2 text-right tabular-nums">{objectCount}</td>
@@ -1180,28 +1207,34 @@ export function AreasPanel() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {areaObjects.map((row, i) => {
+                                  {areaObjects.map((row) => {
                                     const obj = quoteObjects.find((q) => q.objectid === row.objectid);
                                     const label = obj?.objectname?.trim() ? obj.objectname : `Object #${row.objectid}`;
+                                    const dragging = reorderAreaObjects.dragId === row.id;
                                     return (
                                       <tr
                                         key={row.id}
                                         tabIndex={0}
-                                        onKeyDown={(e) => reorderAreaObjects.onRowKeyDown(row.id, e)}
-                                        aria-label={`${label}. Arrow keys also reorder.`}
-                                        className="border-b border-sf-border last:border-0 outline-none focus-visible:bg-sf-page focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sf-brand/40 dark:border-zinc-700/80 dark:focus-visible:bg-zinc-800/40 dark:focus-visible:ring-sf-brand/40"
+                                        onDragOver={reorderAreaObjects.onDragOver}
+                                        onDrop={(e) => reorderAreaObjects.onDrop(e, areaObjectIds, row.id)}
+                                        onDragEnd={reorderAreaObjects.onDragEnd}
+                                        onKeyDown={(e) =>
+                                          reorderAreaObjects.onRowKeyDown(areaObjectIds, row.id, e)
+                                        }
+                                        aria-label={`${label}. Drag handle or arrow keys to reorder.`}
+                                        className={`border-b border-sf-border last:border-0 outline-none focus-visible:bg-sf-page focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sf-brand/40 dark:border-zinc-700/80 dark:focus-visible:bg-zinc-800/40 dark:focus-visible:ring-sf-brand/40 ${
+                                          dragging ? "opacity-60 ring-2 ring-inset ring-sf-brand/40" : ""
+                                        }`}
                                       >
                                         <td className="px-3 py-2">
-                                          <div className="flex w-full min-w-0 items-center justify-between gap-2">
-                                            <span className="min-w-0">{label}</span>
-                                            <ReorderArrows
+                                          <div className="flex w-full min-w-0 items-center gap-2">
+                                            <DragReorderHandle
                                               dense
                                               itemLabel={label}
-                                              onUp={() => void reorderAreaObjects.moveRow(row.id, "up")}
-                                              onDown={() => void reorderAreaObjects.moveRow(row.id, "down")}
-                                              disabledUp={i === 0}
-                                              disabledDown={i === areaObjects.length - 1}
+                                              dragging={dragging}
+                                              onDragStart={(e) => reorderAreaObjects.onDragStart(e, row.id)}
                                             />
+                                            <span className="min-w-0">{label}</span>
                                           </div>
                                         </td>
                                         <td className="px-3 py-2">{row.default ? "Yes" : "No"}</td>
@@ -1452,13 +1485,9 @@ export function AreasPanel() {
                               </tr>
                             </thead>
                             <tbody>
-                              {scopesForSelectedArea.map((s, idx) => {
+                              {scopesForSelectedArea.map((s) => {
                                 const qLabel = (s.question ?? "").trim() || `Scope ${s.scopeid ?? ""}`;
-                                const edges = scopeReorderEdges(
-                                  scopesForSelectedArea,
-                                  idx,
-                                  editingId,
-                                );
+                                const dragging = scopeReorder.dragId === s.id;
                                 return (
                                   <tr
                                     key={s.id}
@@ -1468,13 +1497,20 @@ export function AreasPanel() {
                                     onClick={() =>
                                       setSelectedScopeRowId((cur) => (cur === s.id ? null : s.id))
                                     }
-                                    onKeyDown={(e) => scopeReorder.onRowKeyDown(s.id, e)}
-                                    aria-label={`${qLabel}. Arrow keys also reorder.`}
+                                    onDragOver={scopeReorder.onDragOver}
+                                    onDrop={(e) =>
+                                      scopeReorder.onDrop(e, scopeIdsForSelectedArea, s.id)
+                                    }
+                                    onDragEnd={scopeReorder.onDragEnd}
+                                    onKeyDown={(e) =>
+                                      scopeReorder.onRowKeyDown(scopeIdsForSelectedArea, s.id, e)
+                                    }
+                                    aria-label={`${qLabel}. Drag handle or arrow keys to reorder.`}
                                     className={`cursor-pointer border-b border-sf-border last:border-0 outline-none focus-visible:bg-sf-page focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sf-brand/40 dark:border-zinc-700/80 dark:focus-visible:bg-zinc-800/40 dark:focus-visible:ring-sf-brand/40 ${
                                       selectedScopeRowId === s.id
                                         ? "bg-teal-50/70 dark:bg-teal-950/35"
                                         : ""
-                                    }`}
+                                    } ${dragging ? "opacity-60 ring-2 ring-inset ring-sf-brand/40" : ""}`}
                                   >
                                     <td className="px-3 py-2 font-mono text-sm">
                                       {s.scopeid ?? "—"}
@@ -1496,18 +1532,16 @@ export function AreasPanel() {
                                     </td>
                                     <td className="max-w-md px-3 py-2" title={s.question}>
                                       <div
-                                        className="flex w-full min-w-0 items-center justify-between gap-3"
+                                        className="flex w-full min-w-0 items-center gap-2"
                                         onClick={(e) => e.stopPropagation()}
                                       >
-                                        <span className="min-w-0 truncate">{s.question || "—"}</span>
-                                        <ReorderArrows
+                                        <DragReorderHandle
                                           dense
                                           itemLabel={qLabel}
-                                          onUp={() => void scopeReorder.moveRow(s.id, "up")}
-                                          onDown={() => void scopeReorder.moveRow(s.id, "down")}
-                                          disabledUp={edges.disabledUp}
-                                          disabledDown={edges.disabledDown}
+                                          dragging={dragging}
+                                          onDragStart={(e) => scopeReorder.onDragStart(e, s.id)}
                                         />
+                                        <span className="min-w-0 truncate">{s.question || "—"}</span>
                                       </div>
                                     </td>
                                     <td className="px-3 py-2">
@@ -1527,6 +1561,14 @@ export function AreasPanel() {
                                           aria-label="Edit scope"
                                         >
                                           <IconPencil className="h-4 w-4" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => openScopeRemove(s)}
+                                          className={sfRowIconBtnDanger}
+                                          aria-label="Remove scope from area"
+                                        >
+                                          <IconTrash className="h-4 w-4" />
                                         </button>
                                       </div>
                                     </td>
@@ -1616,6 +1658,46 @@ export function AreasPanel() {
         onCancel={() => setDeleteId(null)}
         onConfirm={() => void confirmDelete()}
       />
+
+      <ConfirmDialog
+        open={Boolean(scopeRemovePending)}
+        title="Remove scope from this area?"
+        description={
+          scopeRemovePending?.kind === "header" || scopeRemovePending?.kind === "footer"
+            ? "Section markers belong to one template area only. Removing deletes the scope row from Setup → Scopes. Project checklist data is not changed."
+            : scopeRemoveAlsoDelete
+              ? "This removes the scope from this template area and deletes it from Setup → Scopes. Project checklist data is not changed."
+              : "This untags the scope from this template area. It remains in Setup → Scopes (visible when no area filter is selected). Project checklist data is not changed."
+        }
+        confirmLabel={scopeRemoveAlsoDelete ? "Remove and delete" : "Remove from area"}
+        cancelLabel="Cancel"
+        variant="danger"
+        pending={scopeRemoveSaving}
+        onCancel={() => setScopeRemovePending(null)}
+        onConfirm={() => void confirmScopeRemoveFromArea()}
+      >
+        {scopeRemovePending &&
+        scopeRemovePending.kind !== "header" &&
+        scopeRemovePending.kind !== "footer" ? (
+          <label className="flex cursor-pointer items-start gap-2 text-sm text-sf-text dark:text-zinc-200">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 shrink-0 rounded border-sf-border-strong accent-sf-brand"
+              checked={scopeRemoveAlsoDelete}
+              onChange={(e) => setScopeRemoveAlsoDelete(e.target.checked)}
+              disabled={scopeRemoveSaving}
+            />
+            <span>
+              Also delete scope from Setup → Scopes
+              {(scopeRemovePending.areaDocIds ?? []).length <= 1 ? (
+                <span className="mt-0.5 block text-xs text-sf-text-secondary dark:text-zinc-400">
+                  This scope is only tagged for this area.
+                </span>
+              ) : null}
+            </span>
+          </label>
+        ) : null}
+      </ConfirmDialog>
     </div>
   );
 }

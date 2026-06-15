@@ -23,12 +23,6 @@ import {
 } from "@/lib/sf-layout";
 import { sfRowIconBtn, sfRowIconBtnDanger } from "@/lib/sf-row-actions";
 import { LOOKUP_TYPE_OBJECT_CATEGORY } from "@/lib/lookup-types";
-import {
-  formatLabourHours,
-  TEMPLATE_LABOUR_SILO_KEYS,
-  WB_LABOUR_SILO_HEADERS,
-  type LabourSiloKey,
-} from "@/lib/labour-silo";
 import type { AreaPublic } from "@/types/area";
 import type { LookupPublic } from "@/types/lookup";
 import type { PriceLevelPublic } from "@/types/price-level";
@@ -205,15 +199,6 @@ function numToInput(v: number | null | undefined): string {
   return String(v);
 }
 
-/** Display NZ-style dollar amounts (popup hints and calculated line totals). */
-function formatLoad(n: number | null | undefined): string {
-  if (n === null || n === undefined || Number.isNaN(n)) return "—";
-  return n.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
 function formatNzDollars(n: number): string {
   return `$${n.toLocaleString("en-NZ", {
     minimumFractionDigits: 2,
@@ -297,7 +282,7 @@ function InvestorTierOverflowMenu({
             disabled={disabled}
             title={
               disabled
-                ? "Configure the first price tier (top of Setup → Price Levels order), then copy to the rest."
+                ? "Configure the first price tier (top of System → Price Levels order), then copy to the rest."
                 : "Copy UOM price, total, and specs from this tier to every other price level."
             }
             onClick={() => {
@@ -463,10 +448,6 @@ export function QuoteObjectsPanel() {
   const [defaultAreaM2Str, setDefaultAreaM2Str] = useState("");
   const [priceLevels, setPriceLevels] = useState<PriceLevelPublic[]>([]);
   const [levelDrafts, setLevelDrafts] = useState<Record<string, LevelDraft>>({});
-  const [generalHoursStr, setGeneralHoursStr] = useState("");
-  const [projectManagerHoursStr, setProjectManagerHoursStr] = useState("");
-  const [paintingHoursStr, setPaintingHoursStr] = useState("");
-  const [plasteringHoursStr, setPlasteringHoursStr] = useState("");
   const [notes1, setNotes1] = useState("");
   const [notes2, setNotes2] = useState("");
   const [tooltip, setTooltip] = useState("");
@@ -635,7 +616,7 @@ export function QuoteObjectsPanel() {
     setMeasurementStr(String(lm));
   }, [uom, defaultAreaM2Str, runWidthStr]);
 
-  /** First row in Setup → Price Levels display order (e.g. Investor when listed first). */
+  /** First row in System → Price Levels display order (e.g. Investor when listed first). */
   const investorPriceLevelKey = useMemo(() => {
     const first = sortedPriceLevels.find((p) => p.pricelevelid != null);
     return first ? String(first.pricelevelid) : null;
@@ -976,10 +957,6 @@ export function QuoteObjectsPanel() {
     setRunWidthStr("");
     setDefaultAreaM2Str("");
     setLevelDrafts(buildEmptyLevelDrafts(priceLevels));
-    setGeneralHoursStr("");
-    setProjectManagerHoursStr("");
-    setPaintingHoursStr("");
-    setPlasteringHoursStr("");
     setNotes1("");
     setNotes2("");
     setTooltip("");
@@ -1025,10 +1002,6 @@ export function QuoteObjectsPanel() {
         effM,
       ),
     );
-    setGeneralHoursStr(numToInput(r.generalHours));
-    setProjectManagerHoursStr(numToInput(r.projectManagerHours));
-    setPaintingHoursStr(numToInput(r.paintingHours));
-    setPlasteringHoursStr(numToInput(r.plasteringHours));
     setNotes1(r.notes1);
     setNotes2(r.notes2);
     setTooltip(r.tooltip);
@@ -1147,10 +1120,6 @@ export function QuoteObjectsPanel() {
       defaultAreaM2: uom === LM_RUNS_UOM ? defaultM2Parsed : null,
       measurement,
       priceLevelRows,
-      generalHours: toNumOrNull(generalHoursStr),
-      projectManagerHours: toNumOrNull(projectManagerHoursStr),
-      paintingHours: toNumOrNull(paintingHoursStr),
-      plasteringHours: toNumOrNull(plasteringHoursStr),
       notes1,
       notes2,
       tooltip,
@@ -1250,10 +1219,6 @@ export function QuoteObjectsPanel() {
                   spec2: r.spec2,
                   spec3: r.spec3,
                 })),
-        generalHours: r.generalHours ?? null,
-        projectManagerHours: r.projectManagerHours ?? null,
-        paintingHours: r.paintingHours ?? null,
-        plasteringHours: r.plasteringHours ?? null,
         notes1: r.notes1,
         notes2: r.notes2,
         tooltip: r.tooltip,
@@ -1312,10 +1277,6 @@ export function QuoteObjectsPanel() {
             cloneEffM,
           ),
         );
-        setGeneralHoursStr(numToInput(r.generalHours));
-        setProjectManagerHoursStr(numToInput(r.projectManagerHours));
-        setPaintingHoursStr(numToInput(r.paintingHours));
-        setPlasteringHoursStr(numToInput(r.plasteringHours));
         setNotes1(r.notes1);
         setNotes2(r.notes2);
         setTooltip(r.tooltip);
@@ -1392,16 +1353,13 @@ export function QuoteObjectsPanel() {
   const moneyFieldInput =
     "min-h-12 min-w-0 flex-1 border-0 bg-transparent py-2.5 pr-3 text-right tabular-nums text-base text-sf-text outline-none dark:text-zinc-100";
 
-  const loadInputClass =
-    "min-h-8 w-full max-w-[6rem] rounded-md border border-sf-border-strong bg-sf-surface px-2 py-1 text-right text-sm tabular-nums dark:border-zinc-600 dark:bg-zinc-950";
-
   return (
     <div className="-mx-4 flex flex-col gap-6 md:-mx-6 lg:-mx-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
           <h2 className={sfSectionHeading}>Quote Objects</h2>
           <p className={sfSectionLead}>
-            UOM price, total price, and specs are stored per price level (Setup → Price Levels). Tier
+            UOM price, total price, and specs are stored per price level (System → Price Levels). Tier
             order in the editor matches that screen (↑ ↓). Select rows with the checkboxes, then use{" "}
             <strong>Delete selected</strong> above the table or in the toolbar. Use search and column
             filters to narrow the list.
@@ -1637,7 +1595,7 @@ export function QuoteObjectsPanel() {
               ) : null}
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1280px] text-left text-sm md:text-base">
+              <table className="w-full min-w-[960px] text-left text-sm md:text-base">
                 <thead className="border-b border-sf-border bg-sf-page dark:border-zinc-700 dark:bg-zinc-900">
                   <tr>
                     <th className="w-10 px-2 py-3 md:px-3 md:py-4">
@@ -1655,19 +1613,9 @@ export function QuoteObjectsPanel() {
                     </th>
                     <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Category</th>
                     <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Item</th>
-                    <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Product</th>
                     <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Type</th>
                     <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Object ID</th>
                     <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Area tags</th>
-                    {WB_LABOUR_SILO_HEADERS.map(({ key, label, title }) => (
-                      <th
-                        key={key}
-                        className="px-2 py-3 text-right text-xs font-semibold md:px-2 md:py-4"
-                        title={title}
-                      >
-                        {label}
-                      </th>
-                    ))}
                     <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Scopes</th>
                     <th className="px-4 py-3 text-right font-semibold md:px-5 md:py-4">
                       Actions
@@ -1703,7 +1651,7 @@ export function QuoteObjectsPanel() {
                     <th
                       scope="col"
                       className="px-4 pb-3 pt-0 align-top md:px-5"
-                      colSpan={4}
+                      colSpan={3}
                       aria-hidden
                     />
                     <th scope="col" className="px-4 pb-3 pt-0 align-top md:px-5">
@@ -1725,8 +1673,6 @@ export function QuoteObjectsPanel() {
                       </label>
                     </th>
                     <th scope="col" className="px-4 pb-3 pt-0 md:px-5" aria-hidden />
-                    <th scope="col" className="px-4 pb-3 pt-0 md:px-5" aria-hidden />
-                    <th scope="col" className="px-4 pb-3 pt-0 md:px-5" aria-hidden />
                     <th
                       scope="col"
                       className="px-4 pb-3 pt-0 text-right align-top md:px-5"
@@ -1738,7 +1684,7 @@ export function QuoteObjectsPanel() {
                   {displayRows.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={17}
+                        colSpan={9}
                         className="px-4 py-8 text-center text-sf-text-secondary dark:text-zinc-400 md:px-5"
                       >
                         No objects match your filters. Clear the search or column filters.
@@ -1776,9 +1722,6 @@ export function QuoteObjectsPanel() {
                             {r.objectname}
                           </button>
                         </td>
-                        <td className="max-w-[16rem] px-4 py-3 text-sf-text-secondary dark:text-zinc-300 md:px-5 md:py-3.5">
-                          {r.product?.trim() ? r.product : "—"}
-                        </td>
                         <td className="px-4 py-3 md:px-5 md:py-3.5">
                           {r.objecttype || "—"}
                         </td>
@@ -1792,22 +1735,6 @@ export function QuoteObjectsPanel() {
                                 .map((id) => areaById.get(id)?.areaname?.trim() || id)
                                 .join(", ")}
                         </td>
-                        {WB_LABOUR_SILO_HEADERS.map(({ key }) => (
-                          <td
-                            key={key}
-                            className="px-2 py-3 text-right tabular-nums text-sf-text-secondary dark:text-zinc-300 md:px-2 md:py-3.5"
-                          >
-                            {key === "generalHours"
-                              ? formatLoad(r.generalHours)
-                              : key === "projectManagerHours"
-                                ? formatLoad(r.projectManagerHours)
-                                : key === "paintingHours"
-                                  ? formatLoad(r.paintingHours)
-                                  : key === "plasteringHours"
-                                    ? formatLoad(r.plasteringHours)
-                                    : "—"}
-                          </td>
-                        ))}
                         <td className="max-w-[14rem] px-4 py-3 align-top text-xs leading-snug text-sf-text-secondary dark:text-zinc-300 md:px-5 md:py-3.5">
                           {scopeLinks.length === 0 ? (
                             <span className="text-sf-text-weak dark:text-zinc-500">—</span>
@@ -1910,53 +1837,6 @@ export function QuoteObjectsPanel() {
                   ) : null}
                 </div>
               </div>
-              <div className="mt-3 flex flex-wrap items-end gap-x-4 gap-y-3">
-                {WB_LABOUR_SILO_HEADERS.map(({ key, label, title }) => {
-                  const isTemplate = (
-                    TEMPLATE_LABOUR_SILO_KEYS as readonly LabourSiloKey[]
-                  ).includes(key);
-                  const valueMap: Record<string, string> = {
-                    generalHours: generalHoursStr,
-                    projectManagerHours: projectManagerHoursStr,
-                    paintingHours: paintingHoursStr,
-                    plasteringHours: plasteringHoursStr,
-                  };
-                  const setMap: Record<string, (v: string) => void> = {
-                    generalHours: setGeneralHoursStr,
-                    projectManagerHours: setProjectManagerHoursStr,
-                    paintingHours: setPaintingHoursStr,
-                    plasteringHours: setPlasteringHoursStr,
-                  };
-                  return (
-                    <label key={key} className="block w-[5.5rem] shrink-0">
-                      <span
-                        className="mb-1 block text-xs font-medium text-sf-text-secondary dark:text-zinc-300"
-                        title={title}
-                      >
-                        {label}
-                      </span>
-                      {isTemplate ? (
-                        <input
-                          form="quote-object-form"
-                          value={valueMap[key] ?? ""}
-                          onChange={(e) => setMap[key]?.(e.target.value)}
-                          inputMode="decimal"
-                          autoComplete="off"
-                          className={loadInputClass}
-                        />
-                      ) : (
-                        <span className="block min-h-9 rounded border border-dashed border-sf-border px-2 py-2 text-center text-sm text-sf-text-weak dark:border-zinc-600">
-                          —
-                        </span>
-                      )}
-                    </label>
-                  );
-                })}
-              </div>
-              <p className="mt-1.5 text-[11px] text-sf-text-weak dark:text-zinc-400">
-                Template labour hours (Gen, PM, Paint, Plast) copy to new project lines. CA/LC/Elec/Plumb
-                come from Object Labour Rates when a line is added.
-              </p>
             </div>
             <form id="quote-object-form" onSubmit={submitForm} className="space-y-4 px-5 py-5">
               <div className="flex flex-col gap-4">
@@ -2284,7 +2164,7 @@ export function QuoteObjectsPanel() {
                   </h3>
                   {sortedPriceLevels.length === 0 ? (
                     <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-                      Add price levels under Setup → Price Levels first. Until then, you cannot set
+                      Add price levels under System → Price Levels first. Until then, you cannot set
                       tiered prices here.
                     </p>
                   ) : (

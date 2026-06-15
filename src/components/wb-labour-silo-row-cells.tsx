@@ -6,7 +6,9 @@ import {
   objectLabourRatesLookupName,
 } from "@/lib/client/labour-rate-index";
 import {
+  isLabourLookupManuallyOverridden,
   LABOUR_SILO_KEYS,
+  LOOKUP_LABOUR_SILO_KEYS,
   WB_WORKBENCH_LABOUR_SILO_HEADERS,
 } from "@/lib/labour-silo";
 import type { DataObjectLabourRatePublic } from "@/types/data-object-labour-rate-public";
@@ -52,23 +54,39 @@ export function WbLabourSiloRowCells({
 
   return (
     <>
-      {WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key }) => (
-        <WbLabourSiloCell
-          key={key}
-          siloKey={key}
-          hours={row[key]}
-          contractRates={contractRates}
-          objectLabourDuplicate={dup}
-          objectLabourMatchName={objectLabourMatchName}
-          skuProduct={skuProduct}
-          editable={false}
-          disabled={saving}
-          cellClassName={wbCellLoad}
-          inputClassName={wbInputLoad}
-          inputKey={inputKey(row, key)}
-          displayKey={`${inputKey(row, key)}-${row[key] ?? "n"}`}
-        />
-      ))}
+      {WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key }) => {
+        const lookupKey = key as (typeof LOOKUP_LABOUR_SILO_KEYS)[number];
+        return (
+          <WbLabourSiloCell
+            key={lookupKey}
+            siloKey={lookupKey}
+            hours={row[lookupKey]}
+            contractRates={contractRates}
+            objectLabourDuplicate={dup}
+            objectLabourMatchName={objectLabourMatchName}
+            skuProduct={skuProduct}
+            editable
+            manualOverride={isLabourLookupManuallyOverridden(
+              row.labourLookupManualOverrides,
+              lookupKey,
+            )}
+            disabled={saving}
+            cellClassName={wbCellLoad}
+            inputClassName={wbInputLoad}
+            inputKey={inputKey(row, lookupKey)}
+            displayKey={`${inputKey(row, lookupKey)}-${row[lookupKey] ?? "n"}-${row.labourLookupManualOverrides?.[lookupKey] ? "m" : "l"}`}
+            onHoursChange={(next) => {
+              onPatch(row.id, {
+                [lookupKey]: next,
+                labourLookupManualOverrides: {
+                  ...(row.labourLookupManualOverrides ?? {}),
+                  [lookupKey]: true,
+                },
+              });
+            }}
+          />
+        );
+      })}
     </>
   );
 }

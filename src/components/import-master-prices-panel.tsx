@@ -15,6 +15,7 @@ import {
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CascadesTablePanel } from "@/components/cascades-table-panel";
 import { clearLookupsCache } from "@/lib/client/use-lookups";
+import { clearLookupsColoursCache } from "@/lib/client/use-lookups-colours";
 import { consumeNdjsonStream } from "@/lib/client/consume-ndjson-stream";
 import { readApiJson } from "@/lib/client/read-api-json";
 import {
@@ -190,9 +191,12 @@ export function ImportMasterPricesPanel() {
   const [preparingObjects, setPreparingObjects] = useState(false);
   const [prepareResult, setPrepareResult] = useState<{
     distinctFromSkus: number;
+    distinctFromLabourRates: number;
     created: number;
-    skippedExisting: number;
+    mergedExisting: number;
     skippedIncomplete: number;
+    labourSkusCreated: number;
+    labourSkusUpdated: number;
     removedDataObjects: number;
     quoteObjectsCreated: number;
     quoteObjectsUpdated: number;
@@ -200,7 +204,7 @@ export function ImportMasterPricesPanel() {
     objectCategoryLookupsCreated: number;
     objectCategoryLookupsAlreadyPresent: number;
   } | null>(null);
-  /** Prepare Objects: drop data_objects not derived from current data_skus. */
+  /** Prepare Objects: drop data_objects not derived from current data_skus or data_labourrates. */
   const [removeDataObjectsNotInSkus, setRemoveDataObjectsNotInSkus] = useState(false);
   /** Prepare Objects: drop SKU-pipeline quote_objects with no matching data_objects row. */
   const [removeQuoteObjectsNotInDataObjects, setRemoveQuoteObjectsNotInDataObjects] =
@@ -313,7 +317,7 @@ export function ImportMasterPricesPanel() {
     null,
   );
   /** After full SKU import: delete data_skus left with isCurrent=false (not on sheet). */
-  const [removeProductsNotInSheet, setRemoveProductsNotInSheet] = useState(false);
+  const [removeProductsNotInSheet, setRemoveProductsNotInSheet] = useState(true);
   const [importSkuAllSelected, setImportSkuAllSelected] = useState(true);
   const [importBuildingSelected, setImportBuildingSelected] = useState(false);
   const [importPaintingSelected, setImportPaintingSelected] = useState(false);
@@ -610,6 +614,7 @@ export function ImportMasterPricesPanel() {
         },
       });
       clearLookupsCache();
+      clearLookupsColoursCache();
       return true;
     } catch (e) {
       setImportListsError(e instanceof Error ? e.message : "Import lists failed");
@@ -1061,9 +1066,12 @@ export function ImportMasterPricesPanel() {
       const data = await readApiJson<{
         ok?: boolean;
         distinctFromSkus?: number;
+        distinctFromLabourRates?: number;
         created?: number;
-        skippedExisting?: number;
+        mergedExisting?: number;
         skippedIncomplete?: number;
+        labourSkusCreated?: number;
+        labourSkusUpdated?: number;
         removedDataObjects?: number;
         quoteObjectsCreated?: number;
         quoteObjectsUpdated?: number;
@@ -1075,9 +1083,12 @@ export function ImportMasterPricesPanel() {
       if (!res.ok) throw new Error(data.error ?? "Prepare objects failed");
       setPrepareResult({
         distinctFromSkus: data.distinctFromSkus ?? 0,
+        distinctFromLabourRates: data.distinctFromLabourRates ?? 0,
         created: data.created ?? 0,
-        skippedExisting: data.skippedExisting ?? 0,
+        mergedExisting: data.mergedExisting ?? 0,
         skippedIncomplete: data.skippedIncomplete ?? 0,
+        labourSkusCreated: data.labourSkusCreated ?? 0,
+        labourSkusUpdated: data.labourSkusUpdated ?? 0,
         removedDataObjects: data.removedDataObjects ?? 0,
         quoteObjectsCreated: data.quoteObjectsCreated ?? 0,
         quoteObjectsUpdated: data.quoteObjectsUpdated ?? 0,
@@ -1590,9 +1601,10 @@ export function ImportMasterPricesPanel() {
                 Remove products not on sheet
               </span>
               <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
-                Applies to each selected SKU import. After import, deletes{" "}
-                <code className="text-xs">data_skus</code> (and suppliers) not on that tab — rows
-                left with <code className="text-xs">isCurrent=false</code>.{" "}
+                Applies to each selected SKU import. Matches products by key columns{" "}
+                <strong>A–F</strong> (Category, Product Type, Product, Elevate, Style, Colour —
+                not UOM). Marks off-sheet rows <code className="text-xs">isCurrent=false</code>,
+                then deletes them and their suppliers.{" "}
                 <strong>SKU (all)</strong> scans the full catalog; Building / Painting only remove
                 within categories present on that tab.
               </span>
@@ -2206,15 +2218,19 @@ export function ImportMasterPricesPanel() {
 
         <section className="flex flex-col gap-3 rounded-lg border-2 border-sf-brand/30 bg-sf-page px-4 py-4 dark:border-[#58a9f5]/30 dark:bg-zinc-900/60">
           <h3 className="text-sm font-semibold text-sf-text dark:text-zinc-100">
-            Create objects — <code className="text-xs font-normal">data_skus</code> →{" "}
+            Create objects — <code className="text-xs font-normal">data_skus</code> +{" "}
+            <code className="text-xs font-normal">data_labourrates</code> →{" "}
             <code className="text-xs font-normal">data_objects</code> →{" "}
             <code className="text-xs font-normal">quote_objects</code>
           </h3>
           <p className="text-xs text-sf-text-weak dark:text-zinc-500">
             <strong>Prepare Objects</strong> merges distinct category + product type rows from SKUs
-            into <code className="text-xs">data_objects</code>, then creates or updates matching{" "}
-            <code className="text-xs">quote_objects</code>. Use the checkboxes to remove rows that
-            no longer belong in the pipeline (optional).
+            and every row from <code className="text-xs">data_labourrates</code> (product type =
+            rate product, tier/style/colour All on matching SKUs) into{" "}
+            <code className="text-xs">data_objects</code>, then creates or updates matching{" "}
+            <code className="text-xs">quote_objects</code>. Existing rows are merged; new rows are
+            appended. Use the checkboxes to remove rows that no longer belong in the pipeline
+            (optional).
           </p>
           <label className="flex cursor-pointer items-start gap-2 text-sm">
             <input
@@ -2226,12 +2242,13 @@ export function ImportMasterPricesPanel() {
             />
             <span className="text-sf-text-secondary dark:text-zinc-300">
               <span className="font-medium text-sf-text dark:text-zinc-100">
-                Remove data_objects not in current SKUs
+                Remove data_objects not in current SKUs or labour rates
               </span>
               <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
-                Deletes <code className="text-xs">data_objects</code> whose category + product
-                type are not present in <code className="text-xs">data_skus</code> (runs before
-                creating missing rows).
+                Deletes <code className="text-xs">data_objects</code> whose keys are not present in{" "}
+                <code className="text-xs">data_skus</code> or{" "}
+                <code className="text-xs">data_labourrates</code> (runs before creating missing
+                rows).
               </span>
             </span>
           </label>
@@ -2441,12 +2458,11 @@ export function ImportMasterPricesPanel() {
         ) : null}
         {prepareResult ? (
           <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
-            Prepare objects: {prepareResult.distinctFromSkus} distinct category + product type
-            line(s) from SKUs —{" "}
-            {prepareResult.created} data_object(s) added, {prepareResult.skippedExisting} already
-            present
+            Prepare objects: {prepareResult.distinctFromSkus} distinct SKU line(s),{" "}
+            {prepareResult.distinctFromLabourRates} labour rate line(s) —{" "}
+            {prepareResult.created} data_object(s) added, {prepareResult.mergedExisting} merged
             {prepareResult.removedDataObjects > 0
-              ? `, ${prepareResult.removedDataObjects} data_object(s) removed (not in SKUs)`
+              ? `, ${prepareResult.removedDataObjects} data_object(s) removed (not in sources)`
               : ""}
             {prepareResult.quoteObjectsCreated > 0 || prepareResult.quoteObjectsUpdated > 0
               ? ` · quote_objects: ${prepareResult.quoteObjectsCreated} created, ${prepareResult.quoteObjectsUpdated} updated`
@@ -2454,8 +2470,11 @@ export function ImportMasterPricesPanel() {
             {prepareResult.removedQuoteObjects > 0
               ? `, ${prepareResult.removedQuoteObjects} quote_object(s) removed (not in data_objects)`
               : ""}
+            {prepareResult.labourSkusCreated > 0 || prepareResult.labourSkusUpdated > 0
+              ? ` · labour SKUs: ${prepareResult.labourSkusCreated} added, ${prepareResult.labourSkusUpdated} updated`
+              : ""}
             {prepareResult.skippedIncomplete > 0
-              ? ` · ${prepareResult.skippedIncomplete} SKU row(s) missing category or product type`
+              ? ` · ${prepareResult.skippedIncomplete} source row(s) missing required fields`
               : ""}
             {prepareResult.objectCategoryLookupsCreated > 0 ||
             prepareResult.objectCategoryLookupsAlreadyPresent > 0

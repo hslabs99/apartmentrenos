@@ -12,7 +12,7 @@ export const CL_UOM_WIDTH = "10ch";
 export const CL_MEASURE_WIDTH = "10ch";
 export const CL_NON_STD_WIDTH = "5.5rem";
 export const CL_TOTAL_PRICE_WIDTH = "10ch";
-export const CL_TOOL_WIDTH = "2.25rem";
+export const CL_TOOL_WIDTH = "4.75rem";
 
 /** Shared control height for checklist SKU / measure / UOM inputs (one row). */
 export const CL_FIELD_CONTROL_HEIGHT_CLASS = "h-[1.625rem]";
@@ -42,6 +42,10 @@ export const clInlineFieldLabelClass =
 
 export const clScopeQuestionTextClass =
   "shrink-0 text-left text-[1.3125rem] font-semibold leading-snug text-sf-text dark:text-zinc-100";
+
+/** Metric inputs row — directly under scope question + answer. */
+export const clScopeMetricsRowClass =
+  "mb-1.5 flex w-max max-w-full flex-wrap items-end gap-x-4 gap-y-2 pl-3 pr-3";
 
 /** Object name on rows without inline answer (extra object lines) */
 export const clObjectNameRowClass =
@@ -86,9 +90,19 @@ export const clUomFieldClass =
 export const clMeasureFieldClass =
   "flex w-[10ch] max-w-[10ch] shrink-0 flex-col gap-0.5 overflow-hidden";
 
-/** Non Std, Add scope, Add object — square border, light grey background. */
+/** Non Std — square border, light grey background. Area add/remove actions live in the … menu. */
 export const clActionBtnClass =
   "min-h-8 shrink-0 rounded-none border border-sf-border-strong bg-zinc-100 px-2.5 py-1 text-xs font-medium text-sf-text transition hover:bg-zinc-200/90 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700";
+
+/** Calculator trigger — icon only, no nested button chrome. */
+export const clCalculatorIconBtnClass =
+  "inline-flex shrink-0 items-center justify-center border-0 bg-transparent p-0 text-sf-text transition hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-100 dark:hover:text-emerald-300";
+
+/** Object / scope line calculator icon size. */
+export const clCalculatorIconClass = "size-6";
+
+/** Area header calculator icon — slightly larger for scanability. */
+export const clAreaCalculatorIconClass = "size-7";
 
 export const clActionBtnActiveClass =
   "rounded-none border-red-500 bg-zinc-100 text-red-900 hover:bg-zinc-200/90 dark:border-red-600 dark:bg-zinc-800 dark:text-red-200 dark:hover:bg-zinc-700";

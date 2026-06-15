@@ -2,12 +2,14 @@
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ScopeAnswerObjectPicker } from "@/components/scope-answer-object-picker";
+import { ScopeMetricsEditor } from "@/components/scope-metrics-editor";
 import {
   draftToPayload,
   publicAnswersToDraft,
   type ScopeFormDraftAnswer,
 } from "@/lib/client/scope-form-draft";
 import { readApiJson } from "@/lib/client/read-api-json";
+import { loadCatalogSkuData } from "@/lib/client/load-catalog-sku-data";
 import {
   DEFAULT_SCOPE_TOOL_TYPE,
   SCOPE_TOOL_TYPES,
@@ -22,9 +24,15 @@ import {
   type SystemScopeType,
 } from "@/lib/system-scope-types";
 import type { AreaPublic } from "@/types/area";
+import type { InheritMeasureSource } from "@/types/scope-metric";
+import type { ScopeMetricPublic } from "@/types/scope-metric";
 import type { QuoteObjectPublic } from "@/types/quote-object";
+import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { ScopePublic } from "@/types/scope";
+import { sfTabStripClass, sfUnderlineTabClass } from "@/lib/sf-tabs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+type ScopeFormTab = "details" | "answers";
 
 export type ScopeFormMode =
   | "create"
@@ -35,6 +43,15 @@ export type ScopeFormMode =
 
 const inputClass =
   "min-h-12 w-full rounded-lg border border-sf-border-strong bg-sf-surface px-3 py-2.5 text-base dark:border-zinc-600 dark:bg-zinc-950";
+
+function cloneScopeMetricsDraft(metrics: ScopeMetricPublic[] | undefined): ScopeMetricPublic[] {
+  return (metrics ?? []).map((m) => ({
+    metricid: m.metricid,
+    label: m.label,
+    uom: m.uom,
+    answerids: [...m.answerids],
+  }));
+}
 
 const EMPTY_AREA_DOC_IDS: string[] = [];
 const EMPTY_SCOPES: ScopePublic[] = [];
@@ -82,6 +99,7 @@ export function ScopeFormModal({
   const [selectedAnswerId, setSelectedAnswerId] = useState<string | null>(null);
   const [quoteObjects, setQuoteObjects] = useState<QuoteObjectPublic[]>(quoteObjectsProp);
   const [quoteObjectsLoading, setQuoteObjectsLoading] = useState(false);
+  const [catalogSkus, setCatalogSkus] = useState<DataSkuPublic[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [answerRemoveConfirmId, setAnswerRemoveConfirmId] = useState<string | null>(null);
@@ -91,6 +109,8 @@ export function ScopeFormModal({
   const [exposeToolDraft, setExposeToolDraft] = useState(false);
   const [scopeToolTypeDraft, setScopeToolTypeDraft] =
     useState<ScopeToolType>(DEFAULT_SCOPE_TOOL_TYPE);
+  const [scopeMetricsDraft, setScopeMetricsDraft] = useState<ScopeMetricPublic[]>([]);
+  const [activeTab, setActiveTab] = useState<ScopeFormTab>("details");
   const formInitializedForRef = useRef<string | null>(null);
 
   const activeScope = scopeDocId?.trim() ? fetchedScope : scope;
@@ -185,6 +205,25 @@ export function ScopeFormModal({
 
   useEffect(() => {
     if (!open) {
+      setCatalogSkus([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { skus } = await loadCatalogSkuData();
+        if (!cancelled) setCatalogSkus(skus);
+      } catch {
+        if (!cancelled) setCatalogSkus([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
       setQuoteObjects(quoteObjectsProp);
     }
   }, [open, quoteObjectsProp]);
@@ -240,6 +279,7 @@ export function ScopeFormModal({
     setError(null);
     setSaving(false);
     setAnswerRemoveConfirmId(null);
+    setActiveTab("details");
     setFormReady(false);
 
     if (effectiveMode === "create") {
@@ -255,6 +295,9 @@ export function ScopeFormModal({
         attachedObjectTools: {},
         attachedObjectShowAll: {},
         attachedObjectNoCharge: {},
+        attachedObjectForce: {},
+        attachedObjectInheritM2Source: {},
+        attachedObjectInheritMeasureLocked: {},
       };
       setDraftAnswers([first]);
       setSelectedAnswerId(first.answerid);
@@ -262,6 +305,7 @@ export function ScopeFormModal({
       setSystemScopeTypeDraft(DEFAULT_SYSTEM_SCOPE_TYPE);
       setExposeToolDraft(false);
       setScopeToolTypeDraft(DEFAULT_SCOPE_TOOL_TYPE);
+      setScopeMetricsDraft([]);
       void loadQuoteObjects().then(() => setFormReady(true));
       return;
     }
@@ -274,6 +318,7 @@ export function ScopeFormModal({
       setQuestion("");
       setDraftAnswers([]);
       setSelectedAnswerId(null);
+      setScopeMetricsDraft([]);
       setFormReady(true);
       return;
     }
@@ -288,16 +333,19 @@ export function ScopeFormModal({
     setSystemScopeTypeDraft(activeScope.systemScopeType ?? DEFAULT_SYSTEM_SCOPE_TYPE);
     setExposeToolDraft(activeScope.exposeTool === true);
     setScopeToolTypeDraft(activeScope.scopeToolType ?? DEFAULT_SCOPE_TOOL_TYPE);
+    setScopeMetricsDraft(cloneScopeMetricsDraft(activeScope.scopeMetrics));
 
     if (activeScope.kind === "header") {
       setDraftAnswers([]);
       setSelectedAnswerId(null);
+      setScopeMetricsDraft([]);
       setFormReady(true);
       return;
     }
     if (activeScope.kind === "footer") {
       setDraftAnswers([]);
       setSelectedAnswerId(null);
+      setScopeMetricsDraft([]);
       setFormReady(true);
       return;
     }
@@ -348,12 +396,21 @@ export function ScopeFormModal({
         attachedObjectTools: {},
         attachedObjectShowAll: {},
         attachedObjectNoCharge: {},
+        attachedObjectForce: {},
+        attachedObjectInheritM2Source: {},
+        attachedObjectInheritMeasureLocked: {},
       },
     ]);
     setSelectedAnswerId(id);
   }
 
   function removeAnswer(answerid: string) {
+    setScopeMetricsDraft((prev) =>
+      prev.map((m) => ({
+        ...m,
+        answerids: m.answerids.filter((id) => id !== answerid),
+      })),
+    );
     setDraftAnswers((prev) => {
       const next = prev.filter((a) => a.answerid !== answerid);
       setSelectedAnswerId((sel) => (sel === answerid ? (next[0]?.answerid ?? null) : sel));
@@ -379,11 +436,24 @@ export function ScopeFormModal({
         }
         const attachedObjectShowAll: Partial<Record<string, boolean>> = {};
         const attachedObjectNoCharge: Partial<Record<string, boolean>> = {};
+        const attachedObjectForce: Partial<Record<string, boolean>> = {};
+        const attachedObjectInheritM2Source: Partial<Record<string, InheritMeasureSource>> =
+          {};
+        const attachedObjectInheritMeasureLocked: Partial<Record<string, boolean>> = {};
         for (const [key, flag] of Object.entries(a.attachedObjectShowAll)) {
           if (idSet.has(key) && flag) attachedObjectShowAll[key] = true;
         }
         for (const [key, flag] of Object.entries(a.attachedObjectNoCharge)) {
           if (idSet.has(key) && flag) attachedObjectNoCharge[key] = true;
+        }
+        for (const [key, flag] of Object.entries(a.attachedObjectForce)) {
+          if (idSet.has(key) && flag) attachedObjectForce[key] = true;
+        }
+        for (const [key, src] of Object.entries(a.attachedObjectInheritM2Source)) {
+          if (idSet.has(key) && src) attachedObjectInheritM2Source[key] = src;
+        }
+        for (const [key, locked] of Object.entries(a.attachedObjectInheritMeasureLocked)) {
+          if (idSet.has(key) && locked === false) attachedObjectInheritMeasureLocked[key] = false;
         }
         return {
           ...a,
@@ -391,6 +461,9 @@ export function ScopeFormModal({
           attachedObjectTools,
           attachedObjectShowAll,
           attachedObjectNoCharge,
+          attachedObjectForce,
+          attachedObjectInheritM2Source,
+          attachedObjectInheritMeasureLocked,
         };
       }),
     );
@@ -420,6 +493,39 @@ export function ScopeFormModal({
   ) {
     setDraftAnswers((prev) =>
       prev.map((a) => (a.answerid === answerid ? { ...a, attachedObjectNoCharge: noCharge } : a)),
+    );
+  }
+
+  function setAnswerObjectForce(
+    answerid: string,
+    force: Partial<Record<string, boolean>>,
+  ) {
+    setDraftAnswers((prev) =>
+      prev.map((a) => (a.answerid === answerid ? { ...a, attachedObjectForce: force } : a)),
+    );
+  }
+
+  function setAnswerObjectInheritM2Source(
+    answerid: string,
+    inheritM2Source: Partial<Record<string, InheritMeasureSource>>,
+  ) {
+    setDraftAnswers((prev) =>
+      prev.map((a) =>
+        a.answerid === answerid ? { ...a, attachedObjectInheritM2Source: inheritM2Source } : a,
+      ),
+    );
+  }
+
+  function setAnswerObjectInheritMeasureLocked(
+    answerid: string,
+    inheritMeasureLocked: Partial<Record<string, boolean>>,
+  ) {
+    setDraftAnswers((prev) =>
+      prev.map((a) =>
+        a.answerid === answerid
+          ? { ...a, attachedObjectInheritMeasureLocked: inheritMeasureLocked }
+          : a,
+      ),
     );
   }
 
@@ -508,6 +614,12 @@ export function ScopeFormModal({
         const payload: Record<string, unknown> = {
           question,
           answers: draftToPayload(draftAnswers, quoteById),
+          scopeMetrics: scopeMetricsDraft.map((m) => ({
+            metricid: m.metricid,
+            label: m.label.trim(),
+            uom: m.uom.trim(),
+            answerids: [...m.answerids],
+          })),
           systemScope: systemScopeDraft,
           systemScopeType: systemScopeDraft ? systemScopeTypeDraft : null,
           exposeTool: exposeToolDraft,
@@ -576,6 +688,13 @@ export function ScopeFormModal({
 
   const showLoading = fetchingScope || ((isEditMode || effectiveMode === "create") && !formReady && !error);
 
+  const saveDisabled =
+    saving ||
+    (isSectionMarkerForm
+      ? !question.trim()
+      : draftAnswers.length === 0 ||
+        (!tagAllAreasDraft && questionAreaDocIds.length === 0));
+
   return (
     <>
       <div
@@ -592,29 +711,73 @@ export function ScopeFormModal({
         }}
       >
         <div
-          className="max-h-[92dvh] w-full overflow-y-auto rounded-t-lg border border-sf-border bg-sf-surface shadow-xl dark:border-zinc-700 dark:bg-zinc-900 sm:max-w-5xl sm:rounded-lg"
+          className="max-h-[92dvh] w-full overflow-y-auto rounded-t-lg border border-sf-border bg-sf-surface shadow-xl dark:border-zinc-700 dark:bg-zinc-900 sm:max-w-[96rem] sm:rounded-lg"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="border-b border-sf-border px-5 py-4 dark:border-zinc-700">
-            <h2 id="scope-form-title" className="text-lg font-semibold md:text-xl">
-              {title}
-            </h2>
-            {isSectionMarkerForm ? (
-              <p className="mt-2 text-sm text-sf-text-secondary dark:text-zinc-400">
-                {effectiveMode === "edit-footer" ? (
-                  <>
-                    Footers mark the end of a section block (for future section-level actions). They
-                    do not collect answers or add lines—move this row with ↑ ↓ to wrap the questions
-                    between the header and footer.
-                  </>
-                ) : (
-                  <>
-                    Section headers are labels only. They do not collect answers or add lines—use
-                    them to group scope questions in the checklist.
-                  </>
-                )}
-              </p>
-            ) : null}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <h2 id="scope-form-title" className="text-lg font-semibold md:text-xl">
+                    {title}
+                  </h2>
+                  {!isSectionMarkerForm && !showLoading ? (
+                    <input
+                      readOnly
+                      tabIndex={-1}
+                      size={10}
+                      aria-label="Scope ID"
+                      title={
+                        effectiveMode === "edit" && activeScope
+                          ? `Scope ID ${activeScope.scopeid ?? "—"}`
+                          : "Scope ID assigned on save"
+                      }
+                      value={
+                        effectiveMode === "edit" && activeScope
+                          ? String(activeScope.scopeid ?? "—")
+                          : "—"
+                      }
+                      className="w-[10ch] min-h-0 shrink-0 rounded border border-sf-border/60 bg-sf-page/50 px-1.5 py-0.5 text-xs font-normal text-sf-text-weak dark:border-zinc-700/60 dark:bg-zinc-900/50 dark:text-zinc-500"
+                    />
+                  ) : null}
+                </div>
+                {isSectionMarkerForm ? (
+                  <p className="mt-2 text-sm text-sf-text-secondary dark:text-zinc-400">
+                    {effectiveMode === "edit-footer" ? (
+                      <>
+                        Footers mark the end of a section block (for future section-level actions). They
+                        do not collect answers or add lines—move this row with ↑ ↓ to wrap the questions
+                        between the header and footer.
+                      </>
+                    ) : (
+                      <>
+                        Section headers are labels only. They do not collect answers or add lines—use
+                        them to group scope questions in the checklist.
+                      </>
+                    )}
+                  </p>
+                ) : null}
+              </div>
+              {!showLoading ? (
+                <div className="flex shrink-0 flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="min-h-11 rounded-lg border border-sf-border-strong px-4 py-2.5 text-sm font-medium dark:border-zinc-600 sm:min-h-10 sm:text-base"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    form="scope-form"
+                    disabled={saveDisabled}
+                    className="min-h-11 rounded-lg bg-sf-brand px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50 sm:min-h-10 sm:text-base"
+                  >
+                    {saving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
           {error ? (
             <div
@@ -629,25 +792,31 @@ export function ScopeFormModal({
               {fetchingScope ? "Loading scope…" : "Loading quote objects…"}
             </p>
           ) : (
-          <form onSubmit={submitForm} className="space-y-4 px-5 py-5">
+          <form id="scope-form" onSubmit={submitForm} className="space-y-4 px-5 py-5">
             {!isSectionMarkerForm ? (
-              <div className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Scope ID
-                </span>
-                <input
-                  readOnly
-                  value={
-                    effectiveMode === "edit" && activeScope
-                      ? String(activeScope.scopeid ?? "—")
-                      : "— (assigned on save)"
-                  }
-                  className={`${inputClass} bg-sf-page dark:bg-zinc-900`}
-                />
+              <div className={sfTabStripClass} role="tablist" aria-label="Scope sections">
+                <button
+                  type="button"
+                  className={sfUnderlineTabClass(activeTab === "details")}
+                  role="tab"
+                  aria-selected={activeTab === "details"}
+                  onClick={() => setActiveTab("details")}
+                >
+                  Scope Details
+                </button>
+                <button
+                  type="button"
+                  className={sfUnderlineTabClass(activeTab === "answers")}
+                  role="tab"
+                  aria-selected={activeTab === "answers"}
+                  onClick={() => setActiveTab("answers")}
+                >
+                  Scope Answers
+                </button>
               </div>
             ) : null}
 
-            {!isSectionMarkerForm ? (
+            {!isSectionMarkerForm && activeTab === "details" ? (
               <div className="space-y-2 rounded-lg border border-sf-border bg-sf-page/40 p-4 dark:border-zinc-700 dark:bg-zinc-900/40">
                 <span className="block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
                   Area tags
@@ -727,7 +896,7 @@ export function ScopeFormModal({
                   </p>
                 )}
               </div>
-            ) : (
+            ) : isSectionMarkerForm ? (
               <label className="block">
                 <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
                   Area
@@ -746,8 +915,9 @@ export function ScopeFormModal({
                   ))}
                 </select>
               </label>
-            )}
+            ) : null}
 
+            {isSectionMarkerForm || activeTab === "details" ? (
             <label className="block">
               <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
                 {effectiveMode === "edit-footer"
@@ -773,8 +943,9 @@ export function ScopeFormModal({
               />
               <span className="mt-1 block text-xs text-sf-text-weak">{question.length}/200</span>
             </label>
+            ) : null}
 
-            {!isSectionMarkerForm ? (
+            {!isSectionMarkerForm && activeTab === "details" ? (
               <div className="space-y-3 rounded-lg border border-sf-border bg-sf-page/40 p-4 dark:border-zinc-700 dark:bg-zinc-900/40">
                 <label className="flex cursor-pointer items-start gap-2 text-sm text-sf-text dark:text-zinc-200">
                   <input
@@ -820,7 +991,7 @@ export function ScopeFormModal({
               </div>
             ) : null}
 
-            {!isSectionMarkerForm ? (
+            {!isSectionMarkerForm && activeTab === "details" ? (
               <div className="space-y-3 rounded-lg border border-sf-border bg-sf-page/40 p-4 dark:border-zinc-700 dark:bg-zinc-900/40">
                 <label className="flex cursor-pointer items-start gap-2 text-sm text-sf-text dark:text-zinc-200">
                   <input
@@ -858,8 +1029,18 @@ export function ScopeFormModal({
               </div>
             ) : null}
 
-            {!isSectionMarkerForm ? (
-              <div className="grid gap-4 border-t border-sf-border pt-4 dark:border-zinc-700 lg:grid-cols-[minmax(200px,260px)_1fr]">
+            {!isSectionMarkerForm && activeTab === "answers" ? (
+              <ScopeMetricsEditor
+                metrics={scopeMetricsDraft}
+                answers={draftAnswers}
+                onChange={setScopeMetricsDraft}
+                disabled={saving}
+                inputClassName={inputClass}
+              />
+            ) : null}
+
+            {!isSectionMarkerForm && activeTab === "answers" ? (
+              <div className="grid gap-4 lg:grid-cols-[minmax(200px,260px)_1fr]">
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <h3 className="text-base font-semibold">Answers</h3>
@@ -941,11 +1122,17 @@ export function ScopeFormModal({
                   ) : (
                     <ScopeAnswerObjectPicker
                       quoteObjects={quoteObjects}
+                      catalogSkus={catalogSkus}
+                      scopeMetrics={scopeMetricsDraft}
+                      answerid={selectedAnswer.answerid}
                       systemScopeType={systemScopeDraft ? systemScopeTypeDraft : null}
                       selectedIds={selectedAnswer.attachedQuoteObjectIds}
                       objectTools={selectedAnswer.attachedObjectTools}
                       objectShowAll={selectedAnswer.attachedObjectShowAll}
                       objectNoCharge={selectedAnswer.attachedObjectNoCharge}
+                      objectForce={selectedAnswer.attachedObjectForce}
+                      objectInheritM2Source={selectedAnswer.attachedObjectInheritM2Source}
+                      objectInheritMeasureLocked={selectedAnswer.attachedObjectInheritMeasureLocked}
                       onChange={(ids) => setAnswerQuoteObjectIds(selectedAnswer.answerid, ids)}
                       onObjectToolsChange={(tools) =>
                         setAnswerObjectTools(selectedAnswer.answerid, tools)
@@ -955,6 +1142,18 @@ export function ScopeFormModal({
                       }
                       onObjectNoChargeChange={(noCharge) =>
                         setAnswerObjectNoCharge(selectedAnswer.answerid, noCharge)
+                      }
+                      onObjectForceChange={(force) =>
+                        setAnswerObjectForce(selectedAnswer.answerid, force)
+                      }
+                      onObjectInheritM2SourceChange={(inheritM2Source) =>
+                        setAnswerObjectInheritM2Source(selectedAnswer.answerid, inheritM2Source)
+                      }
+                      onObjectInheritMeasureLockedChange={(inheritMeasureLocked) =>
+                        setAnswerObjectInheritMeasureLocked(
+                          selectedAnswer.answerid,
+                          inheritMeasureLocked,
+                        )
                       }
                       disabled={saving}
                       inputClassName={inputClass}
@@ -974,13 +1173,7 @@ export function ScopeFormModal({
               </button>
               <button
                 type="submit"
-                disabled={
-                  saving ||
-                  (isSectionMarkerForm
-                    ? !question.trim()
-                    : draftAnswers.length === 0 ||
-                      (!tagAllAreasDraft && questionAreaDocIds.length === 0))
-                }
+                disabled={saveDisabled}
                 className="min-h-11 rounded-lg bg-sf-brand px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
               >
                 {saving ? "Saving…" : "Save"}

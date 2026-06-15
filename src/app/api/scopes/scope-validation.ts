@@ -1,5 +1,9 @@
+import { isInheritMeasureSource, isScopeMetricInheritSource } from "@/lib/scope-metrics";
 import { isScopeToolType } from "@/lib/scope-tools";
 import type { ScopeToolType } from "@/lib/scope-tools";
+import type { InheritMeasureSource } from "@/types/scope-metric";
+import type { ScopeMetricPublic } from "@/types/scope-metric";
+import { MAX_SCOPE_METRICS } from "@/types/scope-metric";
 import {
   isSystemScopeType,
   normalizeSystemScopeFields,
@@ -67,6 +71,20 @@ export const scopeAnswerSchema = z.object({
   attachedObjectTools: z.record(z.string().min(1).max(128), z.string().min(1).max(64)).optional(),
   attachedObjectShowAll: z.record(z.string().min(1).max(128), z.boolean()).optional(),
   attachedObjectNoCharge: z.record(z.string().min(1).max(128), z.boolean()).optional(),
+  attachedObjectForce: z.record(z.string().min(1).max(128), z.boolean()).optional(),
+  attachedObjectInheritM2Source: z
+    .record(z.string().min(1).max(128), z.string().min(1).max(128))
+    .optional(),
+  attachedObjectInheritMeasureLocked: z
+    .record(z.string().min(1).max(128), z.boolean())
+    .optional(),
+});
+
+export const scopeMetricSchema = z.object({
+  metricid: z.string().uuid(),
+  label: z.string().min(1).max(120),
+  uom: z.string().min(1).max(32),
+  answerids: z.array(z.string().uuid()).optional().default([]),
 });
 
 export const scopeWriteSchema = z
@@ -80,6 +98,7 @@ export const scopeWriteSchema = z
     question: z.string().min(1).max(200),
     kind: z.enum(["question", "header", "footer"]).optional(),
     answers: z.array(scopeAnswerSchema).optional(),
+    scopeMetrics: z.array(scopeMetricSchema).max(MAX_SCOPE_METRICS).optional(),
     /** When creating a section header, also create a paired footer row (default true). */
     pairFooter: z.boolean().optional(),
     /** Optional label stored on the paired footer (default “Footer”). */
@@ -157,6 +176,7 @@ export const scopePatchSchema = z
     question: z.string().min(1).max(200).optional(),
     kind: z.enum(["question", "header", "footer"]).optional(),
     answers: z.array(scopeAnswerSchema).optional(),
+    scopeMetrics: z.array(scopeMetricSchema).max(MAX_SCOPE_METRICS).optional(),
     systemScope: z.boolean().optional(),
     systemScopeType: systemScopeTypeSchema,
     exposeTool: z.boolean().optional(),
@@ -253,6 +273,60 @@ function normalizeAttachedObjectFlags(
   return out;
 }
 
+function normalizeAttachedObjectInheritM2Sources(
+  raw: Record<string, string> | undefined,
+  attachedIds: string[],
+): Record<string, InheritMeasureSource> {
+  if (!raw || typeof raw !== "object") return {};
+  const allowed = new Set(attachedIds);
+  const out: Record<string, InheritMeasureSource> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const id = key.trim();
+    const src = typeof value === "string" ? value.trim() : "";
+    if (!id || !allowed.has(id) || !isInheritMeasureSource(src)) continue;
+    out[id] = src;
+  }
+  return out;
+}
+
+function normalizeAttachedObjectInheritMeasureLocked(
+  raw: Record<string, boolean> | undefined,
+  attachedIds: string[],
+  inheritSources: Record<string, InheritMeasureSource>,
+): Record<string, boolean> {
+  if (!raw || typeof raw !== "object") return {};
+  const allowed = new Set(attachedIds);
+  const out: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const id = key.trim();
+    if (!id || !allowed.has(id) || value !== false) continue;
+    const inherit = inheritSources[id];
+    if (inherit && isScopeMetricInheritSource(inherit)) out[id] = false;
+  }
+  return out;
+}
+
+export function normalizeScopeMetrics(
+  raw: z.infer<typeof scopeMetricSchema>[] | undefined,
+  answerIds: Set<string>,
+): ScopeMetricPublic[] {
+  if (!raw?.length) return [];
+  const out: ScopeMetricPublic[] = [];
+  const seen = new Set<string>();
+  for (const m of raw.slice(0, MAX_SCOPE_METRICS)) {
+    const metricid = m.metricid.trim();
+    const label = m.label.trim();
+    const uom = m.uom.trim();
+    if (!metricid || !label || !uom || seen.has(metricid)) continue;
+    seen.add(metricid);
+    const answerids = [...new Set((m.answerids ?? []).map((id) => id.trim()).filter(Boolean))].filter(
+      (id) => answerIds.has(id),
+    );
+    out.push({ metricid, label, uom, answerids });
+  }
+  return out;
+}
+
 export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
   answerid: string;
   label: string;
@@ -262,6 +336,9 @@ export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
   attachedObjectTools: Record<string, ScopeToolType>;
   attachedObjectShowAll: Record<string, boolean>;
   attachedObjectNoCharge: Record<string, boolean>;
+  attachedObjectForce: Record<string, boolean>;
+  attachedObjectInheritM2Source: Record<string, InheritMeasureSource>;
+  attachedObjectInheritMeasureLocked: Record<string, boolean>;
 }[] {
   return answers.map((a) => {
     const attachedQuoteObjectIds = normalizeIdList(a.attachedQuoteObjectIds ?? []);
@@ -277,6 +354,19 @@ export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
       a.attachedObjectNoCharge,
       attachedQuoteObjectIds,
     );
+    const attachedObjectForce = normalizeAttachedObjectFlags(
+      a.attachedObjectForce,
+      attachedQuoteObjectIds,
+    );
+    const attachedObjectInheritM2Source = normalizeAttachedObjectInheritM2Sources(
+      a.attachedObjectInheritM2Source,
+      attachedQuoteObjectIds,
+    );
+    const attachedObjectInheritMeasureLocked = normalizeAttachedObjectInheritMeasureLocked(
+      a.attachedObjectInheritMeasureLocked,
+      attachedQuoteObjectIds,
+      attachedObjectInheritM2Source,
+    );
     return {
       answerid: a.answerid,
       label: a.label,
@@ -286,6 +376,9 @@ export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
       attachedObjectTools,
       attachedObjectShowAll,
       attachedObjectNoCharge,
+      attachedObjectForce,
+      attachedObjectInheritM2Source,
+      attachedObjectInheritMeasureLocked,
     };
   });
 }

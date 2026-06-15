@@ -211,6 +211,8 @@ export function buildSkuImportFromSheetRows(
         comments: row.comments.trim(),
         sourceSheetRows: [],
         isCurrent: true,
+        calcM2: false,
+        calculatedM2: null,
       };
       nextSkuSequence += 1;
       productsByKey.set(productKey, product);

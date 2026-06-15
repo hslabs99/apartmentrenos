@@ -1,5 +1,6 @@
 import { applyLookupLabourToProjectLine } from "@/lib/client/apply-lookup-labour-to-line";
 import {
+  isLabourLookupManuallyOverridden,
   LOOKUP_LABOUR_SILO_KEYS,
   normalizeLabourHourValue,
   type LabourSiloKey,
@@ -23,6 +24,7 @@ export function lookupLabourPatchForLine(
   const patch: Partial<Record<(typeof LOOKUP_LABOUR_SILO_KEYS)[number], number | null>> = {};
   let changed = false;
   for (const k of LOOKUP_LABOUR_SILO_KEYS) {
+    if (isLabourLookupManuallyOverridden(line.labourLookupManualOverrides, k)) continue;
     if (!lookupHoursEqual(line[k], expected[k])) {
       patch[k] = expected[k];
       changed = true;

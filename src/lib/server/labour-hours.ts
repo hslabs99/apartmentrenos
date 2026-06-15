@@ -9,11 +9,14 @@ import {
 } from "@/lib/firestore/data-labourrates-collection";
 import {
   emptyLabourHours,
+  isLabourLookupManuallyOverridden,
   LABOUR_SILO_KEYS,
   LOOKUP_LABOUR_SILO_KEYS,
   normalizeLabourHourValue,
+  readLabourLookupManualOverrides,
   TEMPLATE_LABOUR_SILO_KEYS,
   type LabourHours,
+  type LabourLookupManualOverrides,
   type LabourSiloKey,
 } from "@/lib/labour-silo";
 import {
@@ -130,7 +133,10 @@ export function recalcLookupLabourHoursOnLine(
   custommeasure: number | null,
   lineUom: string,
   skuProduct?: string | null,
+  manualOverrides?: LabourLookupManualOverrides | null,
 ): { patch: Partial<LabourHours>; objectLabourDuplicate: boolean } {
+  const overrides =
+    manualOverrides ?? readLabourLookupManualOverrides(lineData.labourLookupManualOverrides);
   const sku =
     skuProduct !== undefined
       ? skuProduct?.trim() || null
@@ -142,12 +148,16 @@ export function recalcLookupLabourHoursOnLine(
   );
   const patch: Partial<LabourHours> = {};
   if (!row) {
-    for (const k of LOOKUP_LABOUR_SILO_KEYS) patch[k] = null;
+    for (const k of LOOKUP_LABOUR_SILO_KEYS) {
+      if (!isLabourLookupManuallyOverridden(overrides, k)) patch[k] = null;
+    }
     return { patch, objectLabourDuplicate: duplicateMatch };
   }
   const scaled = lookupHoursFromObjectLabourRate(row, custommeasure, lineUom);
   for (const k of LOOKUP_LABOUR_SILO_KEYS) {
-    patch[k] = scaled[k];
+    if (!isLabourLookupManuallyOverridden(overrides, k)) {
+      patch[k] = scaled[k];
+    }
   }
   return { patch, objectLabourDuplicate: duplicateMatch };
 }

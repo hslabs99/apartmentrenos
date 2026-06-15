@@ -1,5 +1,6 @@
 import {
   FieldValue,
+  type DocumentData,
   type DocumentReference,
   type Firestore,
   type QuerySnapshot,
@@ -10,6 +11,10 @@ import {
   isDataObjectsMetaDocument,
 } from "@/lib/firestore/data-objects-collection";
 import {
+  DATA_LABOURRATES_COLLECTION,
+  isDataLabourratesMetaDocument,
+} from "@/lib/firestore/data-labourrates-collection";
+import {
   DATA_SKUS_COLLECTION,
   isDataSkusMetaDocument,
 } from "@/lib/firestore/data-skus-collection";
@@ -19,6 +24,7 @@ import {
   isDataObjectKeyUsable,
   type DataObjectKeyFields,
 } from "@/lib/data-object-key";
+import { LABOUR_PREPARE_OBJECT_PRODUCT_TYPE } from "@/lib/labour-silo";
 import { mapSkuUomToQuoteUom } from "@/lib/map-sku-uom-to-quote-uom";
 import {
   canonicalDataObjectFields,
@@ -29,13 +35,19 @@ import {
   isBlindsQuoteObject,
   quoteObjectSkuPipelineKey,
 } from "@/lib/server/quote-object-sku-pipeline";
+import {
+  loadExistingProductKeyMap,
+  resolveSkuImportIds,
+} from "@/lib/server/resolve-sku-import-ids";
 import { syncObjectCategoryLookupsFromQuoteObjects } from "@/lib/server/sync-object-category-lookups-from-quote-objects";
 import { syncQuoteObjectFromDataObject } from "@/lib/server/sync-quote-object-from-data-object";
+import type { DataSku } from "@/types/data-sku";
 
 const DELETE_BATCH_SIZE = 500;
+const WRITE_BATCH_SIZE = 400;
 
 export type PrepareDataObjectsOptions = {
-  /** Delete `data_objects` whose category + product type are not in current `data_skus`. */
+  /** Delete `data_objects` whose keys are not in current `data_skus` or `data_labourrates`. */
   removeDataObjectsNotInSkus?: boolean;
   /** Delete SKU-pipeline `quote_objects` with no matching `data_objects` row (skips blinds). */
   removeQuoteObjectsNotInDataObjects?: boolean;
@@ -52,9 +64,12 @@ export function parsePrepareDataObjectsOptions(body: unknown): PrepareDataObject
 
 export type PrepareDataObjectsResult = {
   distinctFromSkus: number;
+  distinctFromLabourRates: number;
   created: number;
-  skippedExisting: number;
+  mergedExisting: number;
   skippedIncomplete: number;
+  labourSkusCreated: number;
+  labourSkusUpdated: number;
   removedDataObjects: number;
   quoteObjectsCreated: number;
   quoteObjectsUpdated: number;
@@ -111,9 +126,65 @@ function collectDistinctRowsFromSkus(
   return { distinctByKey, unusableCount };
 }
 
-async function removeDataObjectsNotInSkuKeys(
+function collectDistinctRowsFromLabourRates(
+  labourSnap: QuerySnapshot,
+): { distinctByKey: Map<string, DistinctRow>; unusableCount: number } {
+  const distinctByKey = new Map<string, DistinctRow>();
+  let unusableCount = 0;
+
+  for (const doc of labourSnap.docs) {
+    if (isDataLabourratesMetaDocument(doc.id)) continue;
+    const data = doc.data();
+    const fields: DataObjectKeyFields = {
+      category: String(data.category ?? ""),
+      productType: String(data.product ?? ""),
+    };
+    if (!isDataObjectKeyUsable(fields)) {
+      unusableCount++;
+      continue;
+    }
+    const canon = canonicalDataObjectFields(fields);
+    const key = buildDataObjectKey(canon);
+    if (distinctByKey.has(key)) continue;
+    distinctByKey.set(key, {
+      ...canon,
+      uom: mapSkuUomToQuoteUom(String(data.uom ?? "")),
+    });
+  }
+
+  return { distinctByKey, unusableCount };
+}
+
+function mergeDistinctRows(
+  skuRows: Map<string, DistinctRow>,
+  labourRows: Map<string, DistinctRow>,
+): Map<string, DistinctRow> {
+  const merged = new Map(skuRows);
+  for (const [key, row] of labourRows) {
+    if (!merged.has(key)) merged.set(key, row);
+  }
+  return merged;
+}
+
+function collectDataObjectIdsByKey(snap: QuerySnapshot): Map<string, string> {
+  const byKey = new Map<string, string>();
+  for (const doc of snap.docs) {
+    if (isDataObjectsMetaDocument(doc.id)) continue;
+    const data = doc.data();
+    const key = dataObjectKeyFromFields({
+      category: String(data.category ?? ""),
+      productType: String(data.productType ?? ""),
+      product: String(data.product ?? ""),
+    });
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, doc.id);
+  }
+  return byKey;
+}
+
+async function removeDataObjectsNotInAllowedKeys(
   db: Firestore,
-  skuKeys: Set<string>,
+  allowedKeys: Set<string>,
 ): Promise<number> {
   const existingSnap = await db.collection(DATA_OBJECTS_COLLECTION).get();
   const toDelete = existingSnap.docs.filter((d) => {
@@ -121,8 +192,9 @@ async function removeDataObjectsNotInSkuKeys(
     const key = dataObjectKeyFromFields({
       category: String(d.data().category ?? ""),
       productType: String(d.data().productType ?? ""),
+      product: String(d.data().product ?? ""),
     });
-    return !key || !skuKeys.has(key);
+    return !key || !allowedKeys.has(key);
   });
   return deleteRefsInBatches(
     db,
@@ -154,10 +226,118 @@ function collectDataObjectKeysFromSnap(snap: QuerySnapshot): Set<string> {
     const key = dataObjectKeyFromFields({
       category: String(doc.data().category ?? ""),
       productType: String(doc.data().productType ?? ""),
+      product: String(doc.data().product ?? ""),
     });
     if (key) keys.add(key);
   }
   return keys;
+}
+
+function labourRateToDataSku(data: DocumentData): DataSku | null {
+  const category = String(data.category ?? "").trim();
+  const product = String(data.product ?? "").trim();
+  if (!category || !product) return null;
+  return {
+    skuId: "TEMP",
+    category,
+    productType: LABOUR_PREPARE_OBJECT_PRODUCT_TYPE,
+    product,
+    elevateLevel: "All",
+    style: "All",
+    colourOptions: "All",
+    uom: String(data.uom ?? "").trim(),
+    append1Type: "",
+    append1Spec: "",
+    append2Type: "",
+    append2Spec: "",
+    append3Type: "",
+    append3Spec: "",
+    sheetWidth: "",
+    stockAvailable: "",
+    leadTime: "",
+    location: "",
+    comments: "",
+    sourceSheetRows: [],
+    isCurrent: true,
+    calcM2: false,
+    calculatedM2: null,
+  };
+}
+
+async function upsertLabourSkusFromRates(
+  db: Firestore,
+  labourSnap: QuerySnapshot,
+): Promise<{ created: number; updated: number }> {
+  const products: DataSku[] = [];
+  for (const doc of labourSnap.docs) {
+    if (isDataLabourratesMetaDocument(doc.id)) continue;
+    const row = labourRateToDataSku(doc.data());
+    if (row) products.push(row);
+  }
+  if (products.length === 0) return { created: 0, updated: 0 };
+
+  const skuSnap = await db.collection(DATA_SKUS_COLLECTION).get();
+  const existingByKey = loadExistingProductKeyMap(
+    skuSnap.docs
+      .filter((d) => !isDataSkusMetaDocument(d.id))
+      .map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          data: {
+            category: String(data.category ?? ""),
+            productType: String(data.productType ?? ""),
+            product: String(data.product ?? data.description ?? ""),
+            elevateLevel: String(data.elevateLevel ?? ""),
+            style: String(data.style ?? ""),
+            colourOptions: String(data.colourOptions ?? ""),
+          },
+        };
+      }),
+  );
+
+  const resolved = resolveSkuImportIds(products, [], existingByKey);
+  const importRunId = `prepare-labour-${Date.now()}`;
+  const now = FieldValue.serverTimestamp();
+
+  for (let i = 0; i < resolved.products.length; i += WRITE_BATCH_SIZE) {
+    const chunk = resolved.products.slice(i, i + WRITE_BATCH_SIZE);
+    const batch = db.batch();
+    for (const row of chunk) {
+      const ref = db.collection(DATA_SKUS_COLLECTION).doc(row.skuId);
+      batch.set(ref, {
+        skuId: row.skuId,
+        category: row.category,
+        productType: row.productType,
+        product: row.product,
+        elevateLevel: row.elevateLevel,
+        style: row.style,
+        colourOptions: row.colourOptions,
+        uom: row.uom,
+        append1Type: row.append1Type,
+        append1Spec: row.append1Spec,
+        append2Type: row.append2Type,
+        append2Spec: row.append2Spec,
+        append3Type: row.append3Type,
+        append3Spec: row.append3Spec,
+        stockAvailable: row.stockAvailable,
+        leadTime: row.leadTime,
+        location: row.location,
+        comments: row.comments,
+        sourceSheetRows: row.sourceSheetRows,
+        isCurrent: true,
+        importRunId,
+        importedAt: now,
+        updatedAt: now,
+      }, { merge: true });
+    }
+    await batch.commit();
+  }
+
+  return {
+    created: resolved.productsCreated,
+    updated: resolved.productsUpdated,
+  };
 }
 
 export async function runPrepareDataObjects(
@@ -167,35 +347,50 @@ export async function runPrepareDataObjects(
   await ensureDataObjectsBootstrap(db);
 
   const skuSnap = await db.collection(DATA_SKUS_COLLECTION).get();
-  const { distinctByKey, unusableCount } = collectDistinctRowsFromSkus(skuSnap);
-  const skuKeys = new Set(distinctByKey.keys());
+  const labourSnap = await db.collection(DATA_LABOURRATES_COLLECTION).get();
+  const { distinctByKey: skuDistinct, unusableCount: skuUnusable } =
+    collectDistinctRowsFromSkus(skuSnap);
+  const { distinctByKey: labourDistinct, unusableCount: labourUnusable } =
+    collectDistinctRowsFromLabourRates(labourSnap);
+  const distinctByKey = mergeDistinctRows(skuDistinct, labourDistinct);
+  const allowedKeys = new Set(distinctByKey.keys());
 
   let removedDataObjects = 0;
   if (options.removeDataObjectsNotInSkus) {
-    removedDataObjects = await removeDataObjectsNotInSkuKeys(db, skuKeys);
+    removedDataObjects = await removeDataObjectsNotInAllowedKeys(db, allowedKeys);
   }
 
   const existingSnap = await db.collection(DATA_OBJECTS_COLLECTION).get();
-  const existingKeys = collectDataObjectKeysFromSnap(existingSnap);
+  const existingByKey = collectDataObjectIdsByKey(existingSnap);
 
   let created = 0;
-  let skippedExisting = 0;
+  let mergedExisting = 0;
+  const now = FieldValue.serverTimestamp();
 
   for (const row of distinctByKey.values()) {
     const key = buildDataObjectKey(row);
-    if (existingKeys.has(key)) {
-      skippedExisting++;
+    const existingId = existingByKey.get(key);
+    const payload = dataObjectToFirestore(row, row.uom);
+    if (existingId) {
+      await db.collection(DATA_OBJECTS_COLLECTION).doc(existingId).update({
+        ...payload,
+        updatedAt: now,
+      });
+      mergedExisting++;
       continue;
     }
     const ref = db.collection(DATA_OBJECTS_COLLECTION).doc();
     await ref.set({
-      ...dataObjectToFirestore(row, row.uom),
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
+      ...payload,
+      createdAt: now,
+      updatedAt: now,
     });
-    existingKeys.add(key);
+    existingByKey.set(key, ref.id);
     created++;
   }
+
+  const { created: labourSkusCreated, updated: labourSkusUpdated } =
+    await upsertLabourSkusFromRates(db, labourSnap);
 
   let quoteObjectsCreated = 0;
   let quoteObjectsUpdated = 0;
@@ -217,10 +412,13 @@ export async function runPrepareDataObjects(
   const objectCategoryLookups = await syncObjectCategoryLookupsFromQuoteObjects(db);
 
   return {
-    distinctFromSkus: distinctByKey.size,
+    distinctFromSkus: skuDistinct.size,
+    distinctFromLabourRates: labourDistinct.size,
     created,
-    skippedExisting,
-    skippedIncomplete: unusableCount,
+    mergedExisting,
+    skippedIncomplete: skuUnusable + labourUnusable,
+    labourSkusCreated,
+    labourSkusUpdated,
     removedDataObjects,
     quoteObjectsCreated,
     quoteObjectsUpdated,

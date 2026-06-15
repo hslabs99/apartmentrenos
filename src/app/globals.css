@@ -54,3 +54,29 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #project-notes-print-report,
+  #project-notes-print-report *,
+  #wb-trade-print-report,
+  #wb-trade-print-report * {
+    visibility: visible;
+  }
+
+  #project-notes-print-report,
+  #wb-trade-print-report {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    display: block !important;
+  }
+
+  @page {
+    margin: 1.2cm;
+  }
+}

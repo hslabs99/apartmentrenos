@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 type ConfirmDialogProps = {
   open: boolean;
   title: string;
@@ -8,6 +10,7 @@ type ConfirmDialogProps = {
   cancelLabel?: string;
   variant?: "danger" | "default";
   pending?: boolean;
+  children?: ReactNode;
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
 };
@@ -20,6 +23,7 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   variant = "default",
   pending = false,
+  children,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -49,6 +53,7 @@ export function ConfirmDialog({
         >
           {description}
         </p>
+        {children ? <div className="mt-4">{children}</div> : null}
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <button
             type="button"

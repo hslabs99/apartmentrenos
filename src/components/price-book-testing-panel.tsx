@@ -15,6 +15,7 @@ import {
   excludeAllFromChoices,
 } from "@/lib/lookup-list-values";
 import { filterDataSkusWithCascadeFallback } from "@/lib/sku/match-data-sku-filters";
+import { useLookupsColours } from "@/lib/client/use-lookups-colours";
 import { isValidSupplierOption } from "@/lib/sku/supplier-option";
 import { LOOKUP_TYPE_STYLE } from "@/lib/lookup-types";
 import { sfDataSurface, sfPrimaryToolbarButton } from "@/lib/sf-layout";
@@ -176,6 +177,7 @@ type Props = {
 };
 
 export function PriceBookTestingPanel({ isActive = true }: Props) {
+  const { colourLookupIndex } = useLookupsColours();
   const [dataObjects, setDataObjects] = useState<DataObjectPublic[]>([]);
   const [catalogSkus, setCatalogSkus] = useState<DataSkuPublic[]>([]);
   const [cascades, setCascades] = useState<CascadeRow[]>([]);
@@ -443,6 +445,9 @@ export function PriceBookTestingPanel({ isActive = true }: Props) {
           elevateLevel: filters.elevateLevel,
           style: filters.styleChoice,
           colour: filters.colourChoice,
+        }, {
+          includeAllDimensionSkuRows: true,
+          colourLookupIndex,
         });
         matched.sort((a, b) => a.skuId.localeCompare(b.skuId, undefined, { sensitivity: "base" }));
         setSkuRows(matched);
@@ -456,7 +461,7 @@ export function PriceBookTestingPanel({ isActive = true }: Props) {
         if (!signal.cancelled) setSkusLoading(false);
       }
     },
-    [],
+    [colourLookupIndex],
   );
 
   useEffect(() => {
@@ -466,7 +471,7 @@ export function PriceBookTestingPanel({ isActive = true }: Props) {
     return () => {
       signal.cancelled = true;
     };
-  }, [filterSnapshot, isActive, loadSkus]);
+  }, [filterSnapshot, isActive, loadSkus, colourLookupIndex]);
 
   const loadSuppliers = useCallback(async (skuId: string) => {
     setSuppliersLoading(true);

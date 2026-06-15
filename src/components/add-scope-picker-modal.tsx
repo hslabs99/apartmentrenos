@@ -36,6 +36,10 @@ type Props = {
   areaLabel: string;
   scopes: ScopePublic[];
   areas: AreaPublic[];
+  /** Default “Filter by area” to this Setup → Areas doc id (project area template). */
+  defaultSetupAreaDocId?: string | null;
+  /** Scope doc ids already on this project area (picker still lists them for another copy). */
+  scopeIdsOnArea?: ReadonlySet<string>;
   saving: boolean;
   onClose: () => void;
   onPick: (scopeDocId: string) => void;
@@ -46,6 +50,8 @@ export function AddScopePickerModal({
   areaLabel,
   scopes,
   areas,
+  defaultSetupAreaDocId = null,
+  scopeIdsOnArea,
   saving,
   onClose,
   onPick,
@@ -56,8 +62,8 @@ export function AddScopePickerModal({
   useEffect(() => {
     if (!open) return;
     setSearch("");
-    setSetupAreaDocIdFilter(ALL_AREAS);
-  }, [open]);
+    setSetupAreaDocIdFilter(defaultSetupAreaDocId?.trim() || ALL_AREAS);
+  }, [open, defaultSetupAreaDocId]);
 
   const areasById = useMemo(() => new Map(areas.map((a) => [a.id, a])), [areas]);
 
@@ -119,7 +125,7 @@ export function AddScopePickerModal({
   return (
     <ModalFrame
       title="Add scope question"
-      description={`Attach a setup scope question to “${areaLabel}” for this project only. Questions can be tagged to any template area (e.g. General) and added here to another area (e.g. Kitchen).`}
+      description={`Add a setup scope question to “${areaLabel}”. Filter by template area tags below. Questions already on this area can be added again (e.g. a second wardrobe with its own measurements).`}
       onClose={saving ? () => {} : onClose}
       wide
       footer={
@@ -135,8 +141,7 @@ export function AddScopePickerModal({
     >
       {questionScopes.length === 0 ? (
         <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
-          No more setup scope questions to add. All questions are already on this area, or none exist
-          under Setup → Scopes.
+          No setup scope questions exist under Setup → Scopes.
         </p>
       ) : (
         <div className="space-y-3">
@@ -178,8 +183,11 @@ export function AddScopePickerModal({
 
           <p className="text-xs text-sf-text-secondary dark:text-zinc-400">
             {filterAreaLabel
-              ? `Showing ${filteredRows.length} of ${questionScopes.length} questions tagged for ${filterAreaLabel}.`
-              : `Showing ${filteredRows.length} of ${questionScopes.length} setup questions.`}
+              ? `Showing ${filteredRows.length} of ${questionScopes.length} questions tagged for ${filterAreaLabel} in Setup → Scopes.`
+              : `Showing ${filteredRows.length} of ${questionScopes.length} setup questions (all template areas).`}
+            {scopeIdsOnArea && scopeIdsOnArea.size > 0
+              ? " Questions marked “On area” can be added again as a separate copy."
+              : null}
           </p>
 
           {saving ? (
@@ -200,10 +208,15 @@ export function AddScopePickerModal({
                     <th className="px-3 py-2 font-semibold text-sf-text-secondary dark:text-zinc-300">
                       Question
                     </th>
+                    <th className="w-[6.5rem] px-3 py-2 font-semibold text-sf-text-secondary dark:text-zinc-300">
+                      Status
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.map((s) => (
+                  {filteredRows.map((s) => {
+                    const onArea = scopeIdsOnArea?.has(s.id) ?? false;
+                    return (
                     <tr
                       key={s.id}
                       className="border-b border-sf-border last:border-b-0 dark:border-zinc-800"
@@ -221,8 +234,18 @@ export function AddScopePickerModal({
                           {displayQuestion(s)}
                         </button>
                       </td>
+                      <td className="px-3 py-2 text-xs text-sf-text-secondary dark:text-zinc-400">
+                        {onArea ? (
+                          <span className="font-medium text-amber-800 dark:text-amber-300">
+                            On area
+                          </span>
+                        ) : (
+                          <span>New</span>
+                        )}
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

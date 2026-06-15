@@ -1,4 +1,5 @@
 import { FieldValue, type Firestore } from "firebase-admin/firestore";
+import { clearCascadeRowsCache } from "@/lib/server/resolve-effective-elevate-level";
 import { ensureCascadesBootstrap } from "@/lib/firestore/collection-bootstrap";
 import {
   CASCADES_COLLECTION,
@@ -65,6 +66,8 @@ export async function runImportCascades(db: Firestore): Promise<ImportCascadesRe
     await batch.commit();
     written += chunk.length;
   }
+
+  clearCascadeRowsCache();
 
   return {
     tabTitle: fetched.tabTitle,

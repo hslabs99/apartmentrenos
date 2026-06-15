@@ -22,6 +22,7 @@ export function canonicalDataObjectFields(fields: DataObjectKeyFields): DataObje
   return {
     category: fields.category.trim(),
     productType: fields.productType.trim(),
+    product: fields.product?.trim() ?? "",
   };
 }
 
@@ -32,12 +33,13 @@ export function dataObjectKeyFromFields(fields: DataObjectKeyFields): string {
 export function dataObjectDocToPublic(id: string, data: DocumentData): DataObjectPublic {
   const category = parseText(data.category);
   const productType = parseText(data.productType);
-  const objectKey = dataObjectKeyFromFields({ category, productType });
+  const product = parseText(data.product);
+  const objectKey = dataObjectKeyFromFields({ category, productType, product });
   return {
     id,
     category,
     productType,
-    product: "",
+    product,
     uom: mapSkuUomToQuoteUom(parseText(data.uom)),
     objectKey,
     quoteObjectDocId: parseText(data.quoteObjectDocId) || null,
@@ -56,7 +58,7 @@ export function dataObjectToFirestore(
   return {
     category: canon.category,
     productType: canon.productType,
-    product: "",
+    product: canon.product ?? "",
     uom: mapSkuUomToQuoteUom(uom),
     objectKey: dataObjectKeyFromFields(canon),
     quoteObjectDocId: extra?.quoteObjectDocId ?? null,

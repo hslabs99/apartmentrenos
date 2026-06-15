@@ -22,14 +22,17 @@ function ProjectsTabsInner() {
   const { canViewProjectWorkbench } = useViewMode();
   const onProjectChecklist = pathname.startsWith("/projects/project/checklist");
   const onProjectWorkbench = pathname.startsWith("/projects/project/workbench");
+  const onProjectNotes = pathname.startsWith("/projects/project/notes");
   const onProjectEditor =
     pathname.startsWith("/projects/project") &&
     !onProjectChecklist &&
-    !onProjectWorkbench;
+    !onProjectWorkbench &&
+    !onProjectNotes;
 
   const projectHref = `/projects/project${projectQuerySuffix(searchParams, ["id"])}`;
   const checklistHref = `/projects/project/checklist${projectQuerySuffix(searchParams, ["id"])}`;
   const workbenchHref = `/projects/project/workbench${projectQuerySuffix(searchParams, ["id"])}`;
+  const notesHref = `/projects/project/notes${projectQuerySuffix(searchParams, ["id"])}`;
 
   return (
     <div
@@ -48,6 +51,9 @@ function ProjectsTabsInner() {
           Workbench
         </Link>
       ) : null}
+      <Link href={notesHref} className={sfUnderlineTabClass(onProjectNotes)} role="tab" aria-selected={onProjectNotes}>
+        Project notes
+      </Link>
     </div>
   );
 }

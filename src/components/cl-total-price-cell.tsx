@@ -15,11 +15,29 @@ const wbHdrLabel =
 type Props = {
   line: ProjectAreaObjectPublic;
   marginPct: number;
+  /** Scope metric / inherit measure when line.custommeasure is null. */
+  effectiveMeasure?: number | null;
+  /** Supplier / pick price when line.customumprice is not stored yet. */
+  unitPriceFallback?: number | null;
+  /** Scope metric inherit: use effective measure instead of stored custommeasure. */
+  preferEffectiveMeasure?: boolean;
 };
 
 /** Read-only checklist Total price (incl. margin). */
-export function ClTotalPriceCell({ line, marginPct }: Props) {
-  const total = lineFinalPrice(line, marginPct);
+export function ClTotalPriceCell({
+  line,
+  marginPct,
+  effectiveMeasure,
+  unitPriceFallback,
+  preferEffectiveMeasure,
+}: Props) {
+  const total = lineFinalPrice(
+    line,
+    marginPct,
+    effectiveMeasure,
+    unitPriceFallback,
+    preferEffectiveMeasure,
+  );
 
   return (
     <div className={`${clTotalPriceFieldClass} ${clScopeTotalPriceColClass}`}>

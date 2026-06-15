@@ -1,16 +1,15 @@
 "use client";
 
 import { AreasPanel } from "@/components/areas-panel";
-import { PriceLevelsPanel } from "@/components/price-levels-panel";
 import { QuoteObjectsPanel } from "@/components/quote-objects-panel";
 import { ScopesPanel } from "@/components/scopes-panel";
 import { sfTabStripClass, sfUnderlineTabClass } from "@/lib/sf-tabs";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-type SetupTab = "quote-objects" | "areas" | "price-levels" | "scopes";
+type SetupTab = "quote-objects" | "areas" | "scopes";
 
-const SETUP_TABS: SetupTab[] = ["quote-objects", "areas", "price-levels", "scopes"];
+const SETUP_TABS: SetupTab[] = ["quote-objects", "areas", "scopes"];
 
 function tabFromParam(value: string | null): SetupTab {
   if (value && SETUP_TABS.includes(value as SetupTab)) return value as SetupTab;
@@ -74,15 +73,6 @@ export function SetupPanel() {
           <button
             type="button"
             role="tab"
-            aria-selected={tab === "price-levels"}
-            onClick={() => setTab("price-levels")}
-            className={sfUnderlineTabClass(tab === "price-levels")}
-          >
-            Price Levels
-          </button>
-          <button
-            type="button"
-            role="tab"
             aria-selected={tab === "scopes"}
             onClick={() => setTab("scopes")}
             className={sfUnderlineTabClass(tab === "scopes")}
@@ -94,7 +84,6 @@ export function SetupPanel() {
 
       {tab === "quote-objects" ? <QuoteObjectsPanel /> : null}
       {tab === "areas" ? <AreasPanel /> : null}
-      {tab === "price-levels" ? <PriceLevelsPanel /> : null}
       {tab === "scopes" ? (
         <ScopesPanel
           initialScopeDocId={initialScopeDocId}

@@ -1,3 +1,6 @@
+import type { LabourLookupManualOverrides } from "@/lib/labour-silo";
+import type { ScopeToolBenchSection, ScopeToolWallMm } from "@/lib/scope-tools";
+
 export type ProjectAreaObjectLineSource = "default" | "scope" | "manual" | "bundled";
 
 /** Built-in system object lines (not catalog quote_objects). */
@@ -16,6 +19,8 @@ export type ProjectAreaObjectPublic = {
   linesource?: ProjectAreaObjectLineSource;
   /** Present when linesource === "scope". */
   scopeDocId?: string | null;
+  /** Cloned scope instance on this project area (primary instance omits this field). */
+  scopeInstanceId?: string | null;
   /** System pathway (e.g. blinds matrix pricing) — not a quote_objects row. */
   systemObjectKind?: ProjectAreaObjectSystemKind | null;
   /** Blinds style / type (`data_blinds.type`). */
@@ -51,8 +56,16 @@ export type ProjectAreaObjectPublic = {
   scopeNoCharge?: boolean;
   /** Supplier priority (1–10) used for unit price on this line; default P1 when absent. */
   supplierOption?: number | null;
+  /** Free-text supplier on manual lines when not resolved from catalog supplier rows. */
+  manualSupplier?: string | null;
+  /** Free-text supplier SKU/code on manual lines when not resolved from catalog supplier rows. */
+  manualSupplierSku?: string | null;
   dateadded?: string | null;
   custommeasure?: number | null;
+  /** Benchtop calculator sections (mm) saved for this scope line. */
+  scopeToolBenchSections?: ScopeToolBenchSection[] | null;
+  /** Wall calculator inputs (mm) saved for this scope line. */
+  scopeToolWallMm?: ScopeToolWallMm | null;
   customuom: string;
   customumprice?: number | null;
   totalprice?: number | null;
@@ -69,6 +82,8 @@ export type ProjectAreaObjectPublic = {
   projectManagerHours: number | null;
   paintingHours: number | null;
   plasteringHours: number | null;
+  /** Lookup silos typed over in workbench — preserved when measure/SKU changes. */
+  labourLookupManualOverrides?: LabourLookupManualOverrides | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 };

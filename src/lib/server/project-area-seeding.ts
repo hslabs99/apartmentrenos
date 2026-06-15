@@ -50,6 +50,8 @@ export type ProjectAreaSeedPayload = {
   areanotes1?: string;
   areanotes2?: string;
   aream2?: number | null;
+  /** Per-area ceiling height override (m); null uses project default. */
+  ceilingheightm?: number | null;
   areafinish?: string;
   /** Per-area price level override; null uses project default when seeding. */
   pricelevelid?: number | null;
@@ -205,6 +207,7 @@ export async function addProjectAreaWithSeed(
     areanotes1: payload.areanotes1 ?? "",
     areanotes2: payload.areanotes2 ?? "",
     aream2: payload.aream2 ?? null,
+    ceilingheightm: payload.ceilingheightm ?? null,
     areafinish: payload.areafinish ?? "",
     pricelevelid:
       payload.pricelevelid === undefined ? null : payload.pricelevelid,

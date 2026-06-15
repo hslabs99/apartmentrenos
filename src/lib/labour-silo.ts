@@ -15,6 +15,11 @@ export type LabourSiloKey = (typeof LABOUR_SILO_KEYS)[number];
 
 export type LabourHours = Record<LabourSiloKey, number | null>;
 
+/** Lookup silos manually edited in workbench — skip auto-recalc on measure/SKU change. */
+export type LabourLookupManualOverrides = Partial<
+  Record<(typeof LOOKUP_LABOUR_SILO_KEYS)[number], boolean>
+>;
+
 /** Silos populated from `data_objectlabourrates` at project consumption. */
 export const LOOKUP_LABOUR_SILO_KEYS = [
   "constructionAssistantHours",
@@ -45,6 +50,8 @@ export const LABOUR_SILO_RATE_PRODUCT: Record<LabourSiloKey, string> = {
 
 export const LABOUR_RATE_CATEGORY = "Labour";
 export const LABOUR_RATE_PRODUCT_TYPE = "Contract labour";
+/** Product type on `data_skus` created from `data_labourrates` in Prepare Objects. */
+export const LABOUR_PREPARE_OBJECT_PRODUCT_TYPE = "Labour";
 
 export const WB_LABOUR_SILO_HEADERS: { key: LabourSiloKey; label: string; title: string }[] =
   [
@@ -89,6 +96,29 @@ export function normalizeLabourHourValue(v: number | null | undefined): number |
 export function formatLabourHours(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+export function isLabourLookupManuallyOverridden(
+  overrides: LabourLookupManualOverrides | null | undefined,
+  key: (typeof LOOKUP_LABOUR_SILO_KEYS)[number],
+): boolean {
+  return overrides?.[key] === true;
+}
+
+export function readLabourLookupManualOverrides(
+  raw: unknown,
+): LabourLookupManualOverrides | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const out: LabourLookupManualOverrides = {};
+  let any = false;
+  for (const k of LOOKUP_LABOUR_SILO_KEYS) {
+    if (row[k] === true) {
+      out[k] = true;
+      any = true;
+    }
+  }
+  return any ? out : null;
 }
 
 export const OBJECT_LABOUR_DUPLICATE_TOOLTIP =

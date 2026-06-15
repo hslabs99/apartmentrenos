@@ -1,12 +1,17 @@
 import {
+  isQuoteObjectInheritM2Source,
+  normalizeQuoteObjectInheritM2Source,
+} from "@/lib/inherit-m2-source";
+import { isInheritMeasureSource, isScopeMetricInheritSource, parseScopeMetricInheritId } from "@/lib/scope-metrics";
+import type { InheritMeasureSource } from "@/types/scope-metric";
+import type { QuoteObjectPublic } from "@/types/quote-object";
+import {
   isScopeToolType,
   type ScopeToolType,
-} from "@/lib/scope-tools";
-import {
+} from "@/lib/scope-tools";import {
   isSystemScopeObjectId,
   systemScopeObjectLabel,
 } from "@/lib/system-scope-types";
-import type { QuoteObjectPublic } from "@/types/quote-object";
 import type { ScopeAnswerPublic } from "@/types/scope";
 
 export type ScopeFormDraftAnswer = {
@@ -16,8 +21,10 @@ export type ScopeFormDraftAnswer = {
   attachedObjectTools: Partial<Record<string, ScopeToolType>>;
   attachedObjectShowAll: Partial<Record<string, boolean>>;
   attachedObjectNoCharge: Partial<Record<string, boolean>>;
+  attachedObjectForce: Partial<Record<string, boolean>>;
+  attachedObjectInheritM2Source: Partial<Record<string, InheritMeasureSource>>;
+  attachedObjectInheritMeasureLocked: Partial<Record<string, boolean>>;
 };
-
 function normalizeDraftTools(
   raw: Partial<Record<string, ScopeToolType>> | undefined,
   attachedIds: string[],
@@ -44,6 +51,51 @@ function normalizeDraftFlags(
     const id = key.trim();
     if (!id || !allowed.has(id) || value !== true) continue;
     out[id] = true;
+  }
+  return out;
+}
+
+function normalizeDraftInheritM2Sources(
+  raw: Partial<Record<string, InheritMeasureSource>> | undefined,
+  attachedIds: string[],
+  quoteById: Map<string, QuoteObjectPublic>,
+): Partial<Record<string, InheritMeasureSource>> {
+  if (!raw) return {};
+  const allowed = new Set(attachedIds);
+  const out: Partial<Record<string, InheritMeasureSource>> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const id = key.trim();
+    if (!id || !allowed.has(id) || !isInheritMeasureSource(value)) continue;
+    if (parseScopeMetricInheritId(value)) {
+      out[id] = value;
+      continue;
+    }
+    if (!isQuoteObjectInheritM2Source(value)) continue;
+    const q = quoteById.get(id);
+    const objectDefault = normalizeQuoteObjectInheritM2Source(q);
+    if (value === objectDefault) continue;
+    out[id] = value;
+  }
+  return out;
+}
+
+function normalizeDraftInheritMeasureLocked(
+  raw: Partial<Record<string, boolean>> | undefined,
+  attachedIds: string[],
+  inheritSources: Partial<Record<string, InheritMeasureSource>>,
+  quoteById: Map<string, QuoteObjectPublic>,
+): Partial<Record<string, boolean>> {
+  if (!raw) return {};
+  const allowed = new Set(attachedIds);
+  const out: Partial<Record<string, boolean>> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const id = key.trim();
+    if (!id || !allowed.has(id) || value !== false) continue;
+    const stored = inheritSources[id];
+    const inheritSource =
+      stored ??
+      normalizeQuoteObjectInheritM2Source(quoteById.get(id));
+    if (isScopeMetricInheritSource(inheritSource)) out[id] = false;
   }
   return out;
 }
@@ -75,6 +127,18 @@ export function publicAnswersToDraft(
       attachedObjectTools: normalizeDraftTools(a.attachedObjectTools, ids),
       attachedObjectShowAll: normalizeDraftFlags(a.attachedObjectShowAll, ids),
       attachedObjectNoCharge: normalizeDraftFlags(a.attachedObjectNoCharge, ids),
+      attachedObjectForce: normalizeDraftFlags(a.attachedObjectForce, ids),
+      attachedObjectInheritM2Source: normalizeDraftInheritM2Sources(
+        a.attachedObjectInheritM2Source,
+        ids,
+        quoteById,
+      ),
+      attachedObjectInheritMeasureLocked: normalizeDraftInheritMeasureLocked(
+        a.attachedObjectInheritMeasureLocked,
+        ids,
+        normalizeDraftInheritM2Sources(a.attachedObjectInheritM2Source, ids, quoteById),
+        quoteById,
+      ),
     };
   });
 }
@@ -90,9 +154,11 @@ export function draftToPayload(
   attachedObjectTools: Record<string, ScopeToolType>;
   attachedObjectShowAll: Record<string, boolean>;
   attachedObjectNoCharge: Record<string, boolean>;
+  attachedObjectForce: Record<string, boolean>;
+  attachedObjectInheritM2Source: Record<string, InheritMeasureSource>;
+  attachedObjectInheritMeasureLocked: Record<string, boolean>;
 }[] {
-  return answers.map((a) => {
-    const ids = [...new Set(a.attachedQuoteObjectIds.map((id) => id.trim()).filter(Boolean))];
+  return answers.map((a) => {    const ids = [...new Set(a.attachedQuoteObjectIds.map((id) => id.trim()).filter(Boolean))];
     const attachedObjectTools = normalizeDraftTools(a.attachedObjectTools, ids) as Record<
       string,
       ScopeToolType
@@ -105,8 +171,22 @@ export function draftToPayload(
       string,
       boolean
     >;
-    const names: string[] = [];
-    const seenNames = new Set<string>();
+    const attachedObjectForce = normalizeDraftFlags(a.attachedObjectForce, ids) as Record<
+      string,
+      boolean
+    >;
+    const attachedObjectInheritM2Source = normalizeDraftInheritM2Sources(
+      a.attachedObjectInheritM2Source,
+      ids,
+      quoteById,
+    ) as Record<string, InheritMeasureSource>;
+    const attachedObjectInheritMeasureLocked = normalizeDraftInheritMeasureLocked(
+      a.attachedObjectInheritMeasureLocked,
+      ids,
+      attachedObjectInheritM2Source,
+      quoteById,
+    ) as Record<string, boolean>;
+    const names: string[] = [];    const seenNames = new Set<string>();
     for (const id of ids) {
       if (isSystemScopeObjectId(id)) {
         const label = systemScopeObjectLabel(id);
@@ -132,6 +212,9 @@ export function draftToPayload(
       attachedObjectTools,
       attachedObjectShowAll,
       attachedObjectNoCharge,
+      attachedObjectForce,
+      attachedObjectInheritM2Source,
+      attachedObjectInheritMeasureLocked,
     };
   });
 }

@@ -375,10 +375,18 @@ export function ScopesPanel({
               </p>
             ) : null}
             <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm md:text-base">
+            <table className="w-max max-w-full table-fixed text-left text-sm md:text-base">
+              <colgroup>
+                <col className="w-10" />
+                <col className="w-[10ch]" />
+                <col className="w-[50ch]" />
+                <col className="w-[50ch]" />
+                <col className="w-[5ch]" />
+                <col className="w-[9.5rem]" />
+              </colgroup>
               <thead className="border-b border-sf-border bg-sf-page dark:border-zinc-700 dark:bg-zinc-900">
                 <tr>
-                  <th className="w-10 px-2 py-3 md:px-3 md:py-4">
+                  <th className="px-2 py-3 md:px-3 md:py-4">
                     <input
                       type="checkbox"
                       checked={allVisibleSelected}
@@ -391,9 +399,8 @@ export function ScopesPanel({
                       className="size-4 rounded border-sf-border"
                     />
                   </th>
-                  <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Scope ID</th>
-                  <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Type</th>
-                  <th className="px-4 py-3 align-bottom font-semibold md:px-5 md:py-4">
+                  <th className="px-1 py-3 font-semibold md:px-1.5 md:py-4">Scope ID</th>
+                  <th className="px-1 py-3 align-bottom font-semibold md:px-1.5 md:py-4">
                     <div className="flex flex-col gap-2">
                       <span>Area</span>
                       <label className="sr-only" htmlFor="scopes-area-filter">
@@ -403,7 +410,7 @@ export function ScopesPanel({
                         id="scopes-area-filter"
                         value={areaFilterAreaDocId}
                         onChange={(e) => setAreaFilterAndPersist(e.target.value)}
-                        className="min-h-9 w-full min-w-[10rem] rounded-md border border-sf-border-strong bg-sf-surface px-2 py-1.5 text-xs font-normal text-sf-text dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                        className="min-h-9 w-full max-w-full truncate rounded-md border border-sf-border-strong bg-sf-surface px-1 py-1.5 text-xs font-normal text-sf-text dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
                       >
                         <option value="">All areas</option>
                         {areasForFilter.map((a) => (
@@ -414,9 +421,9 @@ export function ScopesPanel({
                       </select>
                     </div>
                   </th>
-                  <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Question</th>
-                  <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Answers</th>
-                  <th className="px-4 py-3 text-right font-semibold md:px-5 md:py-4">
+                  <th className="max-w-[50ch] px-2 py-3 font-semibold md:px-3 md:py-4">Question</th>
+                  <th className="px-1 py-3 text-center font-semibold md:px-1.5 md:py-4">Answers</th>
+                  <th className="whitespace-nowrap px-1 py-3 text-right font-semibold md:px-1.5 md:py-4">
                     Actions
                   </th>
                 </tr>
@@ -425,7 +432,7 @@ export function ScopesPanel({
                 {filteredScopes.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={6}
                       className="px-4 py-8 text-center text-sf-text-secondary md:px-5 dark:text-zinc-400"
                     >
                       No scopes match this area filter. Choose another area above.
@@ -471,33 +478,42 @@ export function ScopesPanel({
                         className="size-4 rounded border-sf-border"
                       />
                     </td>
-                    <td className="px-4 py-3 font-mono text-sm md:px-5 md:py-3.5">
-                      {s.scopeid ?? "—"}
+                    <td className="px-1 py-3 font-mono text-sm tabular-nums md:px-1.5 md:py-3.5">
+                      <span className="block truncate" title={s.scopeid != null ? String(s.scopeid) : undefined}>
+                        {s.scopeid ?? "—"}
+                      </span>
                     </td>
-                    <td className="px-4 py-3 text-sm md:px-5 md:py-3.5">
-                      {s.kind === "header" ? (
-                        <span className="rounded-md bg-zinc-200 px-2 py-0.5 text-xs font-medium text-sf-text dark:bg-zinc-700 dark:text-zinc-100">
-                          Header
-                        </span>
-                      ) : s.kind === "footer" ? (
-                        <span className="rounded-md bg-teal-200/90 px-2 py-0.5 text-xs font-medium text-teal-950 dark:bg-teal-900/80 dark:text-teal-100">
-                          Footer
-                        </span>
-                      ) : (
-                        <span className="text-sf-text-secondary dark:text-zinc-400">Question</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-medium md:px-5 md:py-3.5">
-                      <span className="line-clamp-2" title={s.areaNamesDisplay ?? s.areaname}>
+                    <td className="px-1 py-3 text-xs font-medium md:px-1.5 md:py-3.5">
+                      <span
+                        className="block truncate"
+                        title={s.areaNamesDisplay ?? s.areaname ?? `Area #${s.areaid}`}
+                      >
                         {s.areaNamesDisplay || s.areaname || `Area #${s.areaid}`}
                       </span>
                     </td>
-                    <td className="max-w-md px-4 py-3 md:px-5 md:py-3.5" title={s.question}>
+                    <td className="max-w-[50ch] px-2 py-3 md:px-3 md:py-3.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEdit(s);
+                        }}
+                        title={s.question || undefined}
+                        className="block max-w-full truncate text-left text-base font-medium text-blue-700 underline decoration-blue-700/70 underline-offset-2 hover:text-blue-900 dark:text-blue-400 dark:decoration-blue-400/70 dark:hover:text-blue-300"
+                      >
+                        {s.question || "—"}
+                      </button>
+                    </td>
+                    <td className="px-1 py-3 text-center tabular-nums md:px-1.5 md:py-3.5">
+                      {s.kind === "header" || s.kind === "footer"
+                        ? "—"
+                        : s.answers.length}
+                    </td>
+                    <td className="whitespace-nowrap px-1 py-3 text-right md:px-1.5 md:py-3.5">
                       <div
-                        className="flex w-full min-w-0 items-center justify-between gap-3"
+                        className="inline-flex items-center justify-end gap-1"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <span className="min-w-0 truncate">{s.question || "—"}</span>
                         <ReorderArrows
                           dense
                           itemLabel={qLabel}
@@ -506,18 +522,6 @@ export function ScopesPanel({
                           disabledUp={!reorderContextAreaDocId || edges.disabledUp}
                           disabledDown={!reorderContextAreaDocId || edges.disabledDown}
                         />
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 md:px-5 md:py-3.5">
-                      {s.kind === "header" || s.kind === "footer"
-                        ? "—"
-                        : s.answers.length}
-                    </td>
-                    <td className="px-4 py-3 text-right md:px-5 md:py-3.5">
-                      <div
-                        className="flex justify-end gap-1.5"
-                        onClick={(e) => e.stopPropagation()}
-                      >
                         <button
                           type="button"
                           onClick={() => openEdit(s)}

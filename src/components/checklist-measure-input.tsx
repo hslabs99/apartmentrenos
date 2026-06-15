@@ -5,14 +5,22 @@ import {
   checklistInheritedMeasureForRow,
   checklistMeasureFieldDisplayString,
   checklistMeasureFieldTooltip,
+  checklistMeasureLockedByScopeMetric,
   isChecklistAutoPopulateMeasureApplicable,
   measuresClose,
+  type ChecklistScopeMeasureExtras,
 } from "@/lib/checklist-effective-measure";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import type { ProjectAreaPublic } from "@/types/project-area";
 import type { ProjectPublic } from "@/types/project";
+import type { InheritMeasureSource } from "@/types/scope-metric";
 import type { QuoteObjectPublic } from "@/types/quote-object";
-import { useCallback, useEffect, useState } from "react";
+import {
+  lineUsesYnSkuUom,
+  ynMeasureFromSelectValue,
+  ynMeasureSelectValue,
+} from "@/lib/sku/sku-yn-uom";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 function parseOptionalNumber(raw: string): number | null {
   const t = raw.trim();
@@ -26,9 +34,13 @@ type Props = {
   quoteObject: QuoteObjectPublic | undefined;
   pa: ProjectAreaPublic;
   project: ProjectPublic | null;
+  scopeInheritMeasureSource?: InheritMeasureSource;
+  scopeMeasureExtras?: ChecklistScopeMeasureExtras;
   measureKey: string;
   inputClassName: string;
   disabled?: boolean;
+  /** When true and the line SKU UOM is `Y/N`, show Yes/No instead of a numeric input (CL only). */
+  ynMeasureDropdown?: boolean;
   onPatch: (custommeasure: number | null) => void;
   onValidationError: (message: string) => void;
 };
@@ -38,18 +50,80 @@ export function ChecklistMeasureInput({
   quoteObject,
   pa,
   project,
+  scopeInheritMeasureSource,
+  scopeMeasureExtras,
   measureKey,
   inputClassName,
   disabled = false,
+  ynMeasureDropdown = false,
   onPatch,
   onValidationError,
 }: Props) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
 
-  const displayValue = checklistMeasureFieldDisplayString(line, quoteObject, pa, project);
-  const measureTooltip = checklistMeasureFieldTooltip(line, quoteObject, pa, project);
-  const canAutoPopulate = isChecklistAutoPopulateMeasureApplicable(quoteObject, pa, project);
+  const measureLocked = checklistMeasureLockedByScopeMetric(
+    scopeInheritMeasureSource,
+    scopeMeasureExtras?.inheritMeasureLocked,
+  );
+  const inputDisabled = disabled || measureLocked;
+
+  const displayValue = checklistMeasureFieldDisplayString(
+    line,
+    quoteObject,
+    pa,
+    project,
+    scopeInheritMeasureSource,
+    scopeMeasureExtras,
+  );
+  const measureTooltip = checklistMeasureFieldTooltip(
+    line,
+    quoteObject,
+    pa,
+    project,
+    scopeInheritMeasureSource,
+    scopeMeasureExtras,
+  );
+  const canAutoPopulate =
+    !measureLocked &&
+    isChecklistAutoPopulateMeasureApplicable(
+      quoteObject,
+      pa,
+      project,
+      scopeInheritMeasureSource,
+      scopeMeasureExtras,
+      line,
+    );
+
+  const usesYnUom =
+    ynMeasureDropdown &&
+    lineUsesYnSkuUom(line, scopeMeasureExtras?.catalogSkus);
+
+  const inheritedMeasure = useMemo(
+    () =>
+      checklistInheritedMeasureForRow(
+        line,
+        quoteObject,
+        pa,
+        project,
+        scopeInheritMeasureSource,
+        scopeMeasureExtras,
+      ),
+    [
+      line,
+      quoteObject,
+      pa,
+      project,
+      scopeInheritMeasureSource,
+      scopeMeasureExtras,
+    ],
+  );
+
+  const ynSelectValue = usesYnUom
+    ? line.custommeasure != null
+      ? ynMeasureSelectValue(line.custommeasure)
+      : ynMeasureSelectValue(inheritedMeasure)
+    : "";
 
   useEffect(() => {
     if (!menu) return;
@@ -63,12 +137,50 @@ export function ChecklistMeasureInput({
   }, [menu]);
 
   const handleAutoPopulate = useCallback(() => {
-    const patch = checklistAutoPopulateMeasurePatch(quoteObject, pa, project);
+    const patch = checklistAutoPopulateMeasurePatch(
+      quoteObject,
+      pa,
+      project,
+      scopeInheritMeasureSource,
+      scopeMeasureExtras,
+      line,
+    );
     if (!patch) return;
     onPatch(patch.custommeasure);
     setRefreshToken((t) => t + 1);
     setMenu(null);
-  }, [quoteObject, pa, project, onPatch]);
+  }, [quoteObject, pa, project, scopeInheritMeasureSource, scopeMeasureExtras, onPatch]);
+
+  if (usesYnUom) {
+    return (
+      <select
+        key={`${measureKey}-yn-${refreshToken}`}
+        className={inputClassName}
+        value={ynSelectValue}
+        disabled={inputDisabled}
+        title={measureTooltip}
+        onChange={(e) => {
+          if (measureLocked) return;
+          const next = ynMeasureFromSelectValue(e.target.value);
+          const stored = line.custommeasure ?? null;
+          if (next === null) {
+            if (stored !== null) onPatch(null);
+            return;
+          }
+          if (stored !== null) {
+            if (next !== stored) onPatch(next);
+            return;
+          }
+          if (inheritedMeasure != null && measuresClose(next, inheritedMeasure)) return;
+          onPatch(next);
+        }}
+      >
+        <option value="">—</option>
+        <option value="1">Yes</option>
+        <option value="0">No</option>
+      </select>
+    );
+  }
 
   return (
     <>
@@ -78,10 +190,11 @@ export function ChecklistMeasureInput({
         inputMode="decimal"
         className={inputClassName}
         defaultValue={displayValue}
-        disabled={disabled}
+        disabled={inputDisabled}
+        readOnly={measureLocked}
         title={measureTooltip}
         onContextMenu={(e) => {
-          if (disabled || !canAutoPopulate) return;
+          if (inputDisabled || !canAutoPopulate) return;
           e.preventDefault();
           setMenu({ x: e.clientX, y: e.clientY });
         }}
@@ -89,21 +202,43 @@ export function ChecklistMeasureInput({
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
         }}
         onBlur={(e) => {
+          if (measureLocked) return;
           const el = e.target as HTMLInputElement;
           const raw = el.value.trim();
           if (raw !== "" && parseOptionalNumber(raw) === null) {
             onValidationError("Measure must be a valid number (or empty).");
-            el.value = checklistMeasureFieldDisplayString(line, quoteObject, pa, project);
+            el.value = checklistMeasureFieldDisplayString(
+              line,
+              quoteObject,
+              pa,
+              project,
+              scopeInheritMeasureSource,
+              scopeMeasureExtras,
+            );
             return;
           }
           const next = parseOptionalNumber(raw);
           const stored = line.custommeasure ?? null;
-          const inherited = checklistInheritedMeasureForRow(line, quoteObject, pa, project);
+          const inherited = checklistInheritedMeasureForRow(
+            line,
+            quoteObject,
+            pa,
+            project,
+            scopeInheritMeasureSource,
+            scopeMeasureExtras,
+          );
           if (raw === "" || next === null) {
             if (stored !== null) {
               onPatch(null);
             } else {
-              el.value = checklistMeasureFieldDisplayString(line, quoteObject, pa, project);
+              el.value = checklistMeasureFieldDisplayString(
+                line,
+                quoteObject,
+                pa,
+                project,
+                scopeInheritMeasureSource,
+                scopeMeasureExtras,
+              );
             }
             return;
           }

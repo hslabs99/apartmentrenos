@@ -1,9 +1,9 @@
-/** Normalized pair for `data_objects` / quote object matching (category + productType). */
+/** Normalized key fields for `data_objects` / quote object matching. */
 
 export type DataObjectKeyFields = {
   category: string;
   productType: string;
-  /** Legacy field — not part of the object key; kept for API shape only. */
+  /** When set (legacy rows), key is category + productType + product. */
   product?: string;
 };
 
@@ -12,12 +12,19 @@ export function normalizeDataObjectPart(value: string): string {
 }
 
 export function buildDataObjectKey(fields: DataObjectKeyFields): string {
-  return [
+  const parts = [
     normalizeDataObjectPart(fields.category),
     normalizeDataObjectPart(fields.productType),
-  ].join("\x1e");
+  ];
+  const product = normalizeDataObjectPart(fields.product ?? "");
+  if (product) parts.push(product);
+  return parts.join("\x1e");
 }
 
 export function isDataObjectKeyUsable(fields: DataObjectKeyFields): boolean {
-  return fields.category.trim() !== "" && fields.productType.trim() !== "";
+  if (fields.category.trim() === "") return false;
+  if (fields.product?.trim()) {
+    return fields.productType.trim() !== "" && fields.product.trim() !== "";
+  }
+  return fields.productType.trim() !== "";
 }

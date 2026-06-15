@@ -14,6 +14,7 @@ const QUOTE_UOM_CANONICAL = new Set([
   "LM-Runs",
   "Kg",
   "Ltr",
+  "Y/N",
 ]);
 
 /**

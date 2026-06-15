@@ -11,11 +11,20 @@ export const runtime = "nodejs";
 
 const numberOrNull = z.union([z.number(), z.null()]);
 
+const areaM2CalcSectionSchema = z.object({
+  id: z.string().min(1),
+  lengthMm: z.number().finite().nonnegative(),
+  widthMm: z.number().finite().nonnegative(),
+});
+
 const updateSchema = z.object({
   displayName: z.union([z.string(), z.null()]).optional(),
   areanotes1: z.string().optional(),
   areanotes2: z.string().optional(),
+  areaStatus: z.union([z.enum(["completed", "escalated"]), z.literal(""), z.null()]).optional(),
   aream2: z.union([z.number(), z.null()]).optional(),
+  aream2calcsections: z.union([z.array(areaM2CalcSectionSchema), z.null()]).optional(),
+  ceilingheightm: numberOrNull.optional(),
   areafinish: z.string().optional(),
   pricelevelid: numberOrNull.optional(),
   style: z.union([z.string(), z.null()]).optional(),
@@ -100,7 +109,21 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     }
     if (d.areanotes1 !== undefined) update.areanotes1 = d.areanotes1;
     if (d.areanotes2 !== undefined) update.areanotes2 = d.areanotes2;
+    if (d.areaStatus !== undefined) {
+      if (d.areaStatus === "" || d.areaStatus === null) {
+        update.areaStatus = FieldValue.delete();
+      } else {
+        update.areaStatus = d.areaStatus;
+      }
+    }
     if (d.aream2 !== undefined) update.aream2 = d.aream2;
+    if (d.aream2calcsections !== undefined) {
+      update.aream2calcsections =
+        d.aream2calcsections == null || d.aream2calcsections.length === 0
+          ? FieldValue.delete()
+          : d.aream2calcsections;
+    }
+    if (d.ceilingheightm !== undefined) update.ceilingheightm = d.ceilingheightm;
     if (d.areafinish !== undefined && d.pricelevelid === undefined) {
       update.areafinish = d.areafinish;
     }

@@ -2,6 +2,7 @@ import { isBlindsSystemLine } from "@/lib/blinds/blinds-data-utils";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import type { QuoteObjectPublic } from "@/types/quote-object";
+import type { ScopePublic } from "@/types/scope";
 
 export const ORPHAN_QUOTE_OBJECT_LINE_TOOLTIP =
   "This line points to a quote object that no longer exists in Setup → Quote Objects. Remove this line, then add a current object manually.";
@@ -49,4 +50,22 @@ export function projectLineObjectLabel(
   const fromSku = objectNameFromMatchedSku(row, catalogSkus);
   if (fromSku) return fromSku;
   return `Object #${row.objectid}`;
+}
+
+/** Scope lines: prefer the quote object attached on the scope answer (by doc id), not just objectid. */
+export function quoteObjectForScopeLine(
+  line: ProjectAreaObjectPublic,
+  scope: ScopePublic | undefined,
+  quoteObjects: QuoteObjectPublic[],
+): QuoteObjectPublic | undefined {
+  if (line.linesource === "scope" && line.scopeDocId?.trim() && line.answerid?.trim() && scope) {
+    const answer = scope.answers.find((a) => a.answerid === line.answerid);
+    for (const docId of answer?.attachedQuoteObjectIds ?? []) {
+      const trimmed = docId.trim();
+      if (!trimmed) continue;
+      const q = quoteObjects.find((qo) => qo.id === trimmed);
+      if (q?.objectid === line.objectid) return q;
+    }
+  }
+  return quoteObjectForProjectLine(line, quoteObjects);
 }

@@ -4,6 +4,7 @@ import { MASTER_PRICES_LISTS_TAB_TITLE } from "@/lib/google/master-prices-spread
 import { runImportListsColours } from "@/lib/server/import-lists-colours";
 import { runImportListsStyles } from "@/lib/server/import-lists-styles";
 import { runImportListsUom } from "@/lib/server/import-lists-uom";
+import { clearColourLookupIndexCache } from "@/lib/server/load-colour-lookup-index";
 import { importRunIdFromError, runSupportingImportWithLog } from "@/lib/server/supporting-import-log";
 
 export const runtime = "nodejs";
@@ -50,6 +51,7 @@ export async function POST() {
       },
     );
     const { styles, colours, uom } = result;
+    clearColourLookupIndexCache();
     return NextResponse.json({
       ok: true,
       importRunId,

@@ -60,5 +60,13 @@ export type DataSku = {
 
   isCurrent: boolean;
 
+  /** When true, this SKU uses a manual m² value (`calculatedM2`) in checklist. */
+
+  calcM2: boolean;
+
+  /** Area in m² — entered manually on the Data tab when `calcM2` is true. */
+
+  calculatedM2: number | null;
+
 };
 

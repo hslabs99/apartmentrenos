@@ -1,4 +1,5 @@
 import { FieldValue, type Firestore } from "firebase-admin/firestore";
+import { clearDataSkusResolveCache } from "@/lib/server/resolve-sku-for-quote-object";
 import type { FetchedMasterPricesSkus } from "@/lib/google/fetch-sku-rows-from-sheet";
 import {
   fetchMasterPricesBuildingSkuRows,
@@ -253,42 +254,46 @@ export async function runDataSkusImport(
       ...new Set(products.map((p) => p.category.trim()).filter(Boolean)),
     ];
 
-    if (sourceConfig.markAllProductsNotCurrent) {
-      onProgress({
-        phase: "deleting",
-        message: "Marking all products not current (isCurrent=false)…",
-        percent: 20,
-        importRunId,
-        audit,
-      });
-
-      await markAllProductsNotCurrent(db, (done, total) => {
+    // Only mark not-current when removal is requested — otherwise off-sheet rows would
+    // stay isCurrent=false (sku_all) or stale isCurrent=true (partial tabs) incorrectly.
+    if (options.removeProductsNotInSheet) {
+      if (sourceConfig.markAllProductsNotCurrent) {
         onProgress({
           phase: "deleting",
-          message: `Marked ${done} of ${total} product(s) not current…`,
-          percent: clampPercent(20 + (total === 0 ? 0 : (done / total) * 6)),
+          message: "Marking all products not current (isCurrent=false)…",
+          percent: 20,
           importRunId,
-          audit: audit!,
+          audit,
         });
-      });
-    } else if (options.removeProductsNotInSheet && sheetCategories.length > 0) {
-      onProgress({
-        phase: "deleting",
-        message: `Marking products not current in ${sheetCategories.length} categor(ies) from this tab…`,
-        percent: 20,
-        importRunId,
-        audit,
-      });
 
-      await markProductsNotCurrentForCategories(db, sheetCategories, (done, total) => {
+        await markAllProductsNotCurrent(db, (done, total) => {
+          onProgress({
+            phase: "deleting",
+            message: `Marked ${done} of ${total} product(s) not current…`,
+            percent: clampPercent(20 + (total === 0 ? 0 : (done / total) * 6)),
+            importRunId,
+            audit: audit!,
+          });
+        });
+      } else if (sheetCategories.length > 0) {
         onProgress({
           phase: "deleting",
-          message: `Marked ${done} of ${total} product(s) not current in tab categories…`,
-          percent: clampPercent(20 + (total === 0 ? 0 : (done / total) * 6)),
+          message: `Marking products not current in ${sheetCategories.length} categor(ies) from this tab…`,
+          percent: 20,
           importRunId,
-          audit: audit!,
+          audit,
         });
-      });
+
+        await markProductsNotCurrentForCategories(db, sheetCategories, (done, total) => {
+          onProgress({
+            phase: "deleting",
+            message: `Marked ${done} of ${total} product(s) not current in tab categories…`,
+            percent: clampPercent(20 + (total === 0 ? 0 : (done / total) * 6)),
+            importRunId,
+            audit: audit!,
+          });
+        });
+      }
     }
 
     onProgress({
@@ -361,7 +366,7 @@ export async function runDataSkusImport(
       const batch = db.batch();
       for (const row of chunk) {
         const ref = db.collection(DATA_SKUS_COLLECTION).doc(row.skuId);
-        batch.set(ref, dataSkuToFirestore(row, importRunId));
+        batch.set(ref, dataSkuToFirestore(row, importRunId), { merge: true });
       }
       await batch.commit();
       writtenProducts += chunk.length;
@@ -552,6 +557,8 @@ export async function runDataSkusImport(
       importRunId,
       importLogId: importRunId,
     });
+
+    clearDataSkusResolveCache();
 
     return {
       importRunId,

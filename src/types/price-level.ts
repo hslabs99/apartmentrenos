@@ -2,7 +2,7 @@ export type PriceLevelPublic = {
   id: string;
   pricelevelid?: number | null;
   /**
-   * Display order in Setup → Price Levels, Quote Objects, scopes, etc.
+   * Display order in System → Price Levels, Quote Objects, scopes, etc.
    * When omitted, `pricelevelid` is used for ordering (legacy).
    */
   sortOrder?: number | null;

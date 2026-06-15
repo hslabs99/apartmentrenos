@@ -109,7 +109,8 @@ type Props = {
   onStyleChange: (value: string) => void;
   onColourChange: (value: string) => void;
   disabled?: boolean;
-  selectClassName: string;
+  /** Fallback when styleSelectClassName / colourSelectClassName are omitted. */
+  selectClassName?: string;
   styleLabel?: string;
   colourLabel?: string;
   styleEmptyLabel?: string;
@@ -210,8 +211,8 @@ export function CascadeStyleColourFields({
       return suppressLabel ? (
         styleSelect
       ) : (
-        <label className="flex min-w-0 flex-col gap-0.5">
-          <span className={compactLabelClass}>{styleLabel}</span>
+        <label className="flex w-fit shrink-0 flex-col gap-0.5">
+          <span className={`${compactLabelClass} whitespace-nowrap`}>{styleLabel}</span>
           {styleSelect}
         </label>
       );
@@ -220,8 +221,8 @@ export function CascadeStyleColourFields({
       return suppressLabel ? (
         colourSelect
       ) : (
-        <label className="flex min-w-0 flex-col gap-0.5">
-          <span className={compactLabelClass}>{colourLabel}</span>
+        <label className="flex w-fit shrink-0 flex-col gap-0.5">
+          <span className={`${compactLabelClass} whitespace-nowrap`}>{colourLabel}</span>
           {colourSelect}
         </label>
       );

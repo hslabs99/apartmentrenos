@@ -1,6 +1,7 @@
 "use client";
 
 import { BuildingElementsPanel } from "@/components/building-elements-panel";
+import { PriceLevelsPanel } from "@/components/price-levels-panel";
 import { LabTypeLabourRatesPanel } from "@/components/lab-type-labour-rates-panel";
 import { LabourRatesPanel } from "@/components/labour-rates-panel";
 import { ProductContractorRatesPanel } from "@/components/product-contractor-rates-panel";
@@ -18,6 +19,7 @@ type SystemTab =
   | "building-elements"
   | "lab-type-labour-rates"
   | "supplier-discounts"
+  | "price-levels"
   | "lookups"
   | "settings";
 
@@ -92,6 +94,15 @@ export function SystemPanel() {
           <button
             type="button"
             role="tab"
+            aria-selected={tab === "price-levels"}
+            onClick={() => setTab("price-levels")}
+            className={sfUnderlineTabClass(tab === "price-levels")}
+          >
+            Price Levels
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={tab === "lookups"}
             onClick={() => setTab("lookups")}
             className={sfUnderlineTabClass(tab === "lookups")}
@@ -116,6 +127,7 @@ export function SystemPanel() {
       {tab === "building-elements" ? <BuildingElementsPanel /> : null}
       {tab === "lab-type-labour-rates" ? <LabTypeLabourRatesPanel /> : null}
       {tab === "supplier-discounts" ? <SupplierDiscountsPanel /> : null}
+      {tab === "price-levels" ? <PriceLevelsPanel /> : null}
       {tab === "lookups" ? <SystemLookupsPanel /> : null}
       {tab === "settings" ? <SettingsPanel /> : null}
     </div>

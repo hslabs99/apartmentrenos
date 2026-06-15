@@ -26,6 +26,8 @@ import {
   skuOptionLabel,
 
   scopeLineMatchesSkuPick,
+
+  skuProductMatchesAppendSpec,
   type ScopeLineSkuPick,
 
 } from "@/lib/client/scope-line-sku-match";
@@ -46,8 +48,12 @@ import type { QuoteObjectPublic } from "@/types/quote-object";
 
 import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
 import type { SupplierDiscountByKey } from "@/lib/client/supplier-discount-price";
+import type { ColourLookupIndex } from "@/lib/sku/colour-lookup-index";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import { ScopeLineSkuMatchDiagnosticModal } from "@/components/scope-line-sku-match-diagnostic-modal";
+import { diagnoseScopeLineSkuMatch } from "@/lib/client/scope-line-sku-match-diagnostic";
 
 
 
@@ -116,6 +122,13 @@ type Props = {
 
   /** When set, only this catalog SKU is offered (Show All scope lines). */
   lockToSkuId?: string | null;
+
+  colourLookupIndex?: ColourLookupIndex | null;
+
+  /** Bundled append child: parent catalog append spec product name for this slot. */
+  appendProductSpec?: string;
+
+  appendParentCategory?: string;
 
 };
 
@@ -215,6 +228,12 @@ export function ScopeLineSkuPicker({
 
   lockToSkuId = null,
 
+  colourLookupIndex = null,
+
+  appendProductSpec = "",
+
+  appendParentCategory = "",
+
 }: Props) {
 
   const filters = useMemo(() => {
@@ -236,13 +255,30 @@ export function ScopeLineSkuPicker({
 
 
   const catalogMatches = useMemo(() => {
-    let matches = matchingSkusForScopeLine(catalogSkus, quoteObject, filters);
+    const appendSpec = appendProductSpec.trim();
+    let matches = matchingSkusForScopeLine(catalogSkus, quoteObject, filters, {
+      colourLookupIndex,
+      appendMatch: appendSpec
+        ? {
+            parentCategory: appendParentCategory.trim(),
+            appendProductSpec: appendSpec,
+          }
+        : undefined,
+    });
     const locked = lockToSkuId?.trim();
     if (locked) {
       matches = matches.filter((m) => m.skuId === locked);
     }
     return matches;
-  }, [catalogSkus, quoteObject, filters, lockToSkuId]);
+  }, [
+    catalogSkus,
+    quoteObject,
+    filters,
+    lockToSkuId,
+    colourLookupIndex,
+    appendProductSpec,
+    appendParentCategory,
+  ]);
 
 
 
@@ -262,51 +298,104 @@ export function ScopeLineSkuPicker({
 
   );
 
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
+
+  const skuDiagnostic = useMemo(
+    () =>
+      picks.length === 0
+        ? diagnoseScopeLineSkuMatch({
+            line,
+            quoteObject,
+            catalogSkus,
+            suppliersBySkuId,
+            priceLevels,
+            cascades,
+            pa,
+            project,
+            lockToSkuId,
+            colourLookupIndex,
+          })
+        : null,
+    [
+      picks.length,
+      line,
+      quoteObject,
+      catalogSkus,
+      suppliersBySkuId,
+      priceLevels,
+      cascades,
+      pa,
+      project,
+      lockToSkuId,
+      colourLookupIndex,
+    ],
+  );
+
 
 
   const value = activeScopeLineSkuPickValue(line, picks);
 
-  const singlePickKey =
-    picks.length === 1
-      ? `${picks[0]!.skuId}|${picks[0]!.supplierOption}|${picks[0]!.priceExcGst ?? ""}`
-      : null;
+  const autoApplyPick = useMemo(() => {
+    const appendSpec = appendProductSpec.trim();
+    if (appendSpec) {
+      const specPicks = picks.filter((p) =>
+        skuProductMatchesAppendSpec({ product: p.product } as DataSkuPublic, appendSpec),
+      );
+      const skuIds = new Set(specPicks.map((p) => p.skuId));
+      if (skuIds.size !== 1) return null;
+      const skuId = [...skuIds][0]!;
+      const forSku = specPicks.filter((p) => p.skuId === skuId);
+      if (forSku.length === 1) return forSku[0]!;
+      const lineOpt = line.supplierOption;
+      if (lineOpt != null) {
+        const hit = forSku.find((p) => p.supplierOption === lineOpt);
+        if (hit) return hit;
+      }
+      return forSku[0] ?? null;
+    }
+    return picks.length === 1 ? (picks[0] ?? null) : null;
+  }, [picks, appendProductSpec, line.supplierOption]);
+
+  const autoApplyPickKey = autoApplyPick
+    ? `${autoApplyPick.skuId}|${autoApplyPick.supplierOption}|${autoApplyPick.priceExcGst ?? ""}`
+    : null;
   const onSelectSkuRef = useRef(onSelectSku);
   onSelectSkuRef.current = onSelectSku;
-  /** One auto-apply per line + single-match identity (reset when match changes). */
+  /** One auto-apply per line + match identity (reset when match changes). */
   const autoApplyAttemptRef = useRef<string | null>(null);
   const syncPriceAttemptRef = useRef<string | null>(null);
 
   useEffect(() => {
     autoApplyAttemptRef.current = null;
     syncPriceAttemptRef.current = null;
-  }, [line.id, singlePickKey]);
+  }, [line.id, autoApplyPickKey]);
 
   useEffect(() => {
-    if (!autoApplySingleMatch || disabled || picks.length !== 1) return;
+    if (!autoApplySingleMatch || disabled || !autoApplyPick) return;
 
-    const only = picks[0]!;
-    if (scopeLineMatchesSkuPick(line, only)) return;
+    if (scopeLineMatchesSkuPick(line, autoApplyPick)) return;
 
     if (autoApplyOnlyWhenEmptySku) {
       const existingSku = (line.skuId ?? "").trim();
-      if (existingSku && existingSku !== only.skuId) return;
+      if (existingSku && existingSku !== autoApplyPick.skuId) return;
     }
 
-    const attemptKey = `${line.id}|${singlePickKey}`;
+    const attemptKey = `${line.id}|${autoApplyPickKey}`;
     if (autoApplyAttemptRef.current === attemptKey) return;
 
     autoApplyAttemptRef.current = attemptKey;
-    onSelectSkuRef.current(only);
+    onSelectSkuRef.current(autoApplyPick);
   }, [
     autoApplySingleMatch,
     autoApplyOnlyWhenEmptySku,
     disabled,
-    singlePickKey,
+    autoApplyPick,
+    autoApplyPickKey,
     line.id,
     line.skuId,
     line.supplierOption,
     line.customumprice,
-    picks.length,
+    line.totalprice,
   ]);
 
   useEffect(() => {
@@ -332,6 +421,7 @@ export function ScopeLineSkuPicker({
     line.skuId,
     line.supplierOption,
     line.customumprice,
+    line.totalprice,
     picks,
   ]);
 
@@ -383,14 +473,31 @@ export function ScopeLineSkuPicker({
 
   if (picks.length === 0) {
 
+    const noMatchLabel = shortMatchLabels ? "No matching SKU" : "SKU: No matching SKU";
+
     return (
-
-      <span className={`block w-full min-w-0 truncate ${labelClass}`}>
-
-        {shortMatchLabels ? "No matching SKU" : "SKU: No matching SKU"}
-
-      </span>
-
+      <>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setShowDiagnostic(true)}
+          className={`block w-full min-w-0 truncate text-left underline decoration-dotted underline-offset-2 hover:decoration-solid ${labelClass}`}
+          title="View SKU match diagnostic"
+        >
+          {noMatchLabel}
+        </button>
+        {showDiagnostic && skuDiagnostic ? (
+          <ScopeLineSkuMatchDiagnosticModal
+            diagnostic={skuDiagnostic}
+            objectLabel={
+              quoteObject?.objectname?.trim() ||
+              line.objectname?.trim() ||
+              `Object #${line.objectid}`
+            }
+            onClose={() => setShowDiagnostic(false)}
+          />
+        ) : null}
+      </>
     );
 
   }

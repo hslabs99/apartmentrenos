@@ -1,4 +1,9 @@
 import type { DocumentData, Timestamp } from "firebase-admin/firestore";
+import { readLabourLookupManualOverrides } from "@/lib/labour-silo";
+import {
+  readScopeToolBenchSections,
+  readScopeToolWallMm,
+} from "@/lib/scope-tools";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import {
   effectiveLineLabourHours,
@@ -92,6 +97,10 @@ export function docToProjectAreaObjectPublic(
     linesource,
     scopeDocId:
       linesource === "scope" ? String(data.scopeDocId ?? "") || null : null,
+    scopeInstanceId:
+      typeof data.scopeInstanceId === "string" && data.scopeInstanceId.trim()
+        ? data.scopeInstanceId.trim()
+        : null,
     answerid: linesource === "scope" ? String(data.answerid ?? "") || null : null,
     scopeid: numOrNull(data.scopeid) ?? null,
     systemObjectKind: readSystemObjectKind(data),
@@ -125,8 +134,18 @@ export function docToProjectAreaObjectPublic(
             : null;
       return isValidSupplierOption(n) ? n : null;
     })(),
+    manualSupplier:
+      typeof data.manualSupplier === "string" && data.manualSupplier.trim()
+        ? data.manualSupplier.trim()
+        : null,
+    manualSupplierSku:
+      typeof data.manualSupplierSku === "string" && data.manualSupplierSku.trim()
+        ? data.manualSupplierSku.trim()
+        : null,
     dateadded: tsToIso(data.dateadded as Timestamp | undefined),
     custommeasure,
+    scopeToolBenchSections: readScopeToolBenchSections(data.scopeToolBenchSections),
+    scopeToolWallMm: readScopeToolWallMm(data.scopeToolWallMm),
     customuom: String(data.customuom ?? ""),
     customumprice,
     totalprice: calcTotal(custommeasure, customumprice, numOrNull(data.totalprice)),
@@ -141,6 +160,9 @@ export function docToProjectAreaObjectPublic(
     projectManagerHours: hours.projectManagerHours,
     paintingHours: hours.paintingHours,
     plasteringHours: hours.plasteringHours,
+    labourLookupManualOverrides: readLabourLookupManualOverrides(
+      data.labourLookupManualOverrides,
+    ),
     createdAt: tsToIso(data.createdAt as Timestamp | undefined),
     updatedAt: tsToIso(data.updatedAt as Timestamp | undefined),
   };

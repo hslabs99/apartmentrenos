@@ -81,6 +81,21 @@ export function contractLabourRateBySiloProduct(
   return matches[0] ?? null;
 }
 
+/** Checklist labour scope line: unit price from `data_labourrates.product`. */
+export function contractLabourRateByProduct(
+  rates: DataLabourRatePublic[],
+  product: string,
+): DataLabourRatePublic | null {
+  const productKey = normKey(product);
+  if (!productKey) return null;
+  const matches = rates.filter(
+    (r) =>
+      normKey(r.product) === productKey &&
+      normKey(r.category) === normKey(LABOUR_RATE_CATEGORY),
+  );
+  return matches[0] ?? null;
+}
+
 export function labourSiloCostExcGst(
   hours: number | null,
   rate: DataLabourRatePublic | null,

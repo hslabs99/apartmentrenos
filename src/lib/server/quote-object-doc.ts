@@ -1,6 +1,21 @@
 import type { DocumentData, Timestamp } from "firebase-admin/firestore";
 import { parseProductFromDoc } from "@/lib/legacy-product-field";
+import {
+  effectiveInheritMeasureSource,
+  INHERIT_M2_LM_RUNS_UOM,
+  isQuoteObjectInheritM2Source,
+  measureLockedByScopeMetricInherit,
+  quoteObjectUsesInheritedMeasureWithScope,
+  uomSupportsInheritM2,
+} from "@/lib/inherit-m2-source";
+import { parseScopeMetricInheritId } from "@/lib/scope-metrics";
+import {
+  measureFromScopeMetricWithSkuCalcM2,
+  type SkuCalcM2Fields,
+} from "@/lib/sku/sku-calc-m2-measure";
 import { labourHoursFromQuoteTemplateData } from "@/lib/server/labour-hours";
+import type { InheritMeasureSource } from "@/types/scope-metric";
+import type { ScopeMetricPublic } from "@/types/scope-metric";
 import type {
   QuoteObjectInheritM2Source,
   QuoteObjectPriceLevelRowPublic,
@@ -19,7 +34,7 @@ export function numOrNull(v: unknown): number | null | undefined {
 }
 
 /** UOM for carpet-style lineal metres from area m² and roll width. */
-export const LM_RUNS_UOM = "LM-Runs";
+export const LM_RUNS_UOM = INHERIT_M2_LM_RUNS_UOM;
 export const DEFAULT_LM_RUNS_RUN_WIDTH = 3.2;
 
 /**
@@ -43,28 +58,60 @@ function effectiveLmRunsRollWidthM(quoteData: DocumentData): number {
   return DEFAULT_LM_RUNS_RUN_WIDTH;
 }
 
+function inheritM2InputFromQuoteDoc(quoteData: DocumentData | undefined) {
+  if (!quoteData) return undefined;
+  return {
+    uom: String(quoteData.uom ?? ""),
+    inheritM2Source:
+      typeof quoteData.inheritM2Source === "string" ? quoteData.inheritM2Source : undefined,
+    inheritAreaM2: quoteData.inheritAreaM2 === true,
+  } as Pick<QuoteObjectPublic, "uom" | "inheritM2Source" | "inheritAreaM2">;
+}
+
 /** Resolve inherit source from Firestore quote_object (incl. legacy `inheritAreaM2`). */
 export function normalizeInheritM2SourceFromDoc(
   quoteData: DocumentData | undefined,
+  scopeOverride?: InheritMeasureSource,
 ): QuoteObjectInheritM2Source {
-  if (!quoteData) return "none";
-  const uom = String(quoteData.uom ?? "").trim();
-  if (uom !== "M2" && uom !== LM_RUNS_UOM) return "none";
-  const srcRaw = String(quoteData.inheritM2Source ?? "").trim();
-  if (
-    srcRaw === "apartment_total_m2" ||
-    srcRaw === "apartment_soft_m2" ||
-    srcRaw === "apartment_hard_m2" ||
-    srcRaw === "area_m2" ||
-    srcRaw === "none"
-  ) {
-    return srcRaw;
-  }
-  return quoteData.inheritAreaM2 === true ? "area_m2" : "none";
+  const src = effectiveInheritMeasureSource(inheritM2InputFromQuoteDoc(quoteData), scopeOverride);
+  return isQuoteObjectInheritM2Source(src) ? src : "none";
 }
 
-export function quoteObjectUsesInheritedM2(quoteData: DocumentData | undefined): boolean {
-  return normalizeInheritM2SourceFromDoc(quoteData) !== "none";
+export function quoteObjectUsesInheritedM2(
+  quoteData: DocumentData | undefined,
+  scopeOverride?: InheritMeasureSource,
+): boolean {
+  return quoteObjectUsesInheritedMeasureWithScope(
+    inheritM2InputFromQuoteDoc(quoteData),
+    scopeOverride,
+  );
+}
+
+function measureFromScopeMetric(
+  quoteData: DocumentData,
+  metricid: string,
+  scopeMetricValues: Map<string, number | null>,
+  scopeMetrics: ScopeMetricPublic[],
+  skuCalcM2?: SkuCalcM2Fields | null,
+): number | null {
+  const metric = scopeMetrics.find((m) => m.metricid === metricid);
+  if (!metric) return null;
+  const raw = scopeMetricValues.get(metricid);
+  if (raw == null) return null;
+  if (!(raw > 0)) return raw === 0 ? 0 : null;
+  const uom = String(quoteData.uom ?? "").trim();
+  const mu = metric.uom.trim();
+  let converted: number | null = null;
+  if (uom === "M2" && mu === "M2") converted = raw;
+  else if (uom === "Unit" && mu === "M2") converted = raw;
+  else if (uom === LM_RUNS_UOM) {
+    if (mu === "M2") {
+      converted = linearMetersFromAreaM2ForLmRuns(raw, effectiveLmRunsRollWidthM(quoteData));
+    } else if (mu === LM_RUNS_UOM) converted = raw;
+  } else if (mu.toLowerCase() === uom.toLowerCase()) {
+    converted = raw;
+  }
+  return measureFromScopeMetricWithSkuCalcM2(converted, skuCalcM2);
 }
 
 /**
@@ -81,10 +128,28 @@ export function customMeasureForNewProjectLine(
     apartmentHardM2?: number | null;
   },
   explicitCustomMeasure?: number | null,
+  scopeInheritMeasureSource?: InheritMeasureSource,
+  scopeMetricValues?: Map<string, number | null>,
+  scopeMetrics?: ScopeMetricPublic[],
+  skuCalcM2?: SkuCalcM2Fields | null,
+  scopeInheritMeasureLocked?: boolean,
 ): number | null {
   if (explicitCustomMeasure !== undefined) return explicitCustomMeasure;
-  if (quoteObjectUsesInheritedM2(quoteData)) return null;
-  return effectiveMeasurementForQuoteLine(quoteData, templateMeasurement, ctx);
+  if (quoteObjectUsesInheritedM2(quoteData, scopeInheritMeasureSource)) return null;
+  if (
+    measureLockedByScopeMetricInherit(scopeInheritMeasureSource, scopeInheritMeasureLocked)
+  ) {
+    return null;
+  }
+  return effectiveMeasurementForQuoteLine(
+    quoteData,
+    templateMeasurement,
+    ctx,
+    scopeInheritMeasureSource,
+    scopeMetricValues,
+    scopeMetrics,
+    skuCalcM2,
+  );
 }
 
 /** Measure for pricing totals: explicit line override, else inherited / template quantity. */
@@ -98,9 +163,27 @@ export function effectiveMeasureForLinePricing(
     apartmentHardM2?: number | null;
   },
   storedCustomMeasure: number | null | undefined,
+  scopeInheritMeasureSource?: InheritMeasureSource,
+  scopeMetricValues?: Map<string, number | null>,
+  scopeMetrics?: ScopeMetricPublic[],
+  skuCalcM2?: SkuCalcM2Fields | null,
+  scopeInheritMeasureLocked?: boolean,
 ): number | null {
-  if (storedCustomMeasure != null) return storedCustomMeasure;
-  return effectiveMeasurementForQuoteLine(quoteData, templateMeasurement, ctx);
+  if (
+    storedCustomMeasure != null &&
+    !measureLockedByScopeMetricInherit(scopeInheritMeasureSource, scopeInheritMeasureLocked)
+  ) {
+    return storedCustomMeasure;
+  }
+  return effectiveMeasurementForQuoteLine(
+    quoteData,
+    templateMeasurement,
+    ctx,
+    scopeInheritMeasureSource,
+    scopeMetricValues,
+    scopeMetrics,
+    skuCalcM2,
+  );
 }
 
 export function calcTotal(
@@ -187,11 +270,30 @@ export function effectiveMeasurementForQuoteLine(
     apartmentSoftM2?: number | null;
     apartmentHardM2?: number | null;
   },
+  scopeInheritMeasureSource?: InheritMeasureSource,
+  scopeMetricValues?: Map<string, number | null>,
+  scopeMetrics: ScopeMetricPublic[] = [],
+  skuCalcM2?: SkuCalcM2Fields | null,
 ): number | null {
   if (!quoteData) return templateMeasurement;
   const uom = String(quoteData.uom ?? "").trim();
+  const inheritSrc = scopeInheritMeasureSource ?? normalizeInheritM2SourceFromDoc(quoteData);
+  const metricId = parseScopeMetricInheritId(String(inheritSrc));
+  if (metricId && scopeMetricValues) {
+    const fromMetric = measureFromScopeMetric(
+      quoteData,
+      metricId,
+      scopeMetricValues,
+      scopeMetrics,
+      skuCalcM2,
+    );
+    if (fromMetric != null) return fromMetric;
+  }
+  if (!uomSupportsInheritM2(uom)) return templateMeasurement;
+  const src = isQuoteObjectInheritM2Source(inheritSrc)
+    ? inheritSrc
+    : normalizeInheritM2SourceFromDoc(quoteData);
   if (uom === "M2") {
-    const src = normalizeInheritM2SourceFromDoc(quoteData);
     if (src === "area_m2") return numOrNull(ctx.areaM2) ?? null;
     if (src === "apartment_total_m2") return numOrNull(ctx.apartmentTotalM2) ?? null;
     if (src === "apartment_soft_m2") return numOrNull(ctx.apartmentSoftM2) ?? null;
@@ -200,7 +302,6 @@ export function effectiveMeasurementForQuoteLine(
   }
   if (uom === LM_RUNS_UOM) {
     const rw = effectiveLmRunsRollWidthM(quoteData);
-    const src = normalizeInheritM2SourceFromDoc(quoteData);
     const baseM2 =
       src === "area_m2"
         ? numOrNull(ctx.areaM2)
@@ -234,6 +335,9 @@ export function resolveProjectLineCustomUom(
   if (fromTemplate) return fromTemplate;
   return String(skuUom ?? "").trim();
 }
+
+/** Scope Show All rows — each matched catalog SKU carries its own UOM (e.g. ea → Unit). */
+export { mapSkuUomToQuoteUom as resolveScopeShowAllLineCustomUom } from "@/lib/map-sku-uom-to-quote-uom";
 
 /**
  * Line pricing from a quote_object template for a given price level (project / area).

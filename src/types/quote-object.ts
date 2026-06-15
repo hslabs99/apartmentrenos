@@ -1,4 +1,4 @@
-/** UOM price, total price, and specs for one Setup → Price Levels tier. */
+/** UOM price, total price, and specs for one System → Price Levels tier. */
 export type QuoteObjectPriceLevelRowPublic = {
   pricelevelid: number;
   uomprice: number | null;

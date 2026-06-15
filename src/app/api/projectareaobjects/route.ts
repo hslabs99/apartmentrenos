@@ -9,6 +9,14 @@ import { getAdminFirestore } from "@/lib/firebase/admin";
 import { ensureProjectAreaObjectsBootstrap } from "@/lib/firestore/collection-bootstrap";
 import { isProjectAreaObjectsMetaDocument } from "@/lib/firestore/projectareaobjects-collection";
 import { isProjectAreasMetaDocument } from "@/lib/firestore/projectareas-collection";
+import { isScopesMetaDocument } from "@/lib/firestore/scopes-collection";
+import {
+  effectiveInheritMeasureSource,
+  scopeAnswerInheritMeasureLockedForQuoteObjectDocId,
+  scopeAnswerInheritMeasureSourceForQuoteObjectDocId,
+} from "@/lib/inherit-m2-source";
+import { matchesScopeInstance } from "@/lib/scope-instance";
+import { scopeMetricValuesMapForInstance } from "@/lib/scope-metrics";
 import { backfillMissingProjectAreaDocIds } from "@/lib/server/project-area-line-backfill";
 import {
   ensureProjectNumericId,
@@ -26,8 +34,10 @@ import {
 import {
   applyProjectLineLabourHours,
   labourHoursToFirestore,
+  loadAllContractLabourRates,
   loadAllObjectLabourRates,
 } from "@/lib/server/labour-hours";
+import { labourLineCatalogFields } from "@/lib/server/labour-checklist-line";
 import { TEMPLATE_LABOUR_SILO_KEYS } from "@/lib/labour-silo";
 import { loadProjectDimensionsByProjectId } from "@/lib/server/project-dimensions";
 import {
@@ -38,8 +48,16 @@ import { docToProjectAreaObjectPublic } from "@/lib/server/project-area-object-d
 import { loadQuoteByObjectIdMap } from "@/lib/server/project-area-seeding";
 import { materializeSkuForNewProjectLine } from "@/lib/server/materialize-line-sku";
 import { resolveEffectivePriceLevelId } from "@/lib/server/resolve-effective-price-level";
+import { parseScopeMetricValuesFromFirestore } from "@/lib/server/scope-metric-values";
+import {
+  firestoreAnswersToPublic,
+  firestoreScopeMetricsToPublic,
+} from "@/lib/server/scope-doc";
+import { loadSkuCalcM2Fields } from "@/lib/server/sku-calc-m2-fields";
 import { isValidSupplierOption } from "@/lib/sku/supplier-option";
+import type { ProjectAreaScopeAnswerPublic } from "@/types/project-area";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
+import type { InheritMeasureSource } from "@/types/scope-metric";
 
 export const runtime = "nodejs";
 
@@ -65,6 +83,8 @@ const createSchema = z.object({
   colour: z.union([z.string(), z.null()]).optional(),
   notes1: z.string().optional().default(""),
   notes2: z.string().optional().default(""),
+  manualSupplier: z.string().optional(),
+  manualSupplierSku: z.string().optional(),
   constructionAssistantHours: numberOrNull.optional(),
   leadContractorHours: numberOrNull.optional(),
   electricianHours: numberOrNull.optional(),
@@ -73,6 +93,10 @@ const createSchema = z.object({
   projectManagerHours: numberOrNull.optional(),
   paintingHours: numberOrNull.optional(),
   plasteringHours: numberOrNull.optional(),
+  /** When set, line is created inside this scope section (checklist) instead of area-level manual. */
+  scopeDocId: z.string().min(1).optional(),
+  scopeInstanceId: z.union([z.string().min(1), z.null()]).optional(),
+  answerid: z.union([z.string().uuid(), z.null()]).optional(),
 });
 
 function parseDateTime(value: unknown): Timestamp | null {
@@ -265,28 +289,101 @@ export async function POST(req: NextRequest) {
       apartmentHardM2: projDims.apartmentHardM2,
       apartmentSoftM2: projDims.apartmentSoftM2,
     };
-    const inheritedMeasure = effectiveMeasurementForQuoteLine(
-      quoteData,
-      template.measurement,
-      measureCtx,
+    let scopeInheritMeasureSource: InheritMeasureSource | undefined;
+    let scopeInheritMeasureLocked: boolean | undefined;
+    let scopeMetricsForLine: ReturnType<typeof firestoreScopeMetricsToPublic> = [];
+    let scopeMetricValueMap: Map<string, number | null> | undefined;
+    let scopeDocId: string | undefined;
+    let scopeInstanceId: string | null | undefined;
+    let scopeAnswerId: string | null | undefined;
+    let scopeNumericId: number | null | undefined;
+
+    if (d.scopeDocId?.trim()) {
+      scopeDocId = d.scopeDocId.trim();
+      const scopeSnap = await db.collection("scopes").doc(scopeDocId).get();
+      if (!scopeSnap.exists || isScopesMetaDocument(scopeSnap.id)) {
+        return NextResponse.json({ error: "Scope not found" }, { status: 404 });
+      }
+      const scopeData = scopeSnap.data() as DocumentData;
+      scopeNumericId = numOrNull(scopeData.scopeid) ?? undefined;
+      scopeMetricsForLine = firestoreScopeMetricsToPublic(scopeData.scopeMetrics);
+      const scopeAnswers = firestoreAnswersToPublic(scopeData.answers);
+      scopeInstanceId =
+        d.scopeInstanceId === undefined
+          ? undefined
+          : d.scopeInstanceId === null
+            ? null
+            : d.scopeInstanceId.trim() || null;
+
+      const paScopeAnswers = Array.isArray(paSnap.data()?.scopeAnswers)
+        ? (paSnap.data()!.scopeAnswers as ProjectAreaScopeAnswerPublic[])
+        : [];
+      const savedForScope = paScopeAnswers.find(
+        (e) =>
+          e.scopeDocId === scopeDocId &&
+          matchesScopeInstance(e.scopeInstanceId, scopeInstanceId),
+      );
+      scopeAnswerId =
+        d.answerid !== undefined
+          ? d.answerid
+          : savedForScope?.answerid ?? null;
+
+      if (scopeAnswerId) {
+        const answer = scopeAnswers.find((a) => a.answerid === scopeAnswerId);
+        if (answer) {
+          scopeInheritMeasureSource = scopeAnswerInheritMeasureSourceForQuoteObjectDocId(
+            answer,
+            parsed.data.quoteObjectDocId,
+          );
+          scopeInheritMeasureLocked = scopeAnswerInheritMeasureLockedForQuoteObjectDocId(
+            answer,
+            parsed.data.quoteObjectDocId,
+          );
+        }
+      }
+
+      const scopeMetricValues = parseScopeMetricValuesFromFirestore(
+        paSnap.data()?.scopeMetricValues,
+      );
+      scopeMetricValueMap = scopeMetricValuesMapForInstance(
+        scopeMetricValues,
+        scopeDocId,
+        scopeInstanceId,
+      );
+    }
+
+    const effectiveInherit = effectiveInheritMeasureSource(
+      {
+        uom: String(quoteData.uom ?? ""),
+        inheritM2Source: quoteData.inheritM2Source,
+        inheritAreaM2: quoteData.inheritAreaM2,
+      },
+      scopeInheritMeasureSource,
     );
-    let custommeasure = customMeasureForNewProjectLine(
-      quoteData,
-      template.measurement,
-      measureCtx,
-      d.custommeasure,
-    );
+
     let customuom = resolveProjectLineCustomUom(template.customuom, null, d.customuom);
     let customumprice =
       d.customumprice !== undefined ? d.customumprice : template.customumprice;
 
-    const materializedSku = await materializeSkuForNewProjectLine(db, quoteData, {
-      projectAreaDocId: parsed.data.projectAreaDocId,
-      projectid,
-      effectivePriceLevelId: pl,
-      lineStyle: style || null,
-      lineColour: colour || null,
-    });
+    const materializedSku = await (async () => {
+      const contractLabourRates = await loadAllContractLabourRates(db);
+      const labourCatalog = labourLineCatalogFields(quoteData, contractLabourRates);
+      if (labourCatalog) {
+        return {
+          skuId: null,
+          skuProduct: labourCatalog.skuProduct,
+          uom: labourCatalog.customuom,
+          supplierPriceExcGst: labourCatalog.customumprice,
+        };
+      }
+      return materializeSkuForNewProjectLine(db, quoteData, {
+        projectAreaDocId: parsed.data.projectAreaDocId,
+        projectid,
+        effectivePriceLevelId: pl,
+        lineStyle: style || null,
+        lineColour: colour || null,
+      });
+    })();
     if (materializedSku.skuId) {
       if (materializedSku.supplierPriceExcGst != null && d.customumprice === undefined) {
         customumprice = materializedSku.supplierPriceExcGst;
@@ -296,11 +393,38 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const skuIdForMeasure = d.skuId?.trim() || materializedSku.skuId || null;
+    const skuCalcM2ForMeasure = await loadSkuCalcM2Fields(db, skuIdForMeasure);
+    const inheritedMeasure = effectiveMeasurementForQuoteLine(
+      quoteData,
+      template.measurement,
+      measureCtx,
+      effectiveInherit,
+      scopeMetricValueMap,
+      scopeMetricsForLine,
+      skuCalcM2ForMeasure,
+    );
+    let custommeasure = customMeasureForNewProjectLine(
+      quoteData,
+      template.measurement,
+      measureCtx,
+      d.custommeasure,
+      effectiveInherit,
+      scopeMetricValueMap,
+      scopeMetricsForLine,
+      skuCalcM2ForMeasure,
+      scopeInheritMeasureLocked,
+    );
     const measureForPricing = effectiveMeasureForLinePricing(
       quoteData,
       template.measurement,
       measureCtx,
       custommeasure,
+      effectiveInherit,
+      scopeMetricValueMap,
+      scopeMetricsForLine,
+      skuCalcM2ForMeasure,
+      scopeInheritMeasureLocked,
     );
 
     const tooltip = readTooltipFromQuoteObjectData(quoteData);
@@ -345,6 +469,7 @@ export async function POST(req: NextRequest) {
     });
 
     const isBundled = Boolean(d.bundledFromLineId?.trim());
+    const isScopeLine = Boolean(scopeDocId);
     const lineDoc: Record<string, unknown> = {
       ...bodyToFirestore({
         dateadded: d.dateadded,
@@ -362,7 +487,7 @@ export async function POST(req: NextRequest) {
         objectid,
         labourHours: labourHoursToFirestore(labourHours),
       }),
-      linesource: isBundled ? "bundled" : "manual",
+      linesource: isBundled ? "bundled" : isScopeLine ? "scope" : "manual",
       ...(objectName ? { objectname: objectName } : {}),
       tooltip,
       createdAt: FieldValue.serverTimestamp(),
@@ -373,7 +498,18 @@ export async function POST(req: NextRequest) {
       if (d.bundledAppendSlot != null) lineDoc.bundledAppendSlot = d.bundledAppendSlot;
       if (d.pricelevelid !== undefined) lineDoc.pricelevelid = d.pricelevelid;
     }
+    if (isScopeLine && scopeDocId) {
+      lineDoc.scopeDocId = scopeDocId;
+      const inst = scopeInstanceId?.trim();
+      if (inst) lineDoc.scopeInstanceId = inst;
+      if (scopeAnswerId) lineDoc.answerid = scopeAnswerId;
+      if (scopeNumericId != null) lineDoc.scopeid = scopeNumericId;
+    }
     const explicitSkuId = d.skuId?.trim();
+    const manualSupplier = d.manualSupplier?.trim();
+    const manualSupplierSku = d.manualSupplierSku?.trim();
+    if (manualSupplier) lineDoc.manualSupplier = manualSupplier;
+    if (manualSupplierSku) lineDoc.manualSupplierSku = manualSupplierSku;
     if (explicitSkuId) {
       lineDoc.skuId = explicitSkuId;
       lineDoc.skuProduct = d.skuProduct?.trim() ?? "";
@@ -383,6 +519,8 @@ export async function POST(req: NextRequest) {
     } else if (materializedSku.skuId) {
       lineDoc.skuId = materializedSku.skuId;
       lineDoc.skuProduct = materializedSku.skuProduct ?? "";
+    } else if (materializedSku.skuProduct) {
+      lineDoc.skuProduct = materializedSku.skuProduct;
     }
 
     const ref = await db.collection("projectareaobjects").add(lineDoc);

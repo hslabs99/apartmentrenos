@@ -51,6 +51,34 @@ export async function reorderNeighborAndRenumber(
   return { ok: true };
 }
 
+export async function reorderCollectionByOrderedIds(
+  db: Firestore,
+  collectionName: string,
+  isMeta: (id: string) => boolean,
+  orderedIds: string[],
+  secondaryLabel: (data: DocumentData, docId: string) => string,
+): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
+  const snap = await db.collection(collectionName).get();
+  const docs = snap.docs.filter((d) => !isMeta(d.id));
+  const byId = new Map(docs.map((d) => [d.id, d]));
+  const ordered: QueryDocumentSnapshot[] = [];
+  const seen = new Set<string>();
+  for (const id of orderedIds) {
+    if (seen.has(id)) {
+      return { ok: false, error: "Duplicate id in order", status: 400 };
+    }
+    seen.add(id);
+    const doc = byId.get(id);
+    if (!doc) return { ok: false, error: "Not found", status: 404 };
+    ordered.push(doc);
+  }
+  const rest = docs
+    .filter((d) => !seen.has(d.id))
+    .sort((a, b) => compareTemplateDocs(a, b, secondaryLabel));
+  await commitSortOrderBatch(db, [...ordered, ...rest]);
+  return { ok: true };
+}
+
 async function commitSortOrderBatch(
   db: Firestore,
   ordered: QueryDocumentSnapshot[],
@@ -102,6 +130,34 @@ export async function reorderAreaObjectNeighbor(
   const next = [...sorted];
   [next[idx], next[j]] = [next[j], next[idx]];
   await commitSortOrderBatch(db, next);
+  return { ok: true };
+}
+
+export async function reorderAreaObjectsByOrderedIds(
+  db: Firestore,
+  areaid: number,
+  orderedIds: string[],
+): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
+  const snap = await db.collection("areaobjects").where("areaid", "==", areaid).get();
+  const docs = snap.docs.filter((d) => !isAreaObjectsMetaDocument(d.id));
+  const byId = new Map(docs.map((d) => [d.id, d]));
+  const ordered: QueryDocumentSnapshot[] = [];
+  const seen = new Set<string>();
+  for (const id of orderedIds) {
+    if (seen.has(id)) {
+      return { ok: false, error: "Duplicate id in order", status: 400 };
+    }
+    seen.add(id);
+    const doc = byId.get(id);
+    if (!doc) return { ok: false, error: "Not found", status: 404 };
+    ordered.push(doc);
+  }
+  const secondary = (data: DocumentData, docId: string) =>
+    `${String(data.objectid ?? "")}\u0000${docId}`;
+  const rest = docs
+    .filter((d) => !seen.has(d.id))
+    .sort((a, b) => compareTemplateDocs(a, b, secondary));
+  await commitSortOrderBatch(db, [...ordered, ...rest]);
   return { ok: true };
 }
 
@@ -341,5 +397,32 @@ export async function reorderScopeNeighbor(
   const next = [...sorted];
   [next[idx], next[j]] = [next[j], next[idx]];
   await commitScopeAreaSortBatch(db, areaDocId, next);
+  return { ok: true };
+}
+
+export async function reorderScopesInAreaByOrderedIds(
+  db: Firestore,
+  areaDocId: string,
+  areaNumericId: number,
+  docIdByAreaid: Map<number, string>,
+  orderedIds: string[],
+): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
+  const docs = await scopesDocsForTemplateArea(db, areaDocId, areaNumericId, docIdByAreaid);
+  const byId = new Map(docs.map((d) => [d.id, d]));
+  const ordered: QueryDocumentSnapshot[] = [];
+  const seen = new Set<string>();
+  for (const id of orderedIds) {
+    if (seen.has(id)) {
+      return { ok: false, error: "Duplicate id in order", status: 400 };
+    }
+    seen.add(id);
+    const doc = byId.get(id);
+    if (!doc) return { ok: false, error: "Not found", status: 404 };
+    ordered.push(doc);
+  }
+  const rest = docs
+    .filter((d) => !seen.has(d.id))
+    .sort((a, b) => compareScopesInArea(a, b, areaDocId));
+  await commitScopeAreaSortBatch(db, areaDocId, [...ordered, ...rest]);
   return { ok: true };
 }

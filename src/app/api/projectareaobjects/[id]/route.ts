@@ -12,7 +12,11 @@ import {
   loadAllObjectLabourRates,
   recalcLookupLabourHoursOnLine,
 } from "@/lib/server/labour-hours";
-import { LABOUR_SILO_KEYS } from "@/lib/labour-silo";
+import {
+  LABOUR_SILO_KEYS,
+  LOOKUP_LABOUR_SILO_KEYS,
+  readLabourLookupManualOverrides,
+} from "@/lib/labour-silo";
 import { lookupBlindsUnitPrice } from "@/lib/server/blinds-line-price";
 import { isValidSupplierOption } from "@/lib/sku/supplier-option";
 import {
@@ -23,6 +27,27 @@ export const runtime = "nodejs";
 
 const numberOrNull = z.union([z.number(), z.null()]);
 
+const scopeToolBenchSectionSchema = z.object({
+  id: z.string().min(1).max(128),
+  lengthMm: z.number().nonnegative(),
+  widthMm: z.number().nonnegative(),
+});
+
+const scopeToolWallMmSchema = z.object({
+  width1Mm: z.number().nonnegative(),
+  width2Mm: z.number().nonnegative(),
+  studHeightMm: z.number().nonnegative(),
+});
+
+const labourLookupManualOverridesSchema = z
+  .object({
+    constructionAssistantHours: z.boolean().optional(),
+    leadContractorHours: z.boolean().optional(),
+    electricianHours: z.boolean().optional(),
+    plumberHours: z.boolean().optional(),
+  })
+  .nullable();
+
 const updateSchema = z.object({
   dateadded: z.union([z.string(), z.null()]).optional(),
   included: z.boolean().optional(),
@@ -30,6 +55,8 @@ const updateSchema = z.object({
   style: z.union([z.string(), z.null()]).optional(),
   colour: z.union([z.string(), z.null()]).optional(),
   custommeasure: numberOrNull.optional(),
+  scopeToolBenchSections: z.union([z.array(scopeToolBenchSectionSchema), z.null()]).optional(),
+  scopeToolWallMm: z.union([scopeToolWallMmSchema, z.null()]).optional(),
   customuom: z.string().optional(),
   customumprice: numberOrNull.optional(),
   totalprice: numberOrNull.optional(),
@@ -43,6 +70,7 @@ const updateSchema = z.object({
   projectManagerHours: numberOrNull.optional(),
   paintingHours: numberOrNull.optional(),
   plasteringHours: numberOrNull.optional(),
+  labourLookupManualOverrides: labourLookupManualOverridesSchema.optional(),
   skuId: z.union([z.string().min(1), z.null()]).optional(),
   skuProduct: z.union([z.string(), z.null()]).optional(),
   supplierOption: numberOrNull.optional(),
@@ -156,12 +184,40 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       update.colour = t ? t : FieldValue.delete();
     }
     if (d.custommeasure !== undefined) update.custommeasure = d.custommeasure;
+    if (d.scopeToolBenchSections !== undefined) {
+      update.scopeToolBenchSections =
+        d.scopeToolBenchSections == null || d.scopeToolBenchSections.length === 0
+          ? FieldValue.delete()
+          : d.scopeToolBenchSections;
+    }
+    if (d.scopeToolWallMm !== undefined) {
+      update.scopeToolWallMm =
+        d.scopeToolWallMm == null ? FieldValue.delete() : d.scopeToolWallMm;
+    }
     if (d.customuom !== undefined) update.customuom = d.customuom;
     if (d.customumprice !== undefined) update.customumprice = d.customumprice;
     if (d.notes1 !== undefined) update.notes1 = d.notes1;
     if (d.notes2 !== undefined) update.notes2 = d.notes2;
     for (const k of LABOUR_SILO_KEYS) {
       if (d[k] !== undefined) update[k] = normalizeLoadValue(d[k]);
+    }
+
+    const lookupHourTouched = LOOKUP_LABOUR_SILO_KEYS.some((k) => d[k] !== undefined);
+    if (d.labourLookupManualOverrides !== undefined) {
+      const raw = d.labourLookupManualOverrides;
+      const hasAny =
+        raw != null &&
+        LOOKUP_LABOUR_SILO_KEYS.some((k) => raw[k] === true);
+      update.labourLookupManualOverrides = hasAny ? raw : FieldValue.delete();
+    } else if (lookupHourTouched) {
+      const merged = {
+        ...readLabourLookupManualOverrides(existing.labourLookupManualOverrides),
+      };
+      for (const k of LOOKUP_LABOUR_SILO_KEYS) {
+        if (d[k] !== undefined) merged[k] = true;
+      }
+      const hasAny = LOOKUP_LABOUR_SILO_KEYS.some((k) => merged[k] === true);
+      update.labourLookupManualOverrides = hasAny ? merged : FieldValue.delete();
     }
 
     if (d.skuId !== undefined) {
@@ -198,6 +254,20 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
             ? null
             : String(existing.skuProduct ?? "").trim() || null;
       const objectLabourRates = await loadAllObjectLabourRates(db);
+      const effectiveOverrides =
+        d.labourLookupManualOverrides !== undefined
+          ? readLabourLookupManualOverrides(d.labourLookupManualOverrides)
+          : lookupHourTouched
+            ? {
+                ...readLabourLookupManualOverrides(existing.labourLookupManualOverrides),
+                ...Object.fromEntries(
+                  LOOKUP_LABOUR_SILO_KEYS.filter((k) => d[k] !== undefined).map((k) => [
+                    k,
+                    true,
+                  ]),
+                ),
+              }
+            : readLabourLookupManualOverrides(existing.labourLookupManualOverrides);
       const { patch: lookupPatch } = recalcLookupLabourHoursOnLine(
         existing,
         objectName,
@@ -205,6 +275,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         effectiveMeasure,
         lineUom,
         effectiveSkuProduct,
+        effectiveOverrides,
       );
       Object.assign(update, lookupPatch);
     }

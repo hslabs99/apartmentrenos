@@ -16,7 +16,7 @@ import {
 } from "@/lib/server/template-sort-order";
 import type { ScopePublic } from "@/types/scope";
 import { normalizeScopeToolFields } from "@/lib/scope-tools";
-import { normalizeScopeAnswers, normalizeSystemScopeFields, scopePatchSchema } from "../scope-validation";
+import { normalizeScopeAnswers, normalizeScopeMetrics, normalizeSystemScopeFields, scopePatchSchema } from "../scope-validation";
 
 export const runtime = "nodejs";
 
@@ -159,6 +159,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       update.systemScopeType = null;
       update.exposeTool = false;
       update.scopeToolType = null;
+      update.scopeMetrics = [];
     } else {
       update.kind = "question";
       if (parsed.data.answers !== undefined) {
@@ -189,6 +190,16 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         });
         update.exposeTool = exposeTool;
         update.scopeToolType = scopeToolType;
+      }
+
+      if (parsed.data.scopeMetrics !== undefined) {
+        const answerRows =
+          parsed.data.answers !== undefined
+            ? normalizeScopeAnswers(parsed.data.answers)
+            : firestoreAnswersToPublic(prevData.answers);
+        const answerIdSet = new Set(answerRows.map((a) => a.answerid));
+        const scopeMetrics = normalizeScopeMetrics(parsed.data.scopeMetrics, answerIdSet);
+        update.scopeMetrics = scopeMetrics;
       }
 
       let finalAnswerCount = 0;

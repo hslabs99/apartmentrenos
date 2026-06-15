@@ -17,7 +17,7 @@ import {
 } from "@/lib/server/template-sort-order";
 import type { ScopePublic } from "@/types/scope";
 import { normalizeScopeToolFields } from "@/lib/scope-tools";
-import { normalizeScopeAnswers, normalizeSystemScopeFields, scopeWriteSchema } from "./scope-validation";
+import { normalizeScopeAnswers, normalizeScopeMetrics, normalizeSystemScopeFields, scopeWriteSchema } from "./scope-validation";
 
 export const runtime = "nodejs";
 
@@ -185,6 +185,8 @@ export async function POST(req: NextRequest) {
     } else {
       const scopeid = await allocateNextSequence(db, "scopeid");
       const answers = normalizeScopeAnswers(parsed.data.answers!);
+      const answerIdSet = new Set(answers.map((a) => a.answerid));
+      const scopeMetrics = normalizeScopeMetrics(parsed.data.scopeMetrics, answerIdSet);
       const { systemScope, systemScopeType } = normalizeSystemScopeFields(parsed.data);
       const { exposeTool, scopeToolType } = normalizeScopeToolFields(parsed.data);
       await ref.set({
@@ -195,6 +197,7 @@ export async function POST(req: NextRequest) {
         kind: "question",
         question: parsed.data.question,
         answers,
+        ...(scopeMetrics.length > 0 ? { scopeMetrics } : {}),
         systemScope,
         systemScopeType,
         exposeTool,

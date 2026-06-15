@@ -15,7 +15,7 @@ export type MaterializedLineSku = {
   supplierPriceExcGst: number | null;
 };
 
-async function primarySupplierPriceExcGst(
+export async function primarySupplierPriceExcGst(
   db: Firestore,
   skuId: string,
 ): Promise<number | null> {

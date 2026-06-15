@@ -37,15 +37,24 @@ export function truncateAppendSpec(value: string): string {
   return t.slice(0, MAX_APPEND_SPEC_LENGTH);
 }
 
-/** Non-empty append type + spec pairs on a catalog SKU (order 1 → 3). */
+/** Append slots on a catalog SKU (order 1 → 3). Type required; spec optional. */
 export function appendSlotsFromDataSku(sku: DataSkuAppendFields): DataSkuAppendSlotRef[] {
   const out: DataSkuAppendSlotRef[] = [];
   for (const { slot, typeKey, specKey } of SLOT_DEFS) {
     const productType = sku[typeKey].trim();
     const product = sku[specKey].trim();
-    if (productType && product) {
+    if (productType) {
       out.push({ slot, productType, product });
     }
   }
   return out;
+}
+
+export function appendSpecForSlot(
+  sku: DataSkuAppendFields,
+  slot: DataSkuAppendSlotIndex,
+): string {
+  const def = SLOT_DEFS.find((d) => d.slot === slot);
+  if (!def) return "";
+  return sku[def.specKey].trim();
 }

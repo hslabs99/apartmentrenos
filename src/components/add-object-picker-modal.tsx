@@ -21,6 +21,8 @@ function displayCategory(q: QuoteObjectPublic): string {
 type Props = {
   open: boolean;
   areaLabel: string;
+  /** When adding inside a scope section, shown in the modal description. */
+  scopeLabel?: string;
   quoteObjects: QuoteObjectPublic[];
   saving: boolean;
   onClose: () => void;
@@ -30,6 +32,7 @@ type Props = {
 export function AddObjectPickerModal({
   open,
   areaLabel,
+  scopeLabel,
   quoteObjects,
   saving,
   onClose,
@@ -91,7 +94,11 @@ export function AddObjectPickerModal({
   return (
     <ModalFrame
       title="Add object"
-      description={`Choose a quote object to add to “${areaLabel}”.`}
+      description={
+        scopeLabel?.trim()
+          ? `Choose a quote object to add under scope “${scopeLabel.trim()}” in “${areaLabel}”.`
+          : `Choose a quote object to add to “${areaLabel}”.`
+      }
       onClose={saving ? () => {} : onClose}
       wide
       footer={

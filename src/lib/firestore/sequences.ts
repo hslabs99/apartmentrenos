@@ -9,7 +9,8 @@ export type SequenceName =
   | "lookupid"
   | "colourlookupid"
   | "pricelevelid"
-  | "scopeid";
+  | "scopeid"
+  | "noteid";
 
 /**
  * Monotonic auto-increment per entity type (Firestore transaction).

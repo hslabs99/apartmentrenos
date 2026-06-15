@@ -20,7 +20,8 @@ const NAV_COLLAPSED_KEY = "apartmentrenos-nav-collapsed";
 function isProjectScopePath(pathname: string) {
   return (
     pathname.startsWith("/projects/project/checklist") ||
-    pathname.startsWith("/projects/project/workbench")
+    pathname.startsWith("/projects/project/workbench") ||
+    pathname.startsWith("/projects/project/notes")
   );
 }
 

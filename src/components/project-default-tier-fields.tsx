@@ -83,7 +83,7 @@ export function ProjectDefaultTierFields({
         ) : null}
         {!priceLevelsLoading && priceLevels.length === 0 ? (
           <span className="mt-1 block text-xs text-amber-800 dark:text-amber-200">
-            No price levels yet. Add one under Setup → Price Levels, then create a project.
+            No price levels yet. Add one under System → Price Levels, then create a project.
           </span>
         ) : null}
       </label>

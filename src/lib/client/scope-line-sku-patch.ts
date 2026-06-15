@@ -8,6 +8,8 @@ export function patchBodyForScopeLineSku(
     ScopeLineSkuPick,
     "skuId" | "product" | "supplierOption" | "priceExcGst"
   >,
+  /** Checklist inherit / scope metric measure when `custommeasure` is stored null. */
+  measureForPricing?: number | null,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     skuId: selection.skuId,
@@ -16,7 +18,7 @@ export function patchBodyForScopeLineSku(
   };
   if (line.scopeNoCharge) {
     body.customumprice = 0;
-    const measure = line.custommeasure ?? 1;
+    const measure = line.custommeasure ?? measureForPricing ?? 1;
     if (line.custommeasure == null) {
       body.custommeasure = measure;
     }
@@ -27,8 +29,9 @@ export function patchBodyForScopeLineSku(
   if (price == null) return body;
 
   body.customumprice = price;
-  if (line.custommeasure != null) {
-    body.totalprice = line.custommeasure * price;
+  const measure = line.custommeasure ?? measureForPricing ?? null;
+  if (measure != null) {
+    body.totalprice = measure * price;
   }
   return body;
 }

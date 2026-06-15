@@ -1,6 +1,9 @@
 import type { DocumentData, Timestamp } from "firebase-admin/firestore";
+import { isInheritMeasureSource, isScopeMetricInheritSource } from "@/lib/scope-metrics";
 import { isScopeToolType, type ScopeToolType } from "@/lib/scope-tools";
 import type { ScopeAnswerPublic, ScopePublic } from "@/types/scope";
+import type { InheritMeasureSource } from "@/types/scope-metric";
+import type { ScopeMetricPublic } from "@/types/scope-metric";
 import { normalizedScopeAreaState } from "@/lib/scope-areas";
 import { readScopeToolFromFirestore } from "@/lib/scope-tools";
 import { readSystemScopeFromFirestore } from "@/lib/system-scope-types";
@@ -79,6 +82,58 @@ function normalizeAttachedObjectFlags(
   return out;
 }
 
+function normalizeAttachedObjectInheritM2Sources(
+  raw: unknown,
+  attachedIds: string[],
+): Partial<Record<string, InheritMeasureSource>> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const allowed = new Set(attachedIds);
+  const out: Partial<Record<string, InheritMeasureSource>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = key.trim();
+    const src = typeof value === "string" ? value.trim() : "";
+    if (!id || !allowed.has(id) || !isInheritMeasureSource(src)) continue;
+    out[id] = src;
+  }
+  return out;
+}
+
+function normalizeAttachedObjectInheritMeasureLocked(
+  raw: unknown,
+  attachedIds: string[],
+  inheritSources: Partial<Record<string, InheritMeasureSource>>,
+): Partial<Record<string, boolean>> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const allowed = new Set(attachedIds);
+  const out: Partial<Record<string, boolean>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = key.trim();
+    if (!id || !allowed.has(id) || value !== false) continue;
+    const inherit = inheritSources[id];
+    if (inherit && isScopeMetricInheritSource(inherit)) out[id] = false;
+  }
+  return out;
+}
+
+export function firestoreScopeMetricsToPublic(raw: unknown): ScopeMetricPublic[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ScopeMetricPublic[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    const metricid = String(rec.metricid ?? "").trim();
+    const label = String(rec.label ?? "").trim();
+    const uom = String(rec.uom ?? "").trim();
+    if (!metricid || !label || !uom) continue;
+    const answeridsRaw = rec.answerids;
+    const answerids = Array.isArray(answeridsRaw)
+      ? answeridsRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : [];
+    out.push({ metricid, label, uom, answerids: [...new Set(answerids.map((x) => x.trim()))] });
+  }
+  return out.slice(0, 4);
+}
+
 function normalizeAttachedCategories(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
@@ -112,6 +167,19 @@ export function firestoreAnswersToPublic(raw: unknown): ScopeAnswerPublic[] {
       rec.attachedObjectNoCharge,
       attachedQuoteObjectIds,
     );
+    const forceRaw = normalizeAttachedObjectFlags(
+      rec.attachedObjectForce,
+      attachedQuoteObjectIds,
+    );
+    const inheritRaw = normalizeAttachedObjectInheritM2Sources(
+      rec.attachedObjectInheritM2Source,
+      attachedQuoteObjectIds,
+    );
+    const inheritLockedRaw = normalizeAttachedObjectInheritMeasureLocked(
+      rec.attachedObjectInheritMeasureLocked,
+      attachedQuoteObjectIds,
+      inheritRaw,
+    );
     const attachedObjectTools: Partial<Record<string, ScopeToolType>> = {};
     for (const id of attachedQuoteObjectIds) {
       const tool = toolsRaw[id];
@@ -119,9 +187,16 @@ export function firestoreAnswersToPublic(raw: unknown): ScopeAnswerPublic[] {
     }
     const attachedObjectShowAll: Partial<Record<string, boolean>> = {};
     const attachedObjectNoCharge: Partial<Record<string, boolean>> = {};
+    const attachedObjectForce: Partial<Record<string, boolean>> = {};
+    const attachedObjectInheritM2Source: Partial<Record<string, InheritMeasureSource>> = {};
+    const attachedObjectInheritMeasureLocked: Partial<Record<string, boolean>> = {};
     for (const id of attachedQuoteObjectIds) {
       if (showAllRaw[id]) attachedObjectShowAll[id] = true;
       if (noChargeRaw[id]) attachedObjectNoCharge[id] = true;
+      if (forceRaw[id]) attachedObjectForce[id] = true;
+      const inherit = inheritRaw[id];
+      if (inherit) attachedObjectInheritM2Source[id] = inherit;
+      if (inheritLockedRaw[id] === false) attachedObjectInheritMeasureLocked[id] = false;
     }
     out.push({
       answerid,
@@ -135,6 +210,16 @@ export function firestoreAnswersToPublic(raw: unknown): ScopeAnswerPublic[] {
         Object.keys(attachedObjectShowAll).length > 0 ? attachedObjectShowAll : undefined,
       attachedObjectNoCharge:
         Object.keys(attachedObjectNoCharge).length > 0 ? attachedObjectNoCharge : undefined,
+      attachedObjectForce:
+        Object.keys(attachedObjectForce).length > 0 ? attachedObjectForce : undefined,
+      attachedObjectInheritM2Source:
+        Object.keys(attachedObjectInheritM2Source).length > 0
+          ? attachedObjectInheritM2Source
+          : undefined,
+      attachedObjectInheritMeasureLocked:
+        Object.keys(attachedObjectInheritMeasureLocked).length > 0
+          ? attachedObjectInheritMeasureLocked
+          : undefined,
     });
   }
   return out;
@@ -303,6 +388,10 @@ export function scopeDocToPublic(
     areaNamesDisplay: namesForDisplay.length ? namesForDisplay.join(", ") : primaryName,
     question: String(data.question ?? ""),
     answers: firestoreAnswersToPublic(data.answers),
+    scopeMetrics: (() => {
+      const m = firestoreScopeMetricsToPublic(data.scopeMetrics);
+      return m.length > 0 ? m : undefined;
+    })(),
     systemScope,
     systemScopeType,
     exposeTool,
