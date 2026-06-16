@@ -35,11 +35,11 @@ Implementation: `project-checklist-panel.tsx` — workbench `<colgroup>` and `wb
 | 8 | Measure | 2.3rem |
 | 9 | UOM | 2.75rem |
 | 10 | Unit price | 2.8rem |
-| 11 | Line total | 2.8rem |
+| 11 | Line total / subtotal | 4.2rem |
 | 12 | Final price | 3.15rem |
 | 13–18 | Gen / Plumb / Elec / PM / Cntr / Ass.Cntr | 2.1rem each |
 | 19 | Notes | 2.75rem |
-| 20 | Spacer (blank) | 8.73rem |
+| 20 | Spacer (blank) | 3.5rem |
 
 ### Columns reduced 30% from baseline (cumulative)
 

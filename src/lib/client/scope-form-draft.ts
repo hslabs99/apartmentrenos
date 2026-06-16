@@ -6,7 +6,7 @@ import { isInheritMeasureSource, isScopeMetricInheritSource, parseScopeMetricInh
 import type { InheritMeasureSource } from "@/types/scope-metric";
 import type { QuoteObjectPublic } from "@/types/quote-object";
 import {
-  isScopeToolType,
+  parseScopeToolType,
   type ScopeToolType,
 } from "@/lib/scope-tools";import {
   isSystemScopeObjectId,
@@ -34,8 +34,9 @@ function normalizeDraftTools(
   const out: Partial<Record<string, ScopeToolType>> = {};
   for (const [key, value] of Object.entries(raw)) {
     const id = key.trim();
-    if (!id || !allowed.has(id) || !value || !isScopeToolType(value)) continue;
-    out[id] = value;
+    const parsed = value ? parseScopeToolType(value) : null;
+    if (!id || !allowed.has(id) || !parsed) continue;
+    out[id] = parsed;
   }
   return out;
 }

@@ -1,5 +1,5 @@
 import { isInheritMeasureSource, isScopeMetricInheritSource } from "@/lib/scope-metrics";
-import { isScopeToolType } from "@/lib/scope-tools";
+import { parseScopeToolType } from "@/lib/scope-tools";
 import type { ScopeToolType } from "@/lib/scope-tools";
 import type { InheritMeasureSource } from "@/types/scope-metric";
 import type { ScopeMetricPublic } from "@/types/scope-metric";
@@ -20,7 +20,7 @@ function refineScopeToolFields(
 ) {
   if (data.exposeTool === true) {
     const raw = typeof data.scopeToolType === "string" ? data.scopeToolType.trim() : "";
-    if (!raw || !isScopeToolType(raw)) {
+    if (!raw || !parseScopeToolType(raw)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Select a tool",
@@ -252,8 +252,9 @@ function normalizeAttachedObjectTools(
   for (const [key, value] of Object.entries(raw)) {
     const id = key.trim();
     const tool = typeof value === "string" ? value.trim() : "";
-    if (!id || !allowed.has(id) || !isScopeToolType(tool)) continue;
-    out[id] = tool;
+    const parsed = tool ? parseScopeToolType(tool) : null;
+    if (!id || !allowed.has(id) || !parsed) continue;
+    out[id] = parsed;
   }
   return out;
 }

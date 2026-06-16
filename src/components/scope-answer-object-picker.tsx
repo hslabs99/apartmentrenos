@@ -33,6 +33,21 @@ import { createPortal } from "react-dom";
 const UNTYPED_GROUP = "(No object type)";
 const SYSTEM_OBJECT_TYPE = "System";
 
+const SCOPE_OBJECT_OPTION_TOOLTIPS = {
+  locked:
+    "When inheriting a scope metric: checked (default) locks the checklist measure to the metric value — users cannot edit it. Uncheck to default from the metric but allow manual overrides on the checklist.",
+  showAll:
+    "Creates one checklist row per matching catalog SKU (tier, style, colour) instead of a single row with a multi-SKU dropdown.",
+  noCharge:
+    "Imported scope lines use $0 unit price and $0 line total. Useful for included items or placeholders that should not add to the quote total.",
+  force:
+    "Hides or disables this answer on the checklist unless at least one catalog SKU matches this object at the project tier, style, and colour.",
+  calcTool:
+    "Optional calculator icon on the checklist SKU row. M² calculator sums rectangular sections; Wall m² computes area from two wall widths and stud height. The result fills the line measure field.",
+  inheritM2:
+    "Default measure source for this object on the checklist. Overrides Setup → Quote Objects when set here. Scope metrics appear when tagged for this answer and UOM-compatible.",
+} as const;
+
 type InlineSelectOption = { value: string; label: string };
 
 /** Button + popover menu — native `<select>` often fails inside scrollable modals on Windows. */
@@ -323,30 +338,36 @@ export function ScopeAnswerObjectPicker({
     return objectInheritMeasureLocked[id] !== false;
   }
 
-  function inheritOptionsForItem(id: string): { value: InheritMeasureSource; label: string }[] {
-    const q = quoteById.get(id);
-    const uom = normalizeMeasureUom(String(q?.uom ?? ""));
-    const objectDefault = normalizeQuoteObjectInheritM2Source(q);
-    const standardOptions = QUOTE_OBJECT_INHERIT_M2_SOURCES.map((src) => ({
-      value: src as InheritMeasureSource,
-      label: QUOTE_OBJECT_INHERIT_M2_LABELS[src],
-    }));
-    const opts = inheritMeasureOptionsForObject(
-      { scopeMetrics },
-      uom,
-      objectDefault,
-      standardOptions,
-      { answerid },
-    );
-    const current = displayInheritMeasureSource(id);
-    if (!opts.some((o) => o.value === current)) {
-      opts.push({
-        value: current,
-        label: inheritMeasureLabel(current, { scopeMetrics }),
-      });
+  const inheritOptionsByObjectId = useMemo(() => {
+    const map = new Map<string, { value: InheritMeasureSource; label: string }[]>();
+    for (const id of selectedIds) {
+      const q = quoteById.get(id);
+      const uom = normalizeMeasureUom(String(q?.uom ?? ""));
+      const objectDefault = normalizeQuoteObjectInheritM2Source(q);
+      const standardOptions = QUOTE_OBJECT_INHERIT_M2_SOURCES.map((src) => ({
+        value: src as InheritMeasureSource,
+        label: QUOTE_OBJECT_INHERIT_M2_LABELS[src],
+      }));
+      const opts = inheritMeasureOptionsForObject(
+        { scopeMetrics },
+        uom,
+        objectDefault,
+        standardOptions,
+        { answerid },
+      );
+      const stored = objectInheritM2Source[id];
+      const current =
+        stored !== undefined ? stored : normalizeQuoteObjectInheritM2Source(q);
+      if (!opts.some((o) => o.value === current)) {
+        opts.push({
+          value: current,
+          label: inheritMeasureLabel(current, { scopeMetrics }),
+        });
+      }
+      map.set(id, opts);
     }
-    return opts;
-  }
+    return map;
+  }, [selectedIds, scopeMetrics, answerid, quoteById, objectInheritM2Source]);
 
   const typeGroups = useMemo(() => {
     const map = new Map<string, PickerItem[]>();
@@ -630,17 +651,23 @@ export function ScopeAnswerObjectPicker({
                 </span>
                 {!item.isSystem ? (
                   <>
-                    <div className="flex shrink-0 items-center gap-1.5 text-xs">
+                    <div
+                      className="flex shrink-0 items-center gap-1.5 text-xs"
+                      title={
+                        uomSupportsInheritM2(String(quoteById.get(item.id)?.uom ?? ""))
+                          ? SCOPE_OBJECT_OPTION_TOOLTIPS.inheritM2
+                          : `${SCOPE_OBJECT_OPTION_TOOLTIPS.inheritM2} Object UOM is ${quoteById.get(item.id)?.uom || "Unit"} — apartment/area inherit applies for M2 / LM-Runs; scope metrics when UOM matches.`
+                      }
+                    >
                       <span className="text-sf-text-weak dark:text-zinc-400">Inherit m²</span>
                       <ScopeInlineSelect
+                        key={`inherit-${item.id}-${(inheritOptionsByObjectId.get(item.id) ?? [])
+                          .map((o) => o.value)
+                          .join("\u0001")}`}
                         value={displayInheritMeasureSource(item.id)}
                         disabled={disabled}
-                        title={
-                          uomSupportsInheritM2(String(quoteById.get(item.id)?.uom ?? ""))
-                            ? "Checklist measure source — overrides Setup → Quote Objects when set here"
-                            : `Object UOM is ${quoteById.get(item.id)?.uom || "Unit"} — inherit applies on checklist for M2 / LM-Runs only; scope metrics when UOM matches`
-                        }
-                        options={inheritOptionsForItem(item.id).map((o) => ({
+                        title={SCOPE_OBJECT_OPTION_TOOLTIPS.inheritM2}
+                        options={(inheritOptionsByObjectId.get(item.id) ?? []).map((o) => ({
                           value: o.value,
                           label: o.label,
                         }))}
@@ -650,71 +677,74 @@ export function ScopeAnswerObjectPicker({
                       />
                     </div>
                     {isScopeMetricInheritSource(displayInheritMeasureSource(item.id)) ? (
-                      <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs">
+                      <label
+                        className="flex shrink-0 cursor-pointer items-center gap-1 text-xs"
+                        title={SCOPE_OBJECT_OPTION_TOOLTIPS.locked}
+                      >
                         <input
                           type="checkbox"
                           className="h-3.5 w-3.5 rounded border-sf-border-strong"
                           checked={displayInheritMeasureLocked(item.id)}
                           disabled={disabled}
+                          title={SCOPE_OBJECT_OPTION_TOOLTIPS.locked}
                           onChange={(e) =>
                             setObjectInheritMeasureLocked(item.id, e.target.checked)
                           }
                         />
-                        <span
-                          className="text-sf-text-weak dark:text-zinc-400"
-                          title="When checked, checklist users cannot override the scope metric measure"
-                        >
-                          Locked
-                        </span>
+                        <span className="text-sf-text-weak dark:text-zinc-400">Locked</span>
                       </label>
                     ) : null}
-                    <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs">
+                    <label
+                      className="flex shrink-0 cursor-pointer items-center gap-1 text-xs"
+                      title={SCOPE_OBJECT_OPTION_TOOLTIPS.showAll}
+                    >
                       <input
                         type="checkbox"
                         className="h-3.5 w-3.5 rounded border-sf-border-strong"
                         checked={objectShowAll[item.id] === true}
                         disabled={disabled}
+                        title={SCOPE_OBJECT_OPTION_TOOLTIPS.showAll}
                         onChange={(e) => setObjectShowAll(item.id, e.target.checked)}
                       />
-                      <span className="text-sf-text-weak dark:text-zinc-400" title="One checklist row per matching SKU">
-                        Show All
-                      </span>
+                      <span className="text-sf-text-weak dark:text-zinc-400">Show All</span>
                     </label>
-                    <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs">
+                    <label
+                      className="flex shrink-0 cursor-pointer items-center gap-1 text-xs"
+                      title={SCOPE_OBJECT_OPTION_TOOLTIPS.noCharge}
+                    >
                       <input
                         type="checkbox"
                         className="h-3.5 w-3.5 rounded border-sf-border-strong"
                         checked={objectNoCharge[item.id] === true}
                         disabled={disabled}
+                        title={SCOPE_OBJECT_OPTION_TOOLTIPS.noCharge}
                         onChange={(e) => setObjectNoCharge(item.id, e.target.checked)}
                       />
-                      <span
-                        className="text-sf-text-weak dark:text-zinc-400"
-                        title="Import line with $0 unit and total price"
-                      >
-                        No Charge
-                      </span>
+                      <span className="text-sf-text-weak dark:text-zinc-400">No Charge</span>
                     </label>
-                    <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs">
+                    <label
+                      className="flex shrink-0 cursor-pointer items-center gap-1 text-xs"
+                      title={SCOPE_OBJECT_OPTION_TOOLTIPS.force}
+                    >
                       <input
                         type="checkbox"
                         className="h-3.5 w-3.5 rounded border-sf-border-strong"
                         checked={objectForce[item.id] === true}
                         disabled={disabled}
+                        title={SCOPE_OBJECT_OPTION_TOOLTIPS.force}
                         onChange={(e) => setObjectForce(item.id, e.target.checked)}
                       />
-                      <span
-                        className="text-sf-text-weak dark:text-zinc-400"
-                        title="Answer disabled in checklist when this object has no matching SKUs at tier/style/colour"
-                      >
-                        Force
-                      </span>
+                      <span className="text-sf-text-weak dark:text-zinc-400">Force</span>
                     </label>
-                    <div className="flex shrink-0 items-center gap-1.5 text-xs">
+                    <div
+                      className="flex shrink-0 items-center gap-1.5 text-xs"
+                      title={SCOPE_OBJECT_OPTION_TOOLTIPS.calcTool}
+                    >
                       <span className="text-sf-text-weak dark:text-zinc-400">Calc tool</span>
                       <ScopeInlineSelect
                         value={objectTools[item.id] ?? ""}
                         disabled={disabled}
+                        title={SCOPE_OBJECT_OPTION_TOOLTIPS.calcTool}
                         options={[
                           { value: "", label: "None" },
                           ...SCOPE_TOOL_TYPES.map((type) => ({

@@ -517,7 +517,7 @@ export function PriceBookTestingPanel({ isActive = true }: Props) {
           <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
             Category, type, and product lists come from <code className="text-xs">data_skus</code>{" "}
             and <code className="text-xs">data_objects</code>. Style and colour options follow{" "}
-            <code className="text-xs">cascades</code> (Import → Import Cascades) for the chosen price
+            <code className="text-xs">cascades</code> (Import Master Prices → Import Cascades) for the chosen price
             level and style. Leave blank or <strong>All</strong> to ignore a dimension.
           </p>
         </div>

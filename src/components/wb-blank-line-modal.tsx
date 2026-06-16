@@ -87,6 +87,15 @@ function uniqueSupplierSkusForSku(
   return uniqueSortedValues(codes);
 }
 
+export type WbBlankLineSeed = {
+  quoteObjectDocId?: string;
+  custommeasure?: number | null;
+  customuom?: string;
+  pricelevelid?: number | null;
+  style?: string | null;
+  colour?: string | null;
+};
+
 export type WbBlankLineSaveBody = {
   quoteObjectDocId: string;
   pricelevelid: number | null;
@@ -95,11 +104,12 @@ export type WbBlankLineSaveBody = {
   custommeasure: number | null;
   customuom: string;
   customumprice: number | null;
-  skuId: string | null;
   skuProduct: string;
-  supplierOption: number | null;
   manualSupplier: string | null;
   manualSupplierSku: string | null;
+  /** Only set for area-menu blank lines that may resolve catalog SKU. */
+  skuId?: string | null;
+  supplierOption?: number | null;
 };
 
 type Props = {
@@ -121,6 +131,12 @@ type Props = {
   saving: boolean;
   onClose: () => void;
   onSave: (body: WbBlankLineSaveBody) => void;
+  /** When set (SKU dropdown flow), object list is limited to this category. */
+  initialCategory?: string | null;
+  /** Pre-fill from source row (Manual2 / SKU dropdown flow). */
+  initialSeed?: WbBlankLineSeed | null;
+  /** `manual2` = free-text line from SKU dropdown; never resolves catalog SKU. */
+  entryMode?: "manual" | "manual2";
 };
 
 const fieldInputClass =
@@ -190,20 +206,37 @@ export function WbBlankLineModal({
   saving,
   onClose,
   onSave,
+  initialCategory = null,
+  initialSeed = null,
+  entryMode = "manual",
 }: Props) {
+  const isManual2 = entryMode === "manual2";
+  const seedQuoteObjectDocId = initialSeed?.quoteObjectDocId?.trim() ?? "";
   const productListId = useId();
   const supplierListId = useId();
   const supplierSkuListId = useId();
   const uomListId = useId();
 
+  const categoryFilter = initialCategory?.trim() ?? "";
+
   const sortedQuoteObjects = useMemo(
-    () =>
-      [...quoteObjects].sort((a, b) =>
+    () => {
+      let filtered = categoryFilter
+        ? quoteObjects.filter(
+            (q) => (q.category?.trim() ?? "").toLowerCase() === categoryFilter.toLowerCase(),
+          )
+        : quoteObjects;
+      if (seedQuoteObjectDocId && !filtered.some((q) => q.id === seedQuoteObjectDocId)) {
+        const seedObj = quoteObjects.find((q) => q.id === seedQuoteObjectDocId);
+        if (seedObj) filtered = [...filtered, seedObj];
+      }
+      return [...filtered].sort((a, b) =>
         quoteObjectLabel(a).localeCompare(quoteObjectLabel(b), undefined, {
           sensitivity: "base",
         }),
-      ),
-    [quoteObjects],
+      );
+    },
+    [quoteObjects, categoryFilter, seedQuoteObjectDocId],
   );
 
   const productOptions = useMemo(() => uniqueCatalogProducts(catalogSkus), [catalogSkus]);
@@ -227,32 +260,34 @@ export function WbBlankLineModal({
 
   useEffect(() => {
     if (!open) return;
-    setQuoteObjectDocId("");
-    setPricelevelid(null);
-    setStyle(null);
-    setColour(null);
-    setMeasureStr("");
-    setUom("");
+    setQuoteObjectDocId(initialSeed?.quoteObjectDocId?.trim() ?? "");
+    setPricelevelid(initialSeed?.pricelevelid ?? null);
+    setStyle(initialSeed?.style ?? null);
+    setColour(initialSeed?.colour ?? null);
+    setMeasureStr(
+      initialSeed?.custommeasure != null ? String(initialSeed.custommeasure) : "",
+    );
+    setUom(initialSeed?.customuom?.trim() ?? "");
     setUnitPriceStr("");
     setSkuProduct("");
     setManualSupplier("");
     setManualSupplierSku("");
     setFormError(null);
-  }, [open]);
+  }, [open, initialSeed]);
 
   const selectedQuoteObject = sortedQuoteObjects.find((q) => q.id === quoteObjectDocId);
   const effectiveUom = uom.trim() || selectedQuoteObject?.uom?.trim() || "ea";
 
   const matchedCatalogSku = useMemo(
-    () => matchCatalogSkuByProductName(skuProduct, catalogSkus),
-    [skuProduct, catalogSkus],
+    () => (isManual2 ? null : matchCatalogSkuByProductName(skuProduct, catalogSkus)),
+    [isManual2, skuProduct, catalogSkus],
   );
-  const resolvedSkuId = matchedCatalogSku?.skuId ?? null;
+  const resolvedSkuId = isManual2 ? null : (matchedCatalogSku?.skuId ?? null);
 
   const resolvedSupplierRow = useMemo(() => {
-    if (!resolvedSkuId || !manualSupplier.trim()) return null;
+    if (isManual2 || !resolvedSkuId || !manualSupplier.trim()) return null;
     return findSupplierRowByName(resolvedSkuId, manualSupplier, suppliersBySkuId);
-  }, [resolvedSkuId, manualSupplier, suppliersBySkuId]);
+  }, [isManual2, resolvedSkuId, manualSupplier, suppliersBySkuId]);
 
   const supplierSkuOptions = useMemo(
     () => uniqueSupplierSkusForSku(resolvedSkuId, suppliersBySkuId),
@@ -260,14 +295,14 @@ export function WbBlankLineModal({
   );
 
   useEffect(() => {
-    if (!resolvedSupplierRow) return;
+    if (isManual2 || !resolvedSupplierRow) return;
     setManualSupplierSku(resolvedSupplierRow.supplierSku.trim());
-  }, [resolvedSupplierRow]);
+  }, [isManual2, resolvedSupplierRow]);
 
   useEffect(() => {
-    if (!matchedCatalogSku?.uom?.trim() || uom.trim()) return;
+    if (isManual2 || !matchedCatalogSku?.uom?.trim() || uom.trim()) return;
     setUom(matchedCatalogSku.uom.trim());
-  }, [matchedCatalogSku, uom]);
+  }, [isManual2, matchedCatalogSku, uom]);
 
   const draftLine = useMemo((): ProjectAreaObjectPublic => {
     return {
@@ -276,7 +311,7 @@ export function WbBlankLineModal({
       projectAreaDocId: pa.id,
       objectid: selectedQuoteObject?.objectid ?? 0,
       areaid: pa.areaid,
-      linesource: "manual",
+      linesource: isManual2 ? "manual2" : "manual",
       included: true,
       pricelevelid,
       style,
@@ -284,7 +319,7 @@ export function WbBlankLineModal({
       custommeasure: parseOptionalNumber(measureStr),
       customuom: effectiveUom,
       customumprice: parseCurrencyInput(unitPriceStr),
-      skuId: resolvedSkuId,
+      skuId: isManual2 ? null : resolvedSkuId,
       skuProduct: skuProduct.trim() || null,
       notes1: "",
       notes2: "",
@@ -343,6 +378,21 @@ export function WbBlankLineModal({
     }
 
     setFormError(null);
+    if (isManual2) {
+      onSave({
+        quoteObjectDocId,
+        pricelevelid,
+        style,
+        colour,
+        custommeasure: measure,
+        customuom: effectiveUom,
+        customumprice: unitPrice,
+        skuProduct: trimmedProduct,
+        manualSupplier: trimmedSupplier,
+        manualSupplierSku: manualSupplierSku.trim() || null,
+      });
+      return;
+    }
     onSave({
       quoteObjectDocId,
       pricelevelid,
@@ -351,11 +401,11 @@ export function WbBlankLineModal({
       custommeasure: measure,
       customuom: effectiveUom,
       customumprice: unitPrice,
-      skuId: resolvedSkuId,
       skuProduct: trimmedProduct,
-      supplierOption: resolvedSupplierRow?.supplierOption ?? null,
       manualSupplier: resolvedSupplierRow ? null : trimmedSupplier,
       manualSupplierSku: manualSupplierSku.trim() || null,
+      skuId: resolvedSkuId,
+      supplierOption: resolvedSupplierRow?.supplierOption ?? null,
     });
   }
 
@@ -363,8 +413,12 @@ export function WbBlankLineModal({
 
   return (
     <ModalFrame
-      title="Add blank line"
-      description="Enter product, cost, and supplier. Internal SKU code is set automatically when the product matches the catalog."
+      title={isManual2 ? "Add Manual Row" : "Add blank line"}
+      description={
+        isManual2
+          ? "Manual2 uses your product, cost, and supplier exactly as entered — no catalog SKU matching."
+          : "Enter product, cost, and supplier. Internal SKU code is set automatically when the product matches the catalog."
+      }
       onClose={saving ? () => {} : onClose}
       wide
       panelClassName="sm:max-w-3xl"
@@ -401,6 +455,11 @@ export function WbBlankLineModal({
 
         <label className="flex flex-col gap-1">
           <span className={fieldLabelClass}>Object</span>
+          {categoryFilter ? (
+            <span className={fieldHintClass}>
+              Category: <span className="font-medium text-sf-text dark:text-zinc-200">{categoryFilter}</span>
+            </span>
+          ) : null}
           <select
             className={fieldInputClass}
             disabled={saving}

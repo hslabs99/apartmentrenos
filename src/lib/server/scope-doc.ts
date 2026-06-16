@@ -1,6 +1,6 @@
 import type { DocumentData, Timestamp } from "firebase-admin/firestore";
 import { isInheritMeasureSource, isScopeMetricInheritSource } from "@/lib/scope-metrics";
-import { isScopeToolType, type ScopeToolType } from "@/lib/scope-tools";
+import { parseScopeToolType, type ScopeToolType } from "@/lib/scope-tools";
 import type { ScopeAnswerPublic, ScopePublic } from "@/types/scope";
 import type { InheritMeasureSource } from "@/types/scope-metric";
 import type { ScopeMetricPublic } from "@/types/scope-metric";
@@ -61,8 +61,9 @@ function normalizeAttachedObjectTools(raw: unknown): Partial<Record<string, Scop
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     const id = key.trim();
     const tool = typeof value === "string" ? value.trim() : "";
-    if (!id || !isScopeToolType(tool)) continue;
-    out[id] = tool;
+    const parsed = tool ? parseScopeToolType(tool) : null;
+    if (!id || !parsed) continue;
+    out[id] = parsed;
   }
   return out;
 }

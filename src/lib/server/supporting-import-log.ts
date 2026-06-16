@@ -15,8 +15,8 @@ import { MASTER_PRICES_SPREADSHEET_ID } from "@/lib/google/master-prices-spreads
 
 export type SupportingImportLogKind =
   | "supporting_labour_rates"
-  | "supporting_product_contractor_rates"
   | "supporting_building_elements"
+  | "supporting_painting_elements"
   | "supporting_cascades"
   | "supporting_supplier_discounts"
   | "supporting_lists"

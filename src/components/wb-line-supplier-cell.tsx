@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  resolveScopeLineSupplier,
   resolveScopeLineSupplierLabel,
   resolveScopeLineSupplierTitle,
 } from "@/lib/client/scope-line-sku-match";
@@ -23,7 +22,6 @@ export function WbLineSupplierCell({
   supplierDiscountByKey = new Map(),
   cellClassName = "",
 }: Props) {
-  const supplierRow = resolveScopeLineSupplier(row, suppliersBySkuId);
   const label = resolveScopeLineSupplierLabel(row, suppliersBySkuId, supplierDiscountByKey);
   const title = resolveScopeLineSupplierTitle(row, suppliersBySkuId, supplierDiscountByKey);
 
@@ -35,11 +33,6 @@ export function WbLineSupplierCell({
       <span className="block min-w-0 truncate font-medium text-sf-text-secondary dark:text-zinc-300">
         {label}
       </span>
-      {supplierRow ? (
-        <span className="mt-0.5 block truncate text-[10px] tabular-nums text-sf-text-weak dark:text-zinc-500">
-          P{supplierRow.supplierOption}
-        </span>
-      ) : null}
     </td>
   );
 }

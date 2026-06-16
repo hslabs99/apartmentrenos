@@ -2,6 +2,7 @@ import type { DocumentData, Timestamp } from "firebase-admin/firestore";
 import { parseProductFromDoc } from "@/lib/legacy-product-field";
 import {
   effectiveInheritMeasureSource,
+  inheritedApartmentM2FromSource,
   INHERIT_M2_LM_RUNS_UOM,
   isQuoteObjectInheritM2Source,
   measureLockedByScopeMetricInherit,
@@ -289,34 +290,22 @@ export function effectiveMeasurementForQuoteLine(
     );
     if (fromMetric != null) return fromMetric;
   }
-  if (!uomSupportsInheritM2(uom)) return templateMeasurement;
   const src = isQuoteObjectInheritM2Source(inheritSrc)
     ? inheritSrc
     : normalizeInheritM2SourceFromDoc(quoteData);
-  if (uom === "M2") {
-    if (src === "area_m2") return numOrNull(ctx.areaM2) ?? null;
-    if (src === "apartment_total_m2") return numOrNull(ctx.apartmentTotalM2) ?? null;
-    if (src === "apartment_soft_m2") return numOrNull(ctx.apartmentSoftM2) ?? null;
-    if (src === "apartment_hard_m2") return numOrNull(ctx.apartmentHardM2) ?? null;
-    return templateMeasurement;
-  }
-  if (uom === LM_RUNS_UOM) {
-    const rw = effectiveLmRunsRollWidthM(quoteData);
-    const baseM2 =
-      src === "area_m2"
-        ? numOrNull(ctx.areaM2)
-        : src === "apartment_total_m2"
-          ? numOrNull(ctx.apartmentTotalM2)
-          : src === "apartment_soft_m2"
-            ? numOrNull(ctx.apartmentSoftM2)
-            : src === "apartment_hard_m2"
-              ? numOrNull(ctx.apartmentHardM2)
-              : numOrNull(ctx.areaM2);
-
-    if (baseM2 != null && baseM2 > 0) {
-      return linearMetersFromAreaM2ForLmRuns(baseM2, rw);
+  if (isQuoteObjectInheritM2Source(src) && src !== "none") {
+    const baseM2 = inheritedApartmentM2FromSource(src, ctx);
+    if (uom === "M2") return baseM2 ?? templateMeasurement;
+    if (uom === LM_RUNS_UOM) {
+      const rw = effectiveLmRunsRollWidthM(quoteData);
+      if (baseM2 != null && baseM2 > 0) {
+        return linearMetersFromAreaM2ForLmRuns(baseM2, rw);
+      }
+      return templateMeasurement;
     }
-    return templateMeasurement;
+    if (uom === "Unit" && baseM2 != null) {
+      return measureFromScopeMetricWithSkuCalcM2(baseM2, skuCalcM2);
+    }
   }
   return templateMeasurement;
 }

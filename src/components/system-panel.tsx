@@ -1,10 +1,12 @@
 "use client";
 
 import { BuildingElementsPanel } from "@/components/building-elements-panel";
+import { CascadesTablePanel } from "@/components/cascades-table-panel";
+import { DataBlindsTablePanel } from "@/components/data-blinds-table-panel";
+import { PaintingElementsPanel } from "@/components/painting-elements-panel";
 import { PriceLevelsPanel } from "@/components/price-levels-panel";
 import { LabTypeLabourRatesPanel } from "@/components/lab-type-labour-rates-panel";
 import { LabourRatesPanel } from "@/components/labour-rates-panel";
-import { ProductContractorRatesPanel } from "@/components/product-contractor-rates-panel";
 import { SupplierDiscountsPanel } from "@/components/supplier-discounts-panel";
 import { SystemLookupsPanel } from "@/components/system-lookups-panel";
 import { SalesStaffPanel } from "@/components/sales-staff-panel";
@@ -15,11 +17,13 @@ import { useState } from "react";
 type SystemTab =
   | "sales-staff"
   | "labour-rates"
-  | "product-contractor-rates"
   | "building-elements"
+  | "painting-elements"
   | "lab-type-labour-rates"
   | "supplier-discounts"
   | "price-levels"
+  | "cascades"
+  | "blinds"
   | "lookups"
   | "settings";
 
@@ -58,20 +62,20 @@ export function SystemPanel() {
           <button
             type="button"
             role="tab"
-            aria-selected={tab === "product-contractor-rates"}
-            onClick={() => setTab("product-contractor-rates")}
-            className={sfUnderlineTabClass(tab === "product-contractor-rates")}
-          >
-            Contractor Rates
-          </button>
-          <button
-            type="button"
-            role="tab"
             aria-selected={tab === "building-elements"}
             onClick={() => setTab("building-elements")}
             className={sfUnderlineTabClass(tab === "building-elements")}
           >
             Building Elements
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "painting-elements"}
+            onClick={() => setTab("painting-elements")}
+            className={sfUnderlineTabClass(tab === "painting-elements")}
+          >
+            Painting Elements
           </button>
           <button
             type="button"
@@ -103,6 +107,24 @@ export function SystemPanel() {
           <button
             type="button"
             role="tab"
+            aria-selected={tab === "cascades"}
+            onClick={() => setTab("cascades")}
+            className={sfUnderlineTabClass(tab === "cascades")}
+          >
+            Cascades
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "blinds"}
+            onClick={() => setTab("blinds")}
+            className={sfUnderlineTabClass(tab === "blinds")}
+          >
+            Blinds
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={tab === "lookups"}
             onClick={() => setTab("lookups")}
             className={sfUnderlineTabClass(tab === "lookups")}
@@ -123,11 +145,13 @@ export function SystemPanel() {
 
       {tab === "sales-staff" ? <SalesStaffPanel /> : null}
       {tab === "labour-rates" ? <LabourRatesPanel /> : null}
-      {tab === "product-contractor-rates" ? <ProductContractorRatesPanel /> : null}
       {tab === "building-elements" ? <BuildingElementsPanel /> : null}
+      {tab === "painting-elements" ? <PaintingElementsPanel /> : null}
       {tab === "lab-type-labour-rates" ? <LabTypeLabourRatesPanel /> : null}
       {tab === "supplier-discounts" ? <SupplierDiscountsPanel /> : null}
       {tab === "price-levels" ? <PriceLevelsPanel /> : null}
+      {tab === "cascades" ? <CascadesTablePanel /> : null}
+      {tab === "blinds" ? <DataBlindsTablePanel /> : null}
       {tab === "lookups" ? <SystemLookupsPanel /> : null}
       {tab === "settings" ? <SettingsPanel /> : null}
     </div>

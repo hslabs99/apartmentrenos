@@ -6,6 +6,7 @@ import { sfRowIconBtn, sfRowIconBtnDanger } from "@/lib/sf-row-actions";
 import { LOOKUP_TYPE_RELATIONSHIP_TYPE } from "@/lib/lookup-types";
 import type { LookupPublic } from "@/types/lookup";
 import type { UserPublic, UserType } from "@/types/user";
+import { USER_TYPE_LABELS, USER_TYPES } from "@/types/user";
 import { useCallback, useEffect, useState } from "react";
 
 type Mode = "idle" | "create" | "edit";
@@ -50,7 +51,7 @@ export function UsersPanel() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [type, setType] = useState<UserType>("user");
+  const [type, setType] = useState<UserType>("sales");
   const [businessName, setBusinessName] = useState("");
   const [relationshipTypeLookupId, setRelationshipTypeLookupId] = useState<string>("");
   const [password, setPassword] = useState("");
@@ -121,7 +122,7 @@ export function UsersPanel() {
     setUsername("");
     setEmail("");
     setPhone("");
-    setType("user");
+    setType("sales");
     setBusinessName("");
     setRelationshipTypeLookupId("");
     setPassword("");
@@ -241,6 +242,17 @@ export function UsersPanel() {
     if (typeof l.lookupid === "number") relationshipTypeLabelById.set(l.lookupid, l.lookupvalue);
   }
 
+  function userTypeBadgeClass(userType: UserType): string {
+    switch (userType) {
+      case "admin":
+        return "border-violet-200 bg-violet-50 text-violet-900 dark:border-violet-800 dark:bg-violet-950/50 dark:text-violet-100";
+      case "management":
+        return "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100";
+      default:
+        return "border-sf-border bg-sf-page text-sf-text-secondary dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200";
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -249,8 +261,8 @@ export function UsersPanel() {
             Users
           </h1>
           <p className={sfSectionLead}>
-            Manage staff accounts. Passwords are stored hashed on the server — login is not enabled
-            yet.
+            Manage staff accounts. Passwords are stored hashed on the server; sign-in uses this
+            table only.
           </p>
         </div>
         <button type="button" onClick={openCreate} className={sfPrimaryToolbarButton}>
@@ -332,13 +344,9 @@ export function UsersPanel() {
                     </td>
                     <td className="px-4 py-3 md:px-5 md:py-3.5">
                       <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium md:text-sm ${
-                          u.type === "admin"
-                            ? "border-violet-200 bg-violet-50 text-violet-900 dark:border-violet-800 dark:bg-violet-950/50 dark:text-violet-100"
-                            : "border-sf-border bg-sf-page text-sf-text-secondary dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
-                        }`}
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium md:text-sm ${userTypeBadgeClass(u.type)}`}
                       >
-                        {u.type}
+                        {USER_TYPE_LABELS[u.type]}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right md:px-5 md:py-3.5">
@@ -470,8 +478,11 @@ export function UsersPanel() {
                   onChange={(e) => setType(e.target.value as UserType)}
                   className="min-h-10 w-full rounded border border-sf-border-strong bg-sf-surface px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-950"
                 >
-                  <option value="user">user</option>
-                  <option value="admin">admin</option>
+                  {USER_TYPES.map((userType) => (
+                    <option key={userType} value={userType}>
+                      {USER_TYPE_LABELS[userType]}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="block">

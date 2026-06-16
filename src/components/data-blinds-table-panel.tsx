@@ -258,7 +258,7 @@ export function DataBlindsTablePanel({ refreshKey = 0 }: Props) {
                       colSpan={activeWidths.length + 3}
                       className="py-4 text-sf-text-secondary"
                     >
-                      No price rows. Run blinds import on the Import tab.
+                      No price rows. Run blinds import on Import Master Prices.
                     </td>
                   </tr>
                 ) : (

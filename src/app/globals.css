@@ -63,12 +63,15 @@ body {
   #project-notes-print-report,
   #project-notes-print-report *,
   #wb-trade-print-report,
-  #wb-trade-print-report * {
+  #wb-trade-print-report *,
+  #wb-paint-litres-print-report,
+  #wb-paint-litres-print-report * {
     visibility: visible;
   }
 
   #project-notes-print-report,
-  #wb-trade-print-report {
+  #wb-trade-print-report,
+  #wb-paint-litres-print-report {
     position: absolute;
     left: 0;
     top: 0;

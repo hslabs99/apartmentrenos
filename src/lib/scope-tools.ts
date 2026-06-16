@@ -3,20 +3,31 @@ import type { QuoteObjectPublic } from "@/types/quote-object";
 import type { ScopePublic } from "@/types/scope";
 
 /** Calculator tools attachable to scope questions (Setup → Scopes). */
-export const SCOPE_TOOL_TYPES = ["BenchtopM2", "WallM2"] as const;
+export const SCOPE_TOOL_TYPES = ["M2", "WallM2"] as const;
 
 export type ScopeToolType = (typeof SCOPE_TOOL_TYPES)[number];
 
-export const DEFAULT_SCOPE_TOOL_TYPE: ScopeToolType = "BenchtopM2";
+export const DEFAULT_SCOPE_TOOL_TYPE: ScopeToolType = "M2";
+
+const LEGACY_SCOPE_TOOL_TYPES: Record<string, ScopeToolType> = {
+  BenchtopM2: "M2",
+};
 
 export function isScopeToolType(value: string): value is ScopeToolType {
   return (SCOPE_TOOL_TYPES as readonly string[]).includes(value);
 }
 
+/** Accepts current and legacy stored tool keys; returns the canonical type. */
+export function parseScopeToolType(value: string): ScopeToolType | null {
+  const trimmed = value.trim();
+  if (isScopeToolType(trimmed)) return trimmed;
+  return LEGACY_SCOPE_TOOL_TYPES[trimmed] ?? null;
+}
+
 export function scopeToolTypeLabel(type: ScopeToolType): string {
   switch (type) {
-    case "BenchtopM2":
-      return "Benchtop m²";
+    case "M2":
+      return "M² calculator";
     case "WallM2":
       return "Wall m²";
     default:
@@ -33,8 +44,9 @@ export function normalizeScopeToolFields(input: {
     return { exposeTool: false, scopeToolType: null };
   }
   const raw = typeof input.scopeToolType === "string" ? input.scopeToolType.trim() : "";
-  if (isScopeToolType(raw)) {
-    return { exposeTool: true, scopeToolType: raw };
+  const parsed = raw ? parseScopeToolType(raw) : null;
+  if (parsed) {
+    return { exposeTool: true, scopeToolType: parsed };
   }
   return { exposeTool: true, scopeToolType: DEFAULT_SCOPE_TOOL_TYPE };
 }
@@ -49,7 +61,7 @@ export function readScopeToolFromFirestore(data: Record<string, unknown>): {
   });
 }
 
-/** One benchtop run saved on a scope line (mm). */
+/** One rectangular section saved on a scope line (mm). */
 export type ScopeToolBenchSection = {
   id: string;
   lengthMm: number;
@@ -168,7 +180,7 @@ export function scopeLineAttachedObjectTool(
 ): ScopeToolType | null {
   if (!answer?.attachedObjectTools || !quoteObjectDocId) return null;
   const raw = answer.attachedObjectTools[quoteObjectDocId];
-  return raw && isScopeToolType(raw) ? raw : null;
+  return raw ? parseScopeToolType(raw) : null;
 }
 
 function quoteObjectLineUom(
@@ -194,7 +206,7 @@ export function resolveScopeLineMeasureTool(
   return null;
 }
 
-/** Checklist line calculator: explicit scope tool, else standard benchtop m² for M2 UOM. */
+/** Checklist line calculator: explicit scope tool, else standard M² calculator for M2 UOM. */
 export function resolveLineMeasureTool(
   line: ProjectAreaObjectPublic,
   quoteObjects: QuoteObjectPublic[],

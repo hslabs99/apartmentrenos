@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 
 import { ViewModeToggle } from "@/components/view-mode-toggle";
+import { clearAuthSession, getAuthSession } from "@/lib/client/auth-session";
 import { useViewMode } from "@/lib/view-mode";
 
 const NAV = [
@@ -27,20 +28,18 @@ function isProjectScopePath(pathname: string) {
 
 function AppShellSearchParamRedirects({
   pathname,
+  canViewAdminPages,
   canViewProjectWorkbench,
-  isSalesMode,
-  isPurchasingMode,
 }: {
   pathname: string;
+  canViewAdminPages: boolean;
   canViewProjectWorkbench: boolean;
-  isSalesMode: boolean;
-  isPurchasingMode: boolean;
 }) {
   const searchParams = useSearchParams();
   const router = useRouter();
 
   useEffect(() => {
-    if (!isSalesMode && !isPurchasingMode) return;
+    if (canViewAdminPages) return;
 
     const isAdminTopLevel =
       pathname === "/setup" ||
@@ -77,8 +76,7 @@ function AppShellSearchParamRedirects({
       router.replace(id ? `/projects/project/checklist?id=${encodeURIComponent(id)}` : "/projects");
     }
   }, [
-    isSalesMode,
-    isPurchasingMode,
+    canViewAdminPages,
     pathname,
     router,
     searchParams,
@@ -90,12 +88,8 @@ function AppShellSearchParamRedirects({
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const {
-    isSalesMode,
-    isPurchasingMode,
-    canViewAdminPages,
-    canViewProjectWorkbench,
-  } = useViewMode();
+  const router = useRouter();
+  const { canViewAdminPages, canViewProjectWorkbench } = useViewMode();
   const projectScopeMode = isProjectScopePath(pathname);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [navHydrated, setNavHydrated] = useState(false);
@@ -134,18 +128,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [navCollapsed, navHydrated]);
 
   const sidebarCollapsed = projectScopeMode && navCollapsed;
+  const signedInAs = getAuthSession()?.username ?? "";
 
   return (
     <div className="flex min-h-[100dvh] flex-col bg-sf-page text-sf-text lg:flex-row dark:bg-zinc-950 dark:text-zinc-100">
       <Suspense fallback={null}>
         <AppShellSearchParamRedirects
           pathname={pathname}
+          canViewAdminPages={canViewAdminPages}
           canViewProjectWorkbench={canViewProjectWorkbench}
-          isSalesMode={isSalesMode}
-          isPurchasingMode={isPurchasingMode}
         />
       </Suspense>
-      <div className="fixed right-3 top-3 z-50">
+      <div className="fixed right-3 top-3 z-50 flex items-center gap-2">
+        {signedInAs ? (
+          <div className="hidden items-center gap-2 rounded-lg border border-sf-border bg-sf-surface px-2 py-1 shadow-sm sm:flex dark:border-zinc-700 dark:bg-zinc-900/70">
+            <span className="max-w-[8rem] truncate px-1 text-xs text-sf-text-secondary dark:text-zinc-300">
+              {signedInAs}
+            </span>
+            <button
+              type="button"
+              className="rounded-md px-2 py-1 text-xs font-medium text-sf-text-secondary hover:bg-sf-page dark:text-zinc-300 dark:hover:bg-zinc-800"
+              onClick={() => {
+                clearAuthSession();
+                router.replace("/login");
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+        ) : null}
         <ViewModeToggle />
       </div>
       {projectScopeMode ? (

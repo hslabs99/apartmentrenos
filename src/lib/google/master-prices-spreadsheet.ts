@@ -18,14 +18,15 @@ export const MASTER_PRICES_BUILDING_TAB_TITLE = "Products_Building";
 export const MASTER_PRICES_LABOUR_TAB_TITLE = "Products_Labour";
 
 /**
- * Product contractor rates tab → `data_productcontractorrates` (Import Contractor Rates).
- */
-export const MASTER_PRICES_CONTRACTOR_RATES_TAB_TITLE = "Products_ContractorRates";
-
-/**
  * Building element matrix tab → `data_building_elements` (Import Building Elements).
  */
 export const MASTER_PRICES_BUILDING_ELEMENTS_TAB_TITLE = "Building Elements";
+
+/**
+ * Painting element matrix tab → `data_painting_elements` (Import Painting Elements).
+ */
+export const MASTER_PRICES_PAINTING_ELEMENTS_TAB_TITLE = "Painting Elements";
+
 /**
  * Painting SKU import tab — same columns/layout as {@link MASTER_PRICES_SKU_TAB_TITLE}.
  */

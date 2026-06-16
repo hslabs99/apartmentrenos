@@ -17,10 +17,12 @@ import { BlindsScopeEditModal } from "@/components/blinds-scope-edit-modal";
 import { BlindsScopeFields } from "@/components/blinds-scope-fields";
 import { BlindsWorkbenchSkuLink } from "@/components/blinds-workbench-sku-link";
 import { WbBuildingElementConsumptionModal } from "@/components/wb-building-element-consumption-modal";
+import { WbPaintingElementConsumptionModal } from "@/components/wb-painting-element-consumption-modal";
 import { WbBuildingElementSkuCell } from "@/components/wb-building-element-sku-cell";
 import { ClAreaHeaderMenu } from "@/components/cl-area-header-menu";
 import { ClLineRowMenu } from "@/components/cl-line-row-menu";
 import { WbAreaHdrMenu } from "@/components/wb-area-hdr-menu";
+import { WbMarginStepper } from "@/components/wb-margin-stepper";
 import { WbProjectHdrMenu } from "@/components/wb-project-hdr-menu";
 import { WbLineRowMenu } from "@/components/wb-line-row-menu";
 import { AddObjectPickerModal } from "@/components/add-object-picker-modal";
@@ -67,7 +69,17 @@ import {
   buildBuildingElementIndex,
   findBuildingElementForLine,
 } from "@/lib/client/building-element-index";
+import {
+  buildPaintingElementIndex,
+  findPaintingElementForLine,
+} from "@/lib/client/painting-element-index";
 import { partitionAreaLines } from "@/lib/client/partition-area-lines";
+import {
+  compareProjectAreaLineOrder,
+  sortProjectAreaLines,
+  workbenchFlatDisplayLines,
+} from "@/lib/project-area-line-order";
+import { isManual2Line } from "@/lib/client/manual2-line";
 import { lineFinalPrice } from "@/lib/client/line-final-price";
 import {
   resolveScopeLineSkuUnitPriceExcGst,
@@ -131,7 +143,7 @@ import {
 import { WbLabourSiloRowCells, sumLabourHours } from "@/components/wb-labour-silo-row-cells";
 import { WbLabourSiloValue } from "@/components/wb-labour-silo-cell";
 import { WbLineSupplierCell } from "@/components/wb-line-supplier-cell";
-import { WbBlankLineModal, type WbBlankLineSaveBody } from "@/components/wb-blank-line-modal";
+import { WbBlankLineModal, type WbBlankLineSaveBody, type WbBlankLineSeed } from "@/components/wb-blank-line-modal";
 import { WbObjectName } from "@/components/wb-object-name";
 import { projectLineObjectLabel, quoteObjectForScopeLine } from "@/lib/client/project-line-quote-object";
 import {
@@ -156,6 +168,7 @@ import { scopeSelectionUsesSystemBlinds } from "@/lib/blinds/blinds-scope-answer
 import { isBlindsSystemLine, blindsSkuDisplayLabel } from "@/lib/blinds/blinds-data-utils";
 import type { DataBlindPublic } from "@/types/data-blind-public";
 import type { DataBuildingElementPublic } from "@/types/data-building-element-public";
+import type { DataPaintingElementPublic } from "@/types/data-painting-element-public";
 import type { AreaPublic } from "@/types/area";
 import {
   formatCurrencyInput,
@@ -170,7 +183,20 @@ import {
   type WbTradeReportData,
   type WbTradeReportId,
 } from "@/lib/workbench-trade-report";
+import {
+  buildWorkbenchPaintLitresReport,
+  wbPaintLitresReportHasContent,
+  WB_PAINT_LITRES_REPORT_LABEL,
+  type WbPaintLitresReportData,
+} from "@/lib/workbench-paint-litres-report";
+import {
+  paintingSiteFeeExcGst,
+  paintingSiteFeeWithMarginExcGst,
+  projectHasPaintConsumption,
+  PAINTING_SITE_FEE_PRODUCT,
+} from "@/lib/painting-site-fee";
 import { WorkbenchTradePrintReport } from "@/components/workbench-trade-print-report";
+import { WorkbenchPaintLitresPrintReport } from "@/components/workbench-paint-litres-print-report";
 import { supplierDiscountByKeyFromRows } from "@/lib/client/supplier-discount-price";
 import type { DataSupplierDiscountPublic } from "@/types/data-supplier-discount-public";
 import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
@@ -194,7 +220,15 @@ import type { ScopePublic } from "@/types/scope";
 import type { SettingPublic } from "@/types/setting";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 async function readApiResponse<T>(res: Response): Promise<T> {
   const contentType = res.headers.get("content-type") ?? "";
@@ -273,6 +307,7 @@ function scopeLineShowsObjectNameHeader(
 function lineSourceLabel(row: ProjectAreaObjectPublic): string {
   const s = row.linesource;
   if (s === "scope") return "Scope";
+  if (s === "manual2") return "Manual2";
   if (s === "manual") return "Manual";
   if (s === "bundled") return "Bundled";
   return "Default";
@@ -320,7 +355,9 @@ const wbCellMuted = `${wbCell} text-sf-text-weak dark:text-zinc-400`;
  */
 const WB_TABLE_COLS = 19;
 const wbSupplierCol = "w-[6rem]";
-const wbSpacerCol = "w-[4.9rem]";
+const wbSpacerCol = "w-[3.5rem]";
+/** Line total / project & area subtotal column (widened for paint site fee breakdown). */
+const wbSubtotalCol = "w-[4.2rem]";
 const wbSpacerCell = `${wbCellMuted} border border-sf-border dark:border-zinc-700`;
 /** Area / project header rows: same columns as object table, no internal column borders. */
 const wbAreaHdrCell = "border-0 align-top px-1 py-1.5";
@@ -402,6 +439,36 @@ const wbFieldBase =
 /** Workbench column-aligned field labels (project/area header rows). */
 const wbHdrLabel =
   "mb-0.5 block text-xs font-semibold uppercase tracking-wide text-sf-text-secondary dark:text-zinc-400";
+/** Project / area header totals columns — same wrap + label band height in both rows. */
+const wbHdrTotalLabel =
+  `${wbHdrLabel} min-h-[2rem] hyphens-auto break-words leading-tight`;
+/** Fixed-height detail row under subtotal labels (lines + paint site fee). */
+const wbHdrDetailLineClass =
+  "mt-0.5 block h-[1.125rem] whitespace-nowrap text-[11px] leading-tight tabular-nums text-sf-text-secondary dark:text-zinc-400";
+
+function wbHdrDetailSpacers(count: number) {
+  if (count <= 0) return null;
+  return Array.from({ length: count }, (_, i) => (
+    <span key={`wb-hdr-detail-spacer-${i}`} className={wbHdrDetailLineClass} aria-hidden="true">
+      <span className="invisible select-none">—</span>
+    </span>
+  ));
+}
+
+function wbHdrPaintingSiteFeeDetail(amountExcGst: number) {
+  return (
+    <span
+      className={wbHdrDetailLineClass}
+      title="Once per project when paint consumption exists"
+    >
+      {PAINTING_SITE_FEE_PRODUCT.replace(/ /g, "\u00a0")}
+      {"\u00a0"}
+      {formatMoney(amountExcGst)}
+    </span>
+  );
+}
+const wbProjectHdrTotalCell = "border-0 align-bottom px-1 py-1.5 text-right";
+const wbProjectHdrSubtotalCell = "border-0 align-bottom px-1 py-1.5 text-left";
 /** Workbench: Elevate select ~30 characters; colour ~10. */
 const wbSelectTier = `${selectBase} w-[30ch] max-w-full`;
 const wbSelectColour = `${selectBase} w-[10ch] max-w-full`;
@@ -431,6 +498,7 @@ const WB_AREA_HDR_TRAILING_FIELD_COLSPAN = 4;
 const WB_AREA_HDR_FIELD_COLSPAN = 10;
 const wbProjectHdrFieldCell = "border-0 align-bottom px-1 py-1.5";
 const wbAreaHdrCellOutlineMidBottom = `border-0 border-b border-t ${wbAreaHdrOutline} align-bottom px-1 py-1.5`;
+const wbAreaHdrCellOutlineMidLeftBottom = `${wbAreaHdrCellOutlineMidBottom} text-left`;
 const wbAreaHdrCellOutlineMidRightBottom = `${wbAreaHdrCellOutlineMidBottom} text-right`;
 const wbAreaHdrCellOutlineLastBottom = `border-0 border-b border-r border-t ${wbAreaHdrOutline} align-bottom px-1 py-1.5`;
 /** Shared workbench area footer: notes + questions (same title, label, 2-row fields). */
@@ -463,6 +531,16 @@ function redundantScopeDetailParts(entry: RedundantScopeEntry): string[] {
   return parts;
 }
 
+type WbBlankLineContext = {
+  paId: string;
+  afterLineId: string | null;
+  category: string | null;
+  linesource: "manual" | "manual2";
+  seed?: WbBlankLineSeed | null;
+  /** Restore source row inclusion when the modal closes without saving (manual2 only). */
+  sourceRowWasIncluded?: boolean;
+};
+
 export function ProjectChecklistPanel({
   mode = "checklist",
 }: {
@@ -476,7 +554,7 @@ export function ProjectChecklistPanel({
     () => ({ colourLookupIndex }),
     [colourLookupIndex],
   );
-  const { isAdminMode } = useViewMode();
+  const { canViewAdminWorkbenchFeatures, canAdjustWorkbenchMargin } = useViewMode();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -546,7 +624,8 @@ export function ProjectChecklistPanel({
     scopeLabel?: string;
   } | null>(null);
   const [pickObjectSaving, setPickObjectSaving] = useState(false);
-  const [wbBlankLineAreaId, setWbBlankLineAreaId] = useState<string | null>(null);
+  const [wbBlankLineContext, setWbBlankLineContext] = useState<WbBlankLineContext | null>(null);
+  const wbBlankLineContextRef = useRef<WbBlankLineContext | null>(null);
   const [wbBlankLineSaving, setWbBlankLineSaving] = useState(false);
   const [pickScopeOpen, setPickScopeOpen] = useState(false);
   const [pickScopeAreaId, setPickScopeAreaId] = useState<string | null>(null);
@@ -560,10 +639,14 @@ export function ProjectChecklistPanel({
   const [clNonStdModal, setClNonStdModal] = useState<ClNonStdModalTarget | null>(null);
   const [blindsData, setBlindsData] = useState<DataBlindPublic[]>([]);
   const [buildingElements, setBuildingElements] = useState<DataBuildingElementPublic[]>([]);
+  const [paintingElements, setPaintingElements] = useState<DataPaintingElementPublic[]>([]);
   const [wbBlindsEditLineId, setWbBlindsEditLineId] = useState<string | null>(null);
   const [wbBuildingElementLineId, setWbBuildingElementLineId] = useState<string | null>(null);
+  const [wbPaintingElementLineId, setWbPaintingElementLineId] = useState<string | null>(null);
   const [wbExporting, setWbExporting] = useState(false);
   const [wbTradeReportData, setWbTradeReportData] = useState<WbTradeReportData | null>(null);
+  const [wbPaintLitresReportData, setWbPaintLitresReportData] =
+    useState<WbPaintLitresReportData | null>(null);
   const [wbCloningLineId, setWbCloningLineId] = useState<string | null>(null);
   const includeAllSuppliersForLine = useCallback(
     (lineId: string) => skuShowAllByLineId[lineId] === true,
@@ -648,6 +731,17 @@ export function ProjectChecklistPanel({
       setBuildingElements(data.items ?? []);
     } catch {
       setBuildingElements([]);
+    }
+  }, []);
+
+  const loadPaintingElements = useCallback(async () => {
+    try {
+      const res = await fetch("/api/painting-elements");
+      const data = (await res.json()) as { items?: DataPaintingElementPublic[]; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed to load painting elements");
+      setPaintingElements(data.items ?? []);
+    } catch {
+      setPaintingElements([]);
     }
   }, []);
 
@@ -1164,6 +1258,14 @@ export function ProjectChecklistPanel({
       setRowSavingId(id);
       setError(null);
 
+      if (body.included !== undefined) {
+        setAllObjects((prev) =>
+          prev.map((o) =>
+            o.id === id ? { ...o, included: body.included as boolean } : o,
+          ),
+        );
+      }
+
       if (shouldRecalcLookupLabour && mode === "workbench") {
         setAllObjects((prev) =>
           prev.map((o) => {
@@ -1337,6 +1439,7 @@ export function ProjectChecklistPanel({
           loadCatalogSkus(),
           loadBlindsData(),
           loadBuildingElements(),
+          loadPaintingElements(),
           (async () => {
             const res = await fetch(`/api/projects/${projectDocId}`);
             const data = await readApiResponse<{ project?: ProjectPublic; error?: string }>(res);
@@ -1413,6 +1516,7 @@ export function ProjectChecklistPanel({
     loadCatalogSkus,
     loadBlindsData,
     loadBuildingElements,
+    loadPaintingElements,
     reloadProjectAreaAnswers,
     reloadProjectNotes,
     mode,
@@ -1473,7 +1577,7 @@ export function ProjectChecklistPanel({
       m.set(key, list);
     }
     for (const [, list] of m) {
-      list.sort((a, b) => a.objectid - b.objectid);
+      list.sort(compareProjectAreaLineOrder);
     }
     return m;
   }, [allObjects, projectAreas]);
@@ -1647,43 +1751,146 @@ export function ProjectChecklistPanel({
     );
   }
 
-  async function saveWorkbenchBlankLine(pa: ProjectAreaPublic, body: WbBlankLineSaveBody) {
+  async function saveWorkbenchBlankLine(
+    pa: ProjectAreaPublic,
+    body: WbBlankLineSaveBody,
+    insertAfterLineDocId?: string | null,
+  ) {
     setWbBlankLineSaving(true);
     setError(null);
+    const ctx = wbBlankLineContextRef.current;
+    const isManual2 = ctx?.linesource === "manual2";
+    const restoreSourceIncluded =
+      !isManual2 && ctx?.afterLineId && ctx.sourceRowWasIncluded ? ctx.afterLineId : null;
     try {
       const postBody: Record<string, unknown> = {
         projectAreaDocId: pa.id,
         quoteObjectDocId: body.quoteObjectDocId,
-        pricelevelid: body.pricelevelid,
-        style: body.style,
-        colour: body.colour,
+        linesource: ctx?.linesource ?? (insertAfterLineDocId?.trim() ? "manual2" : "manual"),
         custommeasure: body.custommeasure,
         customuom: body.customuom,
         customumprice: body.customumprice,
         skuProduct: body.skuProduct,
+        manualSupplier: body.manualSupplier?.trim() ?? "",
       };
-      if (body.skuId) postBody.skuId = body.skuId;
-      if (body.supplierOption != null) postBody.supplierOption = body.supplierOption;
-      if (body.manualSupplier) postBody.manualSupplier = body.manualSupplier;
-      if (body.manualSupplierSku) postBody.manualSupplierSku = body.manualSupplierSku;
+      if (body.pricelevelid != null) postBody.pricelevelid = body.pricelevelid;
+      if (body.style != null) postBody.style = body.style;
+      if (body.colour != null) postBody.colour = body.colour;
+      const supplierSku = body.manualSupplierSku?.trim();
+      if (supplierSku) postBody.manualSupplierSku = supplierSku;
+      if (!isManual2) {
+        if (body.skuId) postBody.skuId = body.skuId;
+        if (body.supplierOption != null) postBody.supplierOption = body.supplierOption;
+      }
       if (body.custommeasure != null && body.customumprice != null) {
         postBody.totalprice = body.custommeasure * body.customumprice;
       }
+      const afterId = insertAfterLineDocId?.trim();
+      if (afterId) postBody.insertAfterLineDocId = afterId;
       const res = await fetch("/api/projectareaobjects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(postBody),
       });
-      const data = await readApiResponse<{ error?: string }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Failed to add line");
-      setWbBlankLineAreaId(null);
-      await reloadLineItems();
+      const data = await readApiResponse<{
+        id?: string;
+        error?: string;
+        details?: unknown;
+      }>(res);
+      if (!res.ok) {
+        const detail =
+          data.details != null ? `: ${JSON.stringify(data.details)}` : "";
+        throw new Error(`${data.error ?? "Failed to add line"}${detail}`);
+      }
+      setWbBlankLineContext(null);
+      wbBlankLineContextRef.current = null;
+      if (restoreSourceIncluded) {
+        await patchLineItem(restoreSourceIncluded, { included: true });
+      }
+      const newLineId = data.id?.trim();
+      if (isManual2 && newLineId) {
+        const lineRes = await fetch(`/api/projectareaobjects/${encodeURIComponent(newLineId)}`);
+        const lineData = await readApiResponse<{
+          projectAreaObject?: ProjectAreaObjectPublic;
+          error?: string;
+        }>(lineRes);
+        if (!lineRes.ok || !lineData.projectAreaObject) {
+          throw new Error(lineData.error ?? "Failed to load new line");
+        }
+        const created = lineData.projectAreaObject;
+        startTransition(() => {
+          setAllObjects((prev) => {
+            const existing = prev.find((o) => o.id === created.id);
+            if (existing) {
+              return prev.map((o) => (o.id === created.id ? created : o));
+            }
+            return sortProjectAreaLines([...prev, created]);
+          });
+        });
+      } else {
+        await reloadLineItems();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add line");
       await reloadLineItems();
     } finally {
       setWbBlankLineSaving(false);
     }
+  }
+
+  function closeWbBlankLineModal() {
+    const ctx = wbBlankLineContextRef.current;
+    setWbBlankLineContext(null);
+    wbBlankLineContextRef.current = null;
+    if (ctx?.linesource === "manual2" && ctx.afterLineId && ctx.sourceRowWasIncluded) {
+      setAllObjects((prev) =>
+        prev.map((o) => (o.id === ctx.afterLineId ? { ...o, included: true } : o)),
+      );
+      void patchLineItem(ctx.afterLineId, { included: true });
+    }
+  }
+
+  function openWbBlankLineFromArea(pa: ProjectAreaPublic) {
+    const ctx: WbBlankLineContext = {
+      paId: pa.id,
+      afterLineId: null,
+      category: null,
+      linesource: "manual",
+      seed: null,
+    };
+    wbBlankLineContextRef.current = ctx;
+    setWbBlankLineContext(ctx);
+    setError(null);
+  }
+
+  function openWbBlankLineFromRow(
+    pa: ProjectAreaPublic,
+    row: ProjectAreaObjectPublic,
+    qObj: QuoteObjectPublic,
+  ) {
+    const seed: WbBlankLineSeed = {
+      quoteObjectDocId: qObj.id,
+      custommeasure: row.custommeasure ?? null,
+      customuom: row.customuom?.trim() || qObj.uom?.trim() || "ea",
+      pricelevelid: row.pricelevelid ?? null,
+      style: row.style ?? null,
+      colour: row.colour ?? null,
+    };
+    const ctx: WbBlankLineContext = {
+      paId: pa.id,
+      afterLineId: row.id,
+      category: qObj.category?.trim() || null,
+      linesource: "manual2",
+      seed,
+      sourceRowWasIncluded: row.included !== false,
+    };
+    wbBlankLineContextRef.current = ctx;
+    setWbBlankLineContext(ctx);
+    setError(null);
+    setAllObjects((prev) =>
+      prev.map((o) => (o.id === row.id ? { ...o, included: false } : o)),
+    );
+    void patchLineItem(row.id, { included: false });
   }
 
   async function addLineItemFromQuoteObject(quoteObjectDocId: string) {
@@ -1848,12 +2055,17 @@ export function ProjectChecklistPanel({
     }
   }
 
-  const grandTotal = useMemo(
+  const grandLineTotal = useMemo(
     () => allObjects.reduce((sum, row) => sum + includedLineTotal(row), 0),
     [allObjects],
   );
 
-  const marginPct = useMemo(() => marginPercentFromSettings(settings), [settings]);
+  const settingsMarginPct = useMemo(() => marginPercentFromSettings(settings), [settings]);
+  const [wbMarginPct, setWbMarginPct] = useState(settingsMarginPct);
+  useEffect(() => {
+    setWbMarginPct(settingsMarginPct);
+  }, [settingsMarginPct]);
+  const marginPct = mode === "workbench" ? wbMarginPct : settingsMarginPct;
 
   const projectAreaPendingDelete = paDeleteId
     ? projectAreas.find((pa) => pa.id === paDeleteId)
@@ -1882,18 +2094,9 @@ export function ProjectChecklistPanel({
     ? projectAreas.find((pa) => pa.id === pickObjectContext.projectAreaDocId)
     : undefined;
 
-  const wbBlankLineArea = wbBlankLineAreaId
-    ? projectAreas.find((pa) => pa.id === wbBlankLineAreaId)
+  const wbBlankLineArea = wbBlankLineContext
+    ? projectAreas.find((pa) => pa.id === wbBlankLineContext.paId)
     : undefined;
-
-  const grandFinalTotal = useMemo(
-    () =>
-      allObjects.reduce((sum, row) => {
-        const f = lineFinalPrice(row, marginPct);
-        return sum + (f != null ? f : 0);
-      }, 0),
-    [allObjects, marginPct],
-  );
 
   const projectLoadTotals = useMemo(() => {
     const t = {} as Record<LabourSiloKey, number>;
@@ -1917,6 +2120,53 @@ export function ProjectChecklistPanel({
     () => buildBuildingElementIndex(buildingElements),
     [buildingElements],
   );
+
+  const paintingElementBySkuName = useMemo(
+    () => buildPaintingElementIndex(paintingElements),
+    [paintingElements],
+  );
+
+  const workbenchPaintingSiteFeeExcGst = useMemo(() => {
+    if (mode !== "workbench") return 0;
+    const hasConsumption = projectHasPaintConsumption({
+      objects: allObjects,
+      catalogSkus,
+      paintingElementBySkuName,
+      suppliersBySkuId,
+      supplierDiscountByKey,
+    });
+    if (!hasConsumption) return 0;
+    return paintingSiteFeeExcGst(contractLabourRates) ?? 0;
+  }, [
+    mode,
+    allObjects,
+    catalogSkus,
+    paintingElementBySkuName,
+    suppliersBySkuId,
+    supplierDiscountByKey,
+    contractLabourRates,
+  ]);
+
+  const grandTotal = grandLineTotal + workbenchPaintingSiteFeeExcGst;
+
+  const wbHdrSubtotalBreakdownLines = workbenchPaintingSiteFeeExcGst > 0 ? 2 : 0;
+
+  const grandFinalTotal = useMemo(() => {
+    const linesFinal = allObjects.reduce((sum, row) => {
+      const f = lineFinalPrice(row, marginPct);
+      return sum + (f != null ? f : 0);
+    }, 0);
+    const feeFinal =
+      workbenchPaintingSiteFeeExcGst > 0
+        ? paintingSiteFeeWithMarginExcGst(workbenchPaintingSiteFeeExcGst, marginPct)
+        : 0;
+    return linesFinal + feeFinal;
+  }, [allObjects, marginPct, workbenchPaintingSiteFeeExcGst]);
+
+  const projectRealisedMarginExcGst = useMemo(() => {
+    if (grandTotal <= 0 && grandFinalTotal <= 0) return null;
+    return Math.round((grandFinalTotal - grandTotal) * 100) / 100;
+  }, [grandTotal, grandFinalTotal]);
 
   const authorFallback = project?.quotedby?.trim() ?? "";
 
@@ -2027,6 +2277,7 @@ export function ProjectChecklistPanel({
         return;
       }
       setError(null);
+      setWbPaintLitresReportData(null);
       setWbTradeReportData(data);
       window.setTimeout(() => window.print(), 50);
     },
@@ -2042,6 +2293,46 @@ export function ProjectChecklistPanel({
       objectsByProjectAreaDocId,
     ],
   );
+
+  const printWorkbenchPaintLitresReport = useCallback(() => {
+    if (numericProjectId == null || !project) return;
+    const data = buildWorkbenchPaintLitresReport({
+      project,
+      projectAreas: sortedProjectAreas,
+      areas,
+      quoteObjects,
+      catalogSkus,
+      suppliersBySkuId,
+      supplierDiscountByKey,
+      paintingElementBySkuName,
+      objectsByProjectAreaDocId,
+      contractLabourRates,
+      marginPct,
+    });
+    if (!wbPaintLitresReportHasContent(data)) {
+      setError(
+        `No included paint lines with a SKU product found on this project for ${WB_PAINT_LITRES_REPORT_LABEL}.`,
+      );
+      return;
+    }
+    setError(null);
+    setWbTradeReportData(null);
+    setWbPaintLitresReportData(data);
+    window.setTimeout(() => window.print(), 50);
+  }, [
+    numericProjectId,
+    project,
+    sortedProjectAreas,
+    areas,
+    quoteObjects,
+    catalogSkus,
+    suppliersBySkuId,
+    supplierDiscountByKey,
+    paintingElementBySkuName,
+    objectsByProjectAreaDocId,
+    contractLabourRates,
+    marginPct,
+  ]);
 
   const renderProjectNotesButton = useCallback(
     (
@@ -2140,7 +2431,7 @@ export function ProjectChecklistPanel({
       cascades,
       baseStyleOptions,
       marginPct,
-      isAdminMode,
+      showIncludeAllSupplierOptions: canViewAdminWorkbenchFeatures,
       paoDeleting,
       includeAllSuppliersForLine,
       setIncludeAllSuppliersForLine,
@@ -2167,25 +2458,35 @@ export function ProjectChecklistPanel({
       objectLabourRates,
       buildingElementBySkuName,
       onOpenBuildingElementConsumption: setWbBuildingElementLineId,
+      paintingElementBySkuName,
+      onOpenPaintingElementConsumption: setWbPaintingElementLineId,
       colourLookupIndex,
+      blankLineSourceRowId: wbBlankLineContext?.afterLineId ?? null,
+      wbBlankLineSaving,
+      onOpenBlankLineFromRow: (pa, row, qObj) => {
+        openWbBlankLineFromRow(pa, row, qObj);
+      },
     };
   }, [
     objectLabel,
     cascades,
     baseStyleOptions,
     marginPct,
-    isAdminMode,
+    canViewAdminWorkbenchFeatures,
     paoDeleting,
     includeAllSuppliersForLine,
     setIncludeAllSuppliersForLine,
     contractLabourRates,
     objectLabourRates,
     buildingElementBySkuName,
+    paintingElementBySkuName,
     wbCloningLineId,
     cloneLineItem,
     renderProjectNotesButton,
     rowSavingId,
     colourLookupIndex,
+    wbBlankLineContext,
+    wbBlankLineSaving,
   ]);
 
   return (
@@ -2230,7 +2531,9 @@ export function ProjectChecklistPanel({
             <span className="font-medium text-sf-text-secondary dark:text-zinc-300">
               Margin {marginPct}%
             </span>{" "}
-            (System → Settings) applies to Final price.{" "}
+            {canAdjustWorkbenchMargin
+              ? "(adjust in project header; defaults from System → Settings) applies to Final price."
+              : "(from System → Settings) applies to Final price."}{" "}
             <span className="font-medium text-sf-text-secondary dark:text-zinc-300">Load rates</span>{" "}
             ($/unit) show as dollar lines under each load total when set.
           </>
@@ -2358,7 +2661,7 @@ export function ProjectChecklistPanel({
                 <col className="w-[2.3rem]" />
                 <col className="w-[2.75rem]" />
                 <col className="w-[2.8rem]" />
-                <col className="w-[2.8rem]" />
+                <col className={wbSubtotalCol} />
                 <col className="w-[1.85rem]" />
                 <col className="w-[1.85rem]" />
                 <col className="w-[1.85rem]" />
@@ -2608,11 +2911,17 @@ export function ProjectChecklistPanel({
                   <td className={wbAreaHdrCell} />
                   <td className={wbAreaHdrCell} />
                   <td className={wbAreaHdrCell} />
-                  <td className={wbAreaHdrCellRight}>
-                    <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
-                      Project subtotal
-                    </span>
-                    <span className="text-sm font-semibold tabular-nums text-sf-text dark:text-zinc-100">
+                  <td className={wbProjectHdrSubtotalCell}>
+                    <span className={wbHdrTotalLabel}>Project subtotal</span>
+                    {wbHdrSubtotalBreakdownLines > 0 ? (
+                      <>
+                        <span className={wbHdrDetailLineClass}>
+                          Lines {formatMoney(grandLineTotal)}
+                        </span>
+                        {wbHdrPaintingSiteFeeDetail(workbenchPaintingSiteFeeExcGst)}
+                      </>
+                    ) : null}
+                    <span className="block text-sm font-semibold tabular-nums text-sf-text dark:text-zinc-100">
                       {grandTotal > 0 ? formatMoney(grandTotal) : "—"}
                     </span>
                   </td>
@@ -2621,10 +2930,9 @@ export function ProjectChecklistPanel({
                     const rate = contractLabourRateBySiloProduct(contractLabourRates, key);
                     const cost = labourSiloCostExcGst(hoursSum > 0 ? hoursSum : null, rate);
                     return (
-                      <td key={key} className={wbAreaHdrCellRight} title={title}>
-                        <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
-                          {label}
-                        </span>
+                      <td key={key} className={wbProjectHdrTotalCell} title={title}>
+                        <span className={wbHdrTotalLabel}>{label}</span>
+                        {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
                         <WbLabourSiloValue
                           hours={hoursSum > 0 ? hoursSum : null}
                           cost={cost}
@@ -2632,21 +2940,46 @@ export function ProjectChecklistPanel({
                       </td>
                     );
                   })}
-                  <td className={wbAreaHdrCellRight}>
-                    <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
-                      Final (incl. margin)
-                    </span>
-                    <span className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
+                  <td className={wbProjectHdrTotalCell}>
+                    <span className={wbHdrTotalLabel}>Final (incl. margin)</span>
+                    {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
+                    <span className="block text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
                       {grandFinalTotal > 0 ? formatMoney(grandFinalTotal) : "—"}
                     </span>
                   </td>
-                  <td className={wbAreaHdrCell} />
+                  <td className={wbProjectHdrTotalCell}>
+                    {canAdjustWorkbenchMargin ? (
+                      <WbMarginStepper
+                        value={wbMarginPct}
+                        onChange={setWbMarginPct}
+                        realisedMarginExcGst={projectRealisedMarginExcGst}
+                        detailSpacerLines={wbHdrSubtotalBreakdownLines}
+                      />
+                    ) : (
+                      <>
+                        <span className={wbHdrTotalLabel}>Margin</span>
+                        {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
+                        <span className="block text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
+                          {marginPct}%
+                        </span>
+                        <span
+                          className="block text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200"
+                          title="Final (incl. margin) minus project subtotal"
+                        >
+                          {projectRealisedMarginExcGst != null
+                            ? formatMoney(projectRealisedMarginExcGst)
+                            : "—"}
+                        </span>
+                      </>
+                    )}
+                  </td>
                   <td className={`${wbAreaHdrCell} text-center`}>
                     <WbProjectHdrMenu
                       projectLabel={project.projectname}
                       exportDisabled={wbExporting}
                       onPrintTradeReport={printWorkbenchTradeReport}
-                      onExport={() => {
+                      onPrintPaintLitresReport={printWorkbenchPaintLitresReport}
+                      onExport={(sortMode) => {
                         void (async () => {
                           setWbExporting(true);
                           setError(null);
@@ -2654,6 +2987,7 @@ export function ProjectChecklistPanel({
                             await downloadProjectWorkbenchXls(
                               projectDocId,
                               project.projectname || "project",
+                              sortMode,
                             );
                           } catch (e) {
                             setError(
@@ -4071,8 +4405,9 @@ export function ProjectChecklistPanel({
                           />
                         </div>
                       </td>
-                      <td className={wbAreaHdrCellOutlineMidRightBottom}>
-                        <span className={`${wbHdrLabel} whitespace-nowrap`}>Area subtotal</span>
+                      <td className={wbAreaHdrCellOutlineMidLeftBottom}>
+                        <span className={wbHdrTotalLabel}>Area subtotal</span>
+                        {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
                         <span className="block text-sm font-semibold tabular-nums text-sf-text dark:text-zinc-100">
                           {hasIncludedMoney ? formatMoney(areaSubtotal) : "—"}
                         </span>
@@ -4087,7 +4422,8 @@ export function ProjectChecklistPanel({
                             className={wbAreaHdrCellOutlineMidRightBottom}
                             title={title}
                           >
-                            <span className={`${wbHdrLabel} whitespace-nowrap`}>{label}</span>
+                            <span className={wbHdrTotalLabel}>{label}</span>
+                            {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
                             <WbLabourSiloValue
                               hours={hoursSum > 0 ? hoursSum : null}
                               cost={cost}
@@ -4096,14 +4432,17 @@ export function ProjectChecklistPanel({
                         );
                       })}
                       <td className={wbAreaHdrCellOutlineMidRightBottom}>
-                        <span className={`${wbHdrLabel} whitespace-nowrap`}>
-                          Final (incl. margin)
-                        </span>
+                        <span className={wbHdrTotalLabel}>Final (incl. margin)</span>
+                        {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
                         <span className="block text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
                           {hasIncludedMoney ? formatMoney(areaFinalSubtotal) : "—"}
                         </span>
                       </td>
-                      <td className={wbAreaHdrCellOutlineMidBottom} />
+                      <td className={wbAreaHdrCellOutlineMidBottom} aria-hidden="true">
+                        <span className={`${wbHdrTotalLabel} invisible select-none`}>Margin</span>
+                        {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
+                        <div className="invisible h-[1.375rem]" />
+                      </td>
                       <td className={`${wbAreaHdrCellOutlineMidBottom} text-center`}>
                         <span className={`${wbHdrLabel} whitespace-nowrap`} aria-hidden="true">
                           {"\u00a0"}
@@ -4111,20 +4450,17 @@ export function ProjectChecklistPanel({
                         <WbAreaHdrMenu
                           areaLabel={projectAreaHeading(pa, areas)}
                           addObjectDisabled={
-                            areaBusy || paDeleting || wbBlankLineAreaId === pa.id
+                            areaBusy || paDeleting || wbBlankLineContext?.paId === pa.id
                           }
                           addBlankLineDisabled={
                             areaBusy ||
                             paDeleting ||
-                            wbBlankLineAreaId === pa.id ||
+                            wbBlankLineContext?.paId === pa.id ||
                             wbBlankLineSaving
                           }
                           removeDisabled={areaBusy || paDeleting}
                           onAddObject={() => openPickObjectModal(pa)}
-                          onAddBlankLine={() => {
-                            setWbBlankLineAreaId(pa.id);
-                            setError(null);
-                          }}
+                          onAddBlankLine={() => openWbBlankLineFromArea(pa)}
                           onRemove={() => setPaDeleteId(pa.id)}
                         />
                       </td>
@@ -4231,11 +4567,16 @@ export function ProjectChecklistPanel({
                             </td>
                           </tr>
                         ) : (
-                          areaTopLines.flatMap((row) => {
+                          workbenchFlatDisplayLines(areaTopLines).flatMap(({ line: row, renderBundledAfter }) => {
                         const included = row.included !== false;
-                        const saving = rowSavingId === row.id;
+                        const blankLineSourceRowId = wbBlankLineContext?.afterLineId ?? null;
+                        const rowDisabledForBlankLine = blankLineSourceRowId === row.id;
+                        const saving =
+                          rowSavingId === row.id || rowDisabledForBlankLine;
                         const rowStyle = included
-                          ? `${areaObjectBand} hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30`
+                          ? rowDisabledForBlankLine
+                            ? `${areaObjectBand} opacity-50`
+                            : `${areaObjectBand} hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30`
                           : `${areaObjectBand} text-sf-text-weak opacity-60 dark:text-sf-text-weak`;
                         const lineScope = row.scopeDocId?.trim()
                           ? scopes.find((s) => s.id === row.scopeDocId?.trim())
@@ -4415,7 +4756,14 @@ export function ProjectChecklistPanel({
                               />
                             </td>
                             <td className={wbCellSku}>
-                              {isBlindsSystemLine(row) ? (
+                              {isManual2Line(row) ? (
+                                <span
+                                  className="block min-w-0 truncate text-xs font-normal text-sf-text dark:text-zinc-100"
+                                  title={row.skuProduct?.trim() || undefined}
+                                >
+                                  {row.skuProduct?.trim() || "—"}
+                                </span>
+                              ) : isBlindsSystemLine(row) ? (
                                 <BlindsWorkbenchSkuLink
                                   line={row}
                                   disabled={saving}
@@ -4432,8 +4780,10 @@ export function ProjectChecklistPanel({
                                     line={row}
                                     catalogSkus={catalogSkus}
                                     buildingElementBySkuName={buildingElementBySkuName}
+                                    paintingElementBySkuName={paintingElementBySkuName}
                                     disabled={saving}
                                     onOpenConsumption={setWbBuildingElementLineId}
+                                    onOpenPaintingConsumption={setWbPaintingElementLineId}
                                   >
                                     <ScopeLineSkuPicker
                                       line={row}
@@ -4445,7 +4795,7 @@ export function ProjectChecklistPanel({
                                       supplierDiscountByKey={supplierDiscountByKey}
                                       pa={pa}
                                       project={project}
-                                      disabled={saving}
+                                      disabled={saving || wbBlankLineSaving}
                                       selectClassName={wbSelectRow}
                                       variant="compact"
                                       showSupplierPrice
@@ -4456,13 +4806,15 @@ export function ProjectChecklistPanel({
                                       syncUnitPriceFromPick
                                       lockToSkuId={row.scopeShowAllSku ? row.skuId : null}
                                       colourLookupIndex={colourLookupIndex}
-                                      showIncludeAllSupplierOptions={isAdminMode}
+                                      showIncludeAllSupplierOptions={canViewAdminWorkbenchFeatures}
                                       includeAllSupplierOptions={includeAllSuppliersForLine(
                                         row.id,
                                       )}
                                       onIncludeAllSupplierOptionsChange={(checked) =>
                                         setIncludeAllSuppliersForLine(row.id, checked)
                                       }
+                                      showAddBlankLineOption
+                                      onAddBlankLine={() => openWbBlankLineFromRow(pa, row, qObj)}
                                       onSelectSku={(pick) => {
                                         void applyLineSkuSelection(row, pa, pick);
                                       }}
@@ -4644,6 +4996,7 @@ export function ProjectChecklistPanel({
                             </td>
                             <td className={wbSpacerCell} />
                           </tr>,
+                          renderBundledAfter ? (
                           <ScopeLineBundledChildren
                             key={`${row.id}-bundled`}
                             mode="workbench"
@@ -4661,7 +5014,8 @@ export function ProjectChecklistPanel({
                             onPatchLine={(id, body) => {
                               void patchLineItem(id, body);
                             }}
-                          />,
+                          />
+                          ) : null,
                         ];
                           })
                         )}
@@ -4750,6 +5104,17 @@ export function ProjectChecklistPanel({
                   <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
                     Line total
                   </span>
+                  {workbenchPaintingSiteFeeExcGst > 0 ? (
+                    <>
+                      <span className="block text-[11px] tabular-nums text-sf-text-secondary dark:text-zinc-400">
+                        Lines {formatMoney(grandLineTotal)}
+                      </span>
+                      <span className="block whitespace-nowrap text-[11px] tabular-nums text-sf-text-secondary dark:text-zinc-400">
+                        {PAINTING_SITE_FEE_PRODUCT}{" "}
+                        {formatMoney(workbenchPaintingSiteFeeExcGst)}
+                      </span>
+                    </>
+                  ) : null}
                   <span className="text-base font-semibold text-sf-text dark:text-zinc-100">
                     {formatMoney(grandTotal)}
                   </span>
@@ -4849,6 +5214,29 @@ export function ProjectChecklistPanel({
                 suppliersBySkuId={suppliersBySkuId}
                 supplierDiscountByKey={supplierDiscountByKey}
                 onClose={() => setWbBuildingElementLineId(null)}
+              />
+            );
+          })()
+        : null}
+
+      {wbPaintingElementLineId && mode === "workbench"
+        ? (() => {
+            const line = allObjects.find((o) => o.id === wbPaintingElementLineId);
+            if (!line) return null;
+            const element = findPaintingElementForLine(
+              line,
+              catalogSkus,
+              paintingElementBySkuName,
+            );
+            if (!element) return null;
+            return (
+              <WbPaintingElementConsumptionModal
+                line={line}
+                element={element}
+                catalogSkus={catalogSkus}
+                suppliersBySkuId={suppliersBySkuId}
+                supplierDiscountByKey={supplierDiscountByKey}
+                onClose={() => setWbPaintingElementLineId(null)}
               />
             );
           })()
@@ -4992,7 +5380,7 @@ export function ProjectChecklistPanel({
 
       {wbBlankLineArea ? (
         <WbBlankLineModal
-          open={Boolean(wbBlankLineAreaId)}
+          open={Boolean(wbBlankLineContext)}
           pa={wbBlankLineArea}
           project={project}
           quoteObjects={quoteObjects}
@@ -5004,8 +5392,17 @@ export function ProjectChecklistPanel({
           effectiveCascadeStyleForLine={effectiveCascadeStyleForLine}
           wbLineColourEmptyLabel={wbLineColourEmptyLabel}
           saving={wbBlankLineSaving}
-          onClose={() => setWbBlankLineAreaId(null)}
-          onSave={(body) => void saveWorkbenchBlankLine(wbBlankLineArea, body)}
+          initialCategory={wbBlankLineContext?.category ?? null}
+          initialSeed={wbBlankLineContext?.seed ?? null}
+          entryMode={wbBlankLineContext?.linesource ?? "manual"}
+          onClose={closeWbBlankLineModal}
+          onSave={(body) =>
+            void saveWorkbenchBlankLine(
+              wbBlankLineArea,
+              body,
+              wbBlankLineContextRef.current?.afterLineId,
+            )
+          }
         />
       ) : null}
 
@@ -5075,6 +5472,10 @@ export function ProjectChecklistPanel({
       />
 
       {wbTradeReportData ? <WorkbenchTradePrintReport data={wbTradeReportData} /> : null}
+      {wbPaintLitresReportData ? (
+        <WorkbenchPaintLitresPrintReport data={wbPaintLitresReportData} />
+      ) : null}
     </div>
   );
 }
+

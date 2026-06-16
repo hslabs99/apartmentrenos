@@ -12,8 +12,8 @@ import { DATA_SKU_SUPPLIERS_COLLECTION_META_ID } from "@/lib/firestore/data-sku-
 import { IMPORTLOG_COLLECTION_META_ID } from "@/lib/firestore/importlog-collection";
 import { CASCADES_COLLECTION_META_ID } from "@/lib/firestore/cascades-collection";
 import { DATA_LABOURRATES_COLLECTION_META_ID } from "@/lib/firestore/data-labourrates-collection";
-import { DATA_PRODUCTCONTRACTORRATES_COLLECTION_META_ID } from "@/lib/firestore/data-productcontractorrates-collection";
 import { DATA_BUILDING_ELEMENTS_COLLECTION_META_ID } from "@/lib/firestore/data-building-elements-collection";
+import { DATA_PAINTING_ELEMENTS_COLLECTION_META_ID } from "@/lib/firestore/data-painting-elements-collection";
 import { DATA_OBJECTLABOURRATES_COLLECTION_META_ID } from "@/lib/firestore/data-objectlabourrates-collection";
 import { DATA_SUPPLIER_DISCOUNTS_COLLECTION_META_ID } from "@/lib/firestore/data-supplier-discounts-collection";
 import { DATA_SUPPLIER_DISCOUNT_RANGES_COLLECTION_META_ID } from "@/lib/firestore/data-supplier-discount-ranges-collection";
@@ -89,19 +89,19 @@ export async function ensureDataLabourratesBootstrap(db: Firestore): Promise<voi
   await ensureMetaDoc(db, "data_labourrates", DATA_LABOURRATES_COLLECTION_META_ID);
 }
 
-export async function ensureDataProductcontractorratesBootstrap(db: Firestore): Promise<void> {
-  await ensureMetaDoc(
-    db,
-    "data_productcontractorrates",
-    DATA_PRODUCTCONTRACTORRATES_COLLECTION_META_ID,
-  );
-}
-
 export async function ensureDataBuildingElementsBootstrap(db: Firestore): Promise<void> {
   await ensureMetaDoc(
     db,
     "data_building_elements",
     DATA_BUILDING_ELEMENTS_COLLECTION_META_ID,
+  );
+}
+
+export async function ensureDataPaintingElementsBootstrap(db: Firestore): Promise<void> {
+  await ensureMetaDoc(
+    db,
+    "data_painting_elements",
+    DATA_PAINTING_ELEMENTS_COLLECTION_META_ID,
   );
 }
 

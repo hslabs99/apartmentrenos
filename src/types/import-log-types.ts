@@ -90,6 +90,7 @@ export type ImportLogKind =
   | "supporting_labour_rates"
   | "supporting_product_contractor_rates"
   | "supporting_building_elements"
+  | "supporting_painting_elements"
   | "supporting_cascades"
   | "supporting_supplier_discounts"
   | "supporting_lists"

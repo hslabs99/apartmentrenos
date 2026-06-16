@@ -50,6 +50,7 @@ import type { SupplierDiscountByKey } from "@/lib/client/supplier-discount-price
 import type { ColourLookupIndex } from "@/lib/sku/colour-lookup-index";
 import { WbObjectName } from "@/components/wb-object-name";
 import type { DataBuildingElementPublic } from "@/types/data-building-element-public";
+import type { DataPaintingElementPublic } from "@/types/data-painting-element-public";
 import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
 import type { DataObjectLabourRatePublic } from "@/types/data-object-labour-rate-public";
 
@@ -118,7 +119,7 @@ export type WorkbenchBundledContext = {
   cascades: CascadeRow[];
   baseStyleOptions: { out: string[]; seen: Set<string> };
   marginPct: number;
-  isAdminMode: boolean;
+  showIncludeAllSupplierOptions: boolean;
   paoDeleting: boolean;
   includeAllSuppliersForLine: (lineId: string) => boolean;
   setIncludeAllSuppliersForLine: (lineId: string, checked: boolean) => void;
@@ -145,7 +146,16 @@ export type WorkbenchBundledContext = {
   objectLabourRates: DataObjectLabourRatePublic[];
   buildingElementBySkuName: Map<string, DataBuildingElementPublic>;
   onOpenBuildingElementConsumption: (lineId: string) => void;
+  paintingElementBySkuName: Map<string, DataPaintingElementPublic>;
+  onOpenPaintingElementConsumption: (lineId: string) => void;
   colourLookupIndex?: ColourLookupIndex | null;
+  blankLineSourceRowId: string | null;
+  wbBlankLineSaving: boolean;
+  onOpenBlankLineFromRow: (
+    pa: ProjectAreaPublic,
+    row: ProjectAreaObjectPublic,
+    qObj: QuoteObjectPublic,
+  ) => void;
 };
 
 type WorkbenchProps = {
@@ -383,6 +393,8 @@ function WorkbenchBundledLine({
   onPatchLine: (id: string, body: Record<string, unknown>) => void;
 }) {
   const included = child.included !== false;
+  const rowDisabledForBlankLine = wb.blankLineSourceRowId === child.id;
+  const childSaving = lineSaving || rowDisabledForBlankLine;
   const qObj = quoteObjects.find((o) => o.objectid === child.objectid);
   const parentSku = parentLine.skuId
     ? catalogSkus.find((s) => s.skuId === parentLine.skuId)
@@ -412,13 +424,13 @@ function WorkbenchBundledLine({
 
   return (
     <tr
-      className={`${wb.areaObjectBand} text-sf-text-secondary dark:text-zinc-400`}
+      className={`${wb.areaObjectBand} text-sf-text-secondary dark:text-zinc-400${rowDisabledForBlankLine ? " opacity-50" : ""}`}
     >
       <td className={`${wb.wbCellMid} text-center`}>
         <input
           type="checkbox"
           checked={included}
-          disabled={lineSaving}
+          disabled={childSaving}
           aria-label={`Include bundled “${wb.objectLabel(child, quoteObjects)}” in cost totals`}
           onChange={(e) => {
             onPatchLine(child.id, { included: e.target.checked });
@@ -449,14 +461,14 @@ function WorkbenchBundledLine({
             onPatchLine(child.id, { pricelevelid: priceLevelId });
           }}
           className={wb.wbSelectRow}
-          disabled={lineSaving}
+          disabled={childSaving}
           emptyLabel="Area default"
         />
       </td>
       <td className={wb.wbCellMid}>
         <select
           className={wb.wbSelectRow}
-          disabled={lineSaving}
+          disabled={childSaving}
           value={child.style ?? ""}
           onChange={(e) => {
             const v = e.target.value;
@@ -489,7 +501,7 @@ function WorkbenchBundledLine({
           )}
           styleForFilter={wb.effectiveCascadeStyleForLine(child, pa, project)}
           colour={child.colour ?? ""}
-          disabled={lineSaving}
+          disabled={childSaving}
           selectClassName={wb.wbSelectRow}
           emptyLabel={wb.wbLineColourEmptyLabel(pa, project)}
           onColourChange={(v) => onPatchLine(child.id, { colour: v ? v : null })}
@@ -502,8 +514,10 @@ function WorkbenchBundledLine({
             line={child}
             catalogSkus={catalogSkus}
             buildingElementBySkuName={wb.buildingElementBySkuName}
-            disabled={lineSaving}
+            paintingElementBySkuName={wb.paintingElementBySkuName}
+            disabled={childSaving}
             onOpenConsumption={wb.onOpenBuildingElementConsumption}
+            onOpenPaintingConsumption={wb.onOpenPaintingElementConsumption}
           >
             <ScopeLineSkuPicker
               line={child}
@@ -515,7 +529,7 @@ function WorkbenchBundledLine({
               supplierDiscountByKey={supplierDiscountByKey}
               pa={pa}
               project={project}
-              disabled={lineSaving}
+              disabled={childSaving || wb.wbBlankLineSaving}
               selectClassName={wb.wbSelectRow}
               variant="compact"
               showSupplierPrice
@@ -524,12 +538,16 @@ function WorkbenchBundledLine({
               autoApplySingleMatch
               autoApplyOnlyWhenEmptySku
               syncUnitPriceFromPick
-              showIncludeAllSupplierOptions={wb.isAdminMode}
+              showIncludeAllSupplierOptions={wb.showIncludeAllSupplierOptions}
               includeAllSupplierOptions={wb.includeAllSuppliersForLine(child.id)}
               onIncludeAllSupplierOptionsChange={(checked) =>
                 wb.setIncludeAllSuppliersForLine(child.id, checked)
               }
               lockToSkuId={child.scopeShowAllSku ? child.skuId : null}
+              showAddBlankLineOption
+              onAddBlankLine={() => {
+                if (qObj) wb.onOpenBlankLineFromRow(pa, child, qObj);
+              }}
               onSelectSku={(pick: ScopeLineSkuPick) => {
                 onPatchLine(child.id, patchBodyForScopeLineSku(child, pick));
               }}
@@ -551,7 +569,7 @@ function WorkbenchBundledLine({
           inputMode="decimal"
           className={wb.wbInputMeasure}
           defaultValue={child.custommeasure ?? ""}
-          disabled={lineSaving}
+          disabled={childSaving}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
@@ -575,7 +593,7 @@ function WorkbenchBundledLine({
           type="text"
           className={wb.wbSelectRow}
           defaultValue={child.customuom}
-          disabled={lineSaving}
+          disabled={childSaving}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
@@ -599,7 +617,7 @@ function WorkbenchBundledLine({
               supplierDiscountByKey,
             ),
           )}
-          disabled={lineSaving}
+          disabled={childSaving}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}

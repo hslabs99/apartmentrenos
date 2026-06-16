@@ -5,6 +5,7 @@ import {
   objectLabourDuplicateForName,
   objectLabourRatesLookupName,
 } from "@/lib/client/labour-rate-index";
+import { skuProductForObjectLabourLookup } from "@/lib/labour-rate-lookup";
 import {
   isLabourLookupManuallyOverridden,
   LABOUR_SILO_KEYS,
@@ -45,7 +46,7 @@ export function WbLabourSiloRowCells({
   const objectLabourMatchName = objectLabourRatesLookupName(
     qObj?.objectname ?? objectLabel,
   );
-  const skuProduct = row.skuProduct?.trim() || null;
+  const skuProduct = skuProductForObjectLabourLookup(row);
   const dup = objectLabourDuplicateForName(
     objectLabourRates,
     objectLabourMatchName,

@@ -33,6 +33,7 @@ import {
   resolveSkuImportIds,
 } from "@/lib/server/resolve-sku-import-ids";
 import { saveDataSkusImportLog } from "@/lib/server/save-import-log";
+import { auditElementSkuCoverage } from "@/lib/server/validate-element-sku-coverage";
 import type { DataSku } from "@/types/data-sku";
 import type { DataSkuSupplier } from "@/types/data-sku-supplier";
 import type { ImportLogAudit, ImportLogKind, ImportLogStatus } from "@/types/import-log-types";
@@ -530,6 +531,17 @@ export async function runDataSkusImport(
         ? `, ${productsRemovedNotInSheet} off-sheet product(s) deleted`
         : "";
 
+    const coverageWarnings: string[] = [];
+    if (source === "painting" || source === "building") {
+      const coverage = await auditElementSkuCoverage(
+        db,
+        source === "painting" ? "painting" : "building",
+      );
+      coverageWarnings.push(...coverage.warnings);
+    }
+    const mergedWarnings = [...audit.warnings, ...coverageWarnings];
+    const mergedAudit = { ...audit, warnings: mergedWarnings };
+
     onProgress({
       phase: "done",
       message: logSaveWarning
@@ -552,8 +564,8 @@ export async function runDataSkusImport(
       productsUpdated,
       productsRemovedNotInSheet,
       suppliersRemovedNotInSheet,
-      warnings: audit.warnings,
-      audit,
+      warnings: mergedWarnings,
+      audit: mergedAudit,
       importRunId,
       importLogId: importRunId,
     });

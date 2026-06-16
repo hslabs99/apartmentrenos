@@ -21,6 +21,24 @@ export function isObjectLabourProductWildcard(product: string): boolean {
   return false;
 }
 
+type ObjectLabourLookupLine = {
+  linesource?: string | null;
+  skuId?: string | null;
+  skuProduct?: string | null;
+};
+
+/**
+ * SKU product name used to narrow object labour rows (Product column).
+ * Manual / manual2 lines store free-text product — lookup uses Product Type (object) only,
+ * same as a standard object row without a catalog SKU link.
+ */
+export function skuProductForObjectLabourLookup(line: ObjectLabourLookupLine): string | null {
+  if (line.skuId?.trim()) return line.skuProduct?.trim() || null;
+  const src = line.linesource?.trim();
+  if (src === "manual" || src === "manual2") return null;
+  return line.skuProduct?.trim() || null;
+}
+
 export type ObjectLabourLookup = {
   row: DataObjectLabourRatePublic | null;
   duplicateMatch: boolean;

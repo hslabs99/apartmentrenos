@@ -8,8 +8,8 @@ import {
   MASTER_PRICES_BUILDING_TAB_TITLE,
   MASTER_PRICES_CASCADES_TAB_TITLE,
   MASTER_PRICES_LABOUR_TAB_TITLE,
-  MASTER_PRICES_CONTRACTOR_RATES_TAB_TITLE,
   MASTER_PRICES_BUILDING_ELEMENTS_TAB_TITLE,
+  MASTER_PRICES_PAINTING_ELEMENTS_TAB_TITLE,
   MASTER_PRICES_PAINTING_TAB_TITLE,
   MASTER_PRICES_SKU_TAB_TITLE,
   MASTER_PRICES_LISTS_TAB_TITLE,
@@ -22,8 +22,8 @@ import {
   resolveBuildingImportSheetTab,
   resolveCascadingRestrictionsSheetTab,
   resolveLabourImportSheetTab,
-  resolveProductContractorRatesSheetTab,
   resolveBuildingElementsSheetTab,
+  resolvePaintingElementsSheetTab,
   resolvePaintingImportSheetTab,
   resolveSkuImportSheetTab,
   resolveListsSheetTab,
@@ -209,21 +209,6 @@ export async function GET() {
         e instanceof Error ? e.message : "Failed to resolve incremental labour products tab";
     }
 
-    let contractorRates: ImportTabPayload | null = null;
-    let contractorRatesError: string | null = null;
-    try {
-      const contractorRatesTab = await resolveProductContractorRatesSheetTab(
-        MASTER_PRICES_SPREADSHEET_ID,
-      );
-      contractorRates = tabPayloadFromResolve(
-        contractorRatesTab,
-        MASTER_PRICES_CONTRACTOR_RATES_TAB_TITLE,
-      );
-    } catch (e) {
-      contractorRatesError =
-        e instanceof Error ? e.message : "Failed to resolve contractor rates tab";
-    }
-
     let buildingElements: ImportTabPayload | null = null;
     let buildingElementsError: string | null = null;
     try {
@@ -237,6 +222,21 @@ export async function GET() {
     } catch (e) {
       buildingElementsError =
         e instanceof Error ? e.message : "Failed to resolve building elements tab";
+    }
+
+    let paintingElements: ImportTabPayload | null = null;
+    let paintingElementsError: string | null = null;
+    try {
+      const paintingElementsTab = await resolvePaintingElementsSheetTab(
+        MASTER_PRICES_SPREADSHEET_ID,
+      );
+      paintingElements = tabPayloadFromResolve(
+        paintingElementsTab,
+        MASTER_PRICES_PAINTING_ELEMENTS_TAB_TITLE,
+      );
+    } catch (e) {
+      paintingElementsError =
+        e instanceof Error ? e.message : "Failed to resolve painting elements tab";
     }
 
     return NextResponse.json({
@@ -255,10 +255,10 @@ export async function GET() {
       listsError,
       incrementalLabourProducts,
       incrementalLabourProductsError,
-      contractorRates,
-      contractorRatesError,
       buildingElements,
       buildingElementsError,
+      paintingElements,
+      paintingElementsError,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to resolve import tab";

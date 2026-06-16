@@ -48,7 +48,7 @@ type LineSource = ProjectAreaObjectPublic["linesource"];
 
 function readLineSource(data: DocumentData): LineSource {
   const s = data.linesource;
-  if (s === "scope" || s === "manual" || s === "bundled") return s;
+  if (s === "scope" || s === "manual" || s === "manual2" || s === "bundled") return s;
   return "default";
 }
 
@@ -92,6 +92,11 @@ export function docToProjectAreaObjectPublic(
     projectid: Number(data.projectid ?? 0),
     projectAreaDocId: typeof pad === "string" && pad.trim() ? pad.trim() : null,
     objectid: Number(data.objectid ?? 0),
+    lineSortOrder: numOrNull(data.lineSortOrder) ?? null,
+    insertedAfterLineId:
+      typeof data.insertedAfterLineId === "string" && data.insertedAfterLineId.trim()
+        ? data.insertedAfterLineId.trim()
+        : null,
     objectname: snapshotObjectname || quoteObjectname || null,
     areaid: Number(data.areaid ?? 0),
     linesource,

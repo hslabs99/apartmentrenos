@@ -4,8 +4,8 @@ import {
   MASTER_PRICES_BUILDING_TAB_TITLE,
   MASTER_PRICES_CASCADES_TAB_TITLE,
   MASTER_PRICES_LABOUR_TAB_TITLE,
-  MASTER_PRICES_CONTRACTOR_RATES_TAB_TITLE,
   MASTER_PRICES_BUILDING_ELEMENTS_TAB_TITLE,
+  MASTER_PRICES_PAINTING_ELEMENTS_TAB_TITLE,
   MASTER_PRICES_PAINTING_TAB_TITLE,
   MASTER_PRICES_LISTS_TAB_TITLE,
   MASTER_PRICES_SKU_TAB_TITLE,
@@ -13,7 +13,6 @@ import {
   MASTER_PRICES_SUPPLIER_DISCOUNTS_TAB_TITLE,
 } from "@/lib/google/master-prices-spreadsheet";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { CascadesTablePanel } from "@/components/cascades-table-panel";
 import { clearLookupsCache } from "@/lib/client/use-lookups";
 import { clearLookupsColoursCache } from "@/lib/client/use-lookups-colours";
 import { consumeNdjsonStream } from "@/lib/client/consume-ndjson-stream";
@@ -31,7 +30,6 @@ import type {
 import { importLogFromProgress } from "@/lib/client/import-log-from-progress";
 import { DataObjectsTablePanel } from "@/components/data-objects-table-panel";
 import { DataSkusTablePanel } from "@/components/data-skus-table-panel";
-import { DataBlindsTablePanel } from "@/components/data-blinds-table-panel";
 import {
   BLINDS_PRICES_SPREADSHEET_ID,
   blindsPricesSpreadsheetEditUrl,
@@ -44,6 +42,29 @@ import { sfTabStripClass, sfUnderlineTabClass } from "@/lib/sf-tabs";
 import { SKU_DATA_START_ROW_1_BASED, SKU_HEADER_ROW_1_BASED } from "@/lib/google/parse-master-prices-skus";
 import type { ImportLogPublic } from "@/types/import-log-types";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+function elementCoverageWarningClass(message: string): string {
+  if (message.includes("element matrix")) {
+    return "block text-xs font-semibold text-red-800 dark:text-red-300";
+  }
+  if (message.includes("no matching SKU product")) {
+    return "block text-xs text-amber-800 dark:text-amber-200";
+  }
+  return "block text-xs text-sf-text-secondary dark:text-zinc-400";
+}
+
+function renderElementImportWarnings(warnings: string[]) {
+  if (warnings.length === 0) return null;
+  return (
+    <span className="mt-1 block space-y-0.5">
+      {warnings.map((w) => (
+        <span key={w} className={elementCoverageWarningClass(w)}>
+          {w}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 type SheetTab = {
   index: number;
@@ -139,20 +160,12 @@ function phaseLabel(phase: ImportDataSkusProgress["phase"]): string {
   }
 }
 
-type PageTab =
-  | "import"
-  | "data"
-  | "data-objects"
-  | "cascades"
-  | "blinds"
-  | "price-book-testing";
+type PageTab = "import" | "data" | "data-objects" | "price-book-testing";
 
 export function ImportMasterPricesPanel() {
   const [pageTab, setPageTab] = useState<PageTab>("import");
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
   const [dataObjectsRefreshKey, setDataObjectsRefreshKey] = useState(0);
-  const [cascadesRefreshKey, setCascadesRefreshKey] = useState(0);
-  const [blindsRefreshKey, setBlindsRefreshKey] = useState(0);
   const [testingBlinds, setTestingBlinds] = useState(false);
   const [testBlindsResult, setTestBlindsResult] = useState<{
     tabsScanned: number;
@@ -234,21 +247,8 @@ export function ImportMasterPricesPanel() {
     parseErrors: string[];
   } | null>(null);
   const [importLabourRatesError, setImportLabourRatesError] = useState<string | null>(null);
-  const [importingProductContractorRates, setImportingProductContractorRates] = useState(false);
-  const [importProductContractorRatesResult, setImportProductContractorRatesResult] = useState<{
-    tabTitle: string;
-    range: string;
-    headerRow1Based: number;
-    dataStartRow1Based: number;
-    parsed: number;
-    written: number;
-    deletedPrior: number;
-    parseErrors: string[];
-  } | null>(null);
-  const [importProductContractorRatesError, setImportProductContractorRatesError] = useState<
-    string | null
-  >(null);
   const [importingBuildingElements, setImportingBuildingElements] = useState(false);
+  const [importingPaintingElements, setImportingPaintingElements] = useState(false);
   const [importBuildingElementsResult, setImportBuildingElementsResult] = useState<{
     tabTitle: string;
     range: string;
@@ -258,8 +258,23 @@ export function ImportMasterPricesPanel() {
     written: number;
     deletedPrior: number;
     parseErrors: string[];
+    warnings: string[];
   } | null>(null);
   const [importBuildingElementsError, setImportBuildingElementsError] = useState<string | null>(
+    null,
+  );
+  const [importPaintingElementsResult, setImportPaintingElementsResult] = useState<{
+    tabTitle: string;
+    range: string;
+    dataStartRow1Based: number;
+    parsedElements: number;
+    parsedLines: number;
+    written: number;
+    deletedPrior: number;
+    parseErrors: string[];
+    warnings: string[];
+  } | null>(null);
+  const [importPaintingElementsError, setImportPaintingElementsError] = useState<string | null>(
     null,
   );
   const [importingCascades, setImportingCascades] = useState(false);
@@ -322,9 +337,8 @@ export function ImportMasterPricesPanel() {
   const [importBuildingSelected, setImportBuildingSelected] = useState(false);
   const [importPaintingSelected, setImportPaintingSelected] = useState(false);
   const [importLabourRatesSelected, setImportLabourRatesSelected] = useState(false);
-  const [importProductContractorRatesSelected, setImportProductContractorRatesSelected] =
-    useState(false);
   const [importBuildingElementsSelected, setImportBuildingElementsSelected] = useState(false);
+  const [importPaintingElementsSelected, setImportPaintingElementsSelected] = useState(false);
   const [importCascadesSelected, setImportCascadesSelected] = useState(false);
   const [importSupplierDiscountsSelected, setImportSupplierDiscountsSelected] = useState(false);
   const [importListsSelected, setImportListsSelected] = useState(false);
@@ -337,8 +351,8 @@ export function ImportMasterPricesPanel() {
     importingLists ||
     importingCascades ||
     importingLabourRates ||
-    importingProductContractorRates ||
     importingBuildingElements ||
+    importingPaintingElements ||
     importingSupplierDiscounts ||
     importingObjectLabourRates;
   const [importProgress, setImportProgress] = useState<ImportDataSkusProgress | null>(null);
@@ -353,10 +367,10 @@ export function ImportMasterPricesPanel() {
   const [buildingTabError, setBuildingTabError] = useState<string | null>(null);
   const [labourTabInfo, setLabourTabInfo] = useState<ImportTabInfo | null>(null);
   const [labourTabError, setLabourTabError] = useState<string | null>(null);
-  const [contractorRatesTabInfo, setContractorRatesTabInfo] = useState<ImportTabInfo | null>(null);
-  const [contractorRatesTabError, setContractorRatesTabError] = useState<string | null>(null);
   const [buildingElementsTabInfo, setBuildingElementsTabInfo] = useState<ImportTabInfo | null>(null);
   const [buildingElementsTabError, setBuildingElementsTabError] = useState<string | null>(null);
+  const [paintingElementsTabInfo, setPaintingElementsTabInfo] = useState<ImportTabInfo | null>(null);
+  const [paintingElementsTabError, setPaintingElementsTabError] = useState<string | null>(null);
   const [paintingTabInfo, setPaintingTabInfo] = useState<ImportTabInfo | null>(null);
   const [paintingTabError, setPaintingTabError] = useState<string | null>(null);
   const [cascadesTabInfo, setCascadesTabInfo] = useState<ImportTabInfo | null>(null);
@@ -378,10 +392,10 @@ export function ImportMasterPricesPanel() {
         buildingError?: string | null;
         labour?: ImportTabInfo | null;
         labourError?: string | null;
-        contractorRates?: ImportTabInfo | null;
-        contractorRatesError?: string | null;
         buildingElements?: ImportTabInfo | null;
         buildingElementsError?: string | null;
+        paintingElements?: ImportTabInfo | null;
+        paintingElementsError?: string | null;
         painting?: ImportTabInfo | null;
         paintingError?: string | null;
         cascades?: ImportTabInfo | null;
@@ -401,10 +415,10 @@ export function ImportMasterPricesPanel() {
         setBuildingTabError(null);
         setLabourTabInfo(null);
         setLabourTabError(null);
-        setContractorRatesTabInfo(null);
-        setContractorRatesTabError(null);
         setBuildingElementsTabInfo(null);
         setBuildingElementsTabError(null);
+        setPaintingElementsTabInfo(null);
+        setPaintingElementsTabError(null);
         setPaintingTabInfo(null);
         setPaintingTabError(null);
         setCascadesTabInfo(null);
@@ -423,10 +437,10 @@ export function ImportMasterPricesPanel() {
       setBuildingTabError(data.buildingError ?? null);
       setLabourTabInfo(data.labour ?? null);
       setLabourTabError(data.labourError ?? null);
-      setContractorRatesTabInfo(data.contractorRates ?? null);
-      setContractorRatesTabError(data.contractorRatesError ?? null);
       setBuildingElementsTabInfo(data.buildingElements ?? null);
       setBuildingElementsTabError(data.buildingElementsError ?? null);
+      setPaintingElementsTabInfo(data.paintingElements ?? null);
+      setPaintingElementsTabError(data.paintingElementsError ?? null);
       setPaintingTabInfo(data.painting ?? null);
       setPaintingTabError(data.paintingError ?? null);
       setCascadesTabInfo(data.cascades ?? null);
@@ -444,10 +458,10 @@ export function ImportMasterPricesPanel() {
       setBuildingTabError(null);
       setLabourTabInfo(null);
       setLabourTabError(null);
-      setContractorRatesTabInfo(null);
-      setContractorRatesTabError(null);
       setBuildingElementsTabInfo(null);
       setBuildingElementsTabError(null);
+      setPaintingElementsTabInfo(null);
+      setPaintingElementsTabError(null);
       setPaintingTabInfo(null);
       setPaintingTabError(null);
       setCascadesTabInfo(null);
@@ -673,53 +687,6 @@ export function ImportMasterPricesPanel() {
     }
   }, [resolveImportRunLog]);
 
-  const runImportProductContractorRates = useCallback(async (): Promise<boolean> => {
-    setImportingProductContractorRates(true);
-    setImportProductContractorRatesError(null);
-    setImportProductContractorRatesResult(null);
-    try {
-      const res = await fetch("/api/import-master-prices/import-product-contractor-rates", {
-        method: "POST",
-      });
-      const data = await readApiJson<{
-        ok?: boolean;
-        error?: string;
-        importRunId?: string;
-        tabTitle?: string;
-        range?: string;
-        headerRow1Based?: number;
-        dataStartRow1Based?: number;
-        parsed?: number;
-        written?: number;
-        deletedPrior?: number;
-        parseErrors?: string[];
-      }>(res);
-      if (!res.ok) {
-        await resolveImportRunLog(data.importRunId);
-        throw new Error(data.error ?? "Import product contractor rates failed");
-      }
-      await resolveImportRunLog(data.importRunId);
-      setImportProductContractorRatesResult({
-        tabTitle: data.tabTitle ?? MASTER_PRICES_CONTRACTOR_RATES_TAB_TITLE,
-        range: data.range ?? "A1:H",
-        headerRow1Based: data.headerRow1Based ?? 5,
-        dataStartRow1Based: data.dataStartRow1Based ?? 6,
-        parsed: data.parsed ?? 0,
-        written: data.written ?? 0,
-        deletedPrior: data.deletedPrior ?? 0,
-        parseErrors: data.parseErrors ?? [],
-      });
-      return true;
-    } catch (e) {
-      setImportProductContractorRatesError(
-        e instanceof Error ? e.message : "Import product contractor rates failed",
-      );
-      return false;
-    } finally {
-      setImportingProductContractorRates(false);
-    }
-  }, [resolveImportRunLog]);
-
   const runImportBuildingElements = useCallback(async (): Promise<boolean> => {
     setImportingBuildingElements(true);
     setImportBuildingElementsError(null);
@@ -740,6 +707,7 @@ export function ImportMasterPricesPanel() {
         written?: number;
         deletedPrior?: number;
         parseErrors?: string[];
+        warnings?: string[];
       }>(res);
       if (!res.ok) {
         await resolveImportRunLog(data.importRunId);
@@ -755,6 +723,7 @@ export function ImportMasterPricesPanel() {
         written: data.written ?? 0,
         deletedPrior: data.deletedPrior ?? 0,
         parseErrors: data.parseErrors ?? [],
+        warnings: data.warnings ?? [],
       });
       return true;
     } catch (e) {
@@ -764,6 +733,55 @@ export function ImportMasterPricesPanel() {
       return false;
     } finally {
       setImportingBuildingElements(false);
+    }
+  }, [resolveImportRunLog]);
+
+  const runImportPaintingElements = useCallback(async (): Promise<boolean> => {
+    setImportingPaintingElements(true);
+    setImportPaintingElementsError(null);
+    setImportPaintingElementsResult(null);
+    try {
+      const res = await fetch("/api/import-master-prices/import-painting-elements", {
+        method: "POST",
+      });
+      const data = await readApiJson<{
+        ok?: boolean;
+        error?: string;
+        importRunId?: string;
+        tabTitle?: string;
+        range?: string;
+        dataStartRow1Based?: number;
+        parsedElements?: number;
+        parsedLines?: number;
+        written?: number;
+        deletedPrior?: number;
+        parseErrors?: string[];
+        warnings?: string[];
+      }>(res);
+      if (!res.ok) {
+        await resolveImportRunLog(data.importRunId);
+        throw new Error(data.error ?? "Import painting elements failed");
+      }
+      await resolveImportRunLog(data.importRunId);
+      setImportPaintingElementsResult({
+        tabTitle: data.tabTitle ?? MASTER_PRICES_PAINTING_ELEMENTS_TAB_TITLE,
+        range: data.range ?? "A1:BA100",
+        dataStartRow1Based: data.dataStartRow1Based ?? 9,
+        parsedElements: data.parsedElements ?? 0,
+        parsedLines: data.parsedLines ?? 0,
+        written: data.written ?? 0,
+        deletedPrior: data.deletedPrior ?? 0,
+        parseErrors: data.parseErrors ?? [],
+        warnings: data.warnings ?? [],
+      });
+      return true;
+    } catch (e) {
+      setImportPaintingElementsError(
+        e instanceof Error ? e.message : "Import painting elements failed",
+      );
+      return false;
+    } finally {
+      setImportingPaintingElements(false);
     }
   }, [resolveImportRunLog]);
 
@@ -847,7 +865,6 @@ export function ImportMasterPricesPanel() {
         tabSummaries: data.tabSummaries ?? [],
       });
       if (data.quoteObjects) setSyncBlindsQuoteObjectsResult(data.quoteObjects);
-      setBlindsRefreshKey((k) => k + 1);
     } catch (e) {
       setImportBlindsError(e instanceof Error ? e.message : "Import blinds failed");
     } finally {
@@ -1021,7 +1038,6 @@ export function ImportMasterPricesPanel() {
         written: data.written ?? 0,
         deletedPrior: data.deletedPrior ?? 0,
       });
-      setCascadesRefreshKey((k) => k + 1);
       return true;
     } catch (e) {
       setImportCascadesError(e instanceof Error ? e.message : "Import cascades failed");
@@ -1238,14 +1254,14 @@ export function ImportMasterPricesPanel() {
         run: runImportLabourRates,
       },
       {
-        selected: importProductContractorRatesSelected,
-        ready: Boolean(contractorRatesTabInfo),
-        run: runImportProductContractorRates,
-      },
-      {
         selected: importBuildingElementsSelected,
         ready: Boolean(buildingElementsTabInfo),
         run: runImportBuildingElements,
+      },
+      {
+        selected: importPaintingElementsSelected,
+        ready: Boolean(paintingElementsTabInfo),
+        run: runImportPaintingElements,
       },
       {
         selected: importCascadesSelected,
@@ -1293,22 +1309,22 @@ export function ImportMasterPricesPanel() {
     }
   }, [
     importLabourRatesSelected,
-    importProductContractorRatesSelected,
     importBuildingElementsSelected,
+    importPaintingElementsSelected,
     importCascadesSelected,
     importSupplierDiscountsSelected,
     importListsSelected,
     importIncrementalLabourSelected,
     labourTabInfo,
-    contractorRatesTabInfo,
     buildingElementsTabInfo,
+    paintingElementsTabInfo,
     cascadesTabInfo,
     supplierDiscountsTabInfo,
     listsTabInfo,
     incrementalLabourProductsTabInfo,
     runImportLabourRates,
-    runImportProductContractorRates,
     runImportBuildingElements,
+    runImportPaintingElements,
     runImportCascades,
     runImportSupplierDiscounts,
     runImportLists,
@@ -1384,24 +1400,6 @@ export function ImportMasterPricesPanel() {
         <button
           type="button"
           role="tab"
-          aria-selected={pageTab === "cascades"}
-          className={sfUnderlineTabClass(pageTab === "cascades")}
-          onClick={() => setPageTab("cascades")}
-        >
-          Cascades
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={pageTab === "blinds"}
-          className={sfUnderlineTabClass(pageTab === "blinds")}
-          onClick={() => setPageTab("blinds")}
-        >
-          Blinds
-        </button>
-        <button
-          type="button"
-          role="tab"
           aria-selected={pageTab === "price-book-testing"}
           className={sfUnderlineTabClass(pageTab === "price-book-testing")}
           onClick={() => setPageTab("price-book-testing")}
@@ -1420,14 +1418,6 @@ export function ImportMasterPricesPanel() {
           onRequestEmpty={() => setClearObjectsConfirmOpen(true)}
           emptying={clearingObjects}
         />
-      ) : null}
-
-      {pageTab === "cascades" ? (
-        <CascadesTablePanel refreshKey={cascadesRefreshKey} />
-      ) : null}
-
-      {pageTab === "blinds" ? (
-        <DataBlindsTablePanel refreshKey={blindsRefreshKey} />
       ) : null}
 
       <div role="tabpanel" hidden={pageTab !== "price-book-testing"}>
@@ -1691,56 +1681,6 @@ export function ImportMasterPricesPanel() {
             <input
               type="checkbox"
               className="mt-0.5 h-4 w-4 shrink-0"
-              checked={importProductContractorRatesSelected}
-              disabled={
-                importBusy ||
-                testLoading ||
-                preparingObjects ||
-                clearingObjects ||
-                !contractorRatesTabInfo
-              }
-              onChange={(e) => setImportProductContractorRatesSelected(e.target.checked)}
-            />
-            <span className="text-sf-text-secondary dark:text-zinc-300">
-              <span className="font-medium text-sf-text dark:text-zinc-100">
-                Product Contractor Rates
-              </span>
-              {contractorRatesTabError ? (
-                <span className="mt-0.5 block text-xs text-amber-800 dark:text-amber-200">
-                  {contractorRatesTabError}
-                </span>
-              ) : contractorRatesTabInfo ? (
-                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
-                  Tab <strong>{contractorRatesTabInfo.tabTitle}</strong>
-                  {contractorRatesTabInfo.url ? (
-                    <>
-                      {" "}
-                      ·{" "}
-                      <a
-                        href={contractorRatesTabInfo.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
-                      >
-                        Open tab
-                      </a>
-                    </>
-                  ) : null}
-                  · → <code className="text-xs">data_productcontractorrates</code> (columns A–H, row
-                  5 headers, replaces collection each import)
-                </span>
-              ) : (
-                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
-                  Tab not found
-                </span>
-              )}
-            </span>
-          </label>
-
-          <label className="flex cursor-pointer items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 shrink-0"
               checked={importBuildingElementsSelected}
               disabled={
                 importBusy ||
@@ -1777,6 +1717,56 @@ export function ImportMasterPricesPanel() {
                     </>
                   ) : null}
                   · → <code className="text-xs">data_building_elements</code> (cols F+, rows 2–6
+                  headers, rows 9–100 detail, replaces collection each import)
+                </span>
+              ) : (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab not found
+                </span>
+              )}
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={importPaintingElementsSelected}
+              disabled={
+                importBusy ||
+                testLoading ||
+                preparingObjects ||
+                clearingObjects ||
+                !paintingElementsTabInfo
+              }
+              onChange={(e) => setImportPaintingElementsSelected(e.target.checked)}
+            />
+            <span className="text-sf-text-secondary dark:text-zinc-300">
+              <span className="font-medium text-sf-text dark:text-zinc-100">
+                Painting Elements
+              </span>
+              {paintingElementsTabError ? (
+                <span className="mt-0.5 block text-xs text-amber-800 dark:text-amber-200">
+                  {paintingElementsTabError}
+                </span>
+              ) : paintingElementsTabInfo ? (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  Tab <strong>{paintingElementsTabInfo.tabTitle}</strong>
+                  {paintingElementsTabInfo.url ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <a
+                        href={paintingElementsTabInfo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                      >
+                        Open tab
+                      </a>
+                    </>
+                  ) : null}
+                  · → <code className="text-xs">data_painting_elements</code> (cols H+, rows 2–6
                   headers, rows 9–100 detail, replaces collection each import)
                 </span>
               ) : (
@@ -1994,8 +1984,8 @@ export function ImportMasterPricesPanel() {
                 preparingObjects ||
                 clearingObjects ||
                 (!importLabourRatesSelected &&
-                  !importProductContractorRatesSelected &&
                   !importBuildingElementsSelected &&
+                  !importPaintingElementsSelected &&
                   !importCascadesSelected &&
                   !importSupplierDiscountsSelected &&
                   !importListsSelected &&
@@ -2004,8 +1994,9 @@ export function ImportMasterPricesPanel() {
               className={sfPrimaryToolbarButton}
             >
               {importingLabourRates ||
-              importingProductContractorRates ||
               importingBuildingElements ||
+              importingPaintingElements ||
+              importingPaintingElements ||
               importingCascades ||
               importingSupplierDiscounts ||
               importingLists ||
@@ -2078,8 +2069,8 @@ export function ImportMasterPricesPanel() {
                 importingLists ||
                 importingCascades ||
                 importingLabourRates ||
-                importingProductContractorRates ||
                 importingBuildingElements ||
+              importingPaintingElements ||
                 importingSupplierDiscounts ||
                 importingObjectLabourRates
               }
@@ -2100,8 +2091,8 @@ export function ImportMasterPricesPanel() {
                 importingLists ||
                 importingCascades ||
                 importingLabourRates ||
-                importingProductContractorRates ||
                 importingBuildingElements ||
+              importingPaintingElements ||
                 importingSupplierDiscounts ||
                 importingObjectLabourRates
               }
@@ -2122,8 +2113,8 @@ export function ImportMasterPricesPanel() {
                 importingLists ||
                 importingCascades ||
                 importingLabourRates ||
-                importingProductContractorRates ||
                 importingBuildingElements ||
+              importingPaintingElements ||
                 importingSupplierDiscounts ||
                 importingObjectLabourRates
               }
@@ -2173,8 +2164,8 @@ export function ImportMasterPricesPanel() {
             <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
               Import blinds — {importBlindsResult.matrixTabsImported} type(s),{" "}
               {importBlindsResult.writtenPrices} price row(s),{" "}
-              {importBlindsResult.writtenFooters} footer(s). Browse on the{" "}
-              <strong>Blinds</strong> tab.
+              {importBlindsResult.writtenFooters} footer(s). Browse in{" "}
+              <strong>System → Blinds</strong>.
               {syncBlindsQuoteObjectsResult ? (
                 <span className="block">
                   Quote objects — {syncBlindsQuoteObjectsResult.typesProcessed} type(s):{" "}
@@ -2283,8 +2274,8 @@ export function ImportMasterPricesPanel() {
               importingLists ||
               importingCascades ||
               importingLabourRates ||
-              importingProductContractorRates ||
               importingBuildingElements ||
+              importingPaintingElements ||
               importingSupplierDiscounts ||
               importingObjectLabourRates
             }
@@ -2303,8 +2294,8 @@ export function ImportMasterPricesPanel() {
               importingLists ||
               importingCascades ||
               importingLabourRates ||
-              importingProductContractorRates ||
               importingBuildingElements ||
+              importingPaintingElements ||
               importingSupplierDiscounts ||
               importingObjectLabourRates
             }
@@ -2318,13 +2309,11 @@ export function ImportMasterPricesPanel() {
         {importLabourRatesError ? (
           <p className="text-sm text-red-800 dark:text-red-300">{importLabourRatesError}</p>
         ) : null}
-        {importProductContractorRatesError ? (
-          <p className="text-sm text-red-800 dark:text-red-300">
-            {importProductContractorRatesError}
-          </p>
-        ) : null}
         {importBuildingElementsError ? (
           <p className="text-sm text-red-800 dark:text-red-300">{importBuildingElementsError}</p>
+        ) : null}
+        {importPaintingElementsError ? (
+          <p className="text-sm text-red-800 dark:text-red-300">{importPaintingElementsError}</p>
         ) : null}
         {importLabourRatesResult ? (
           <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
@@ -2337,24 +2326,6 @@ export function ImportMasterPricesPanel() {
             {importLabourRatesResult.parseErrors.length > 0 ? (
               <span className="block text-xs text-amber-800 dark:text-amber-200">
                 Skipped with errors: {importLabourRatesResult.parseErrors.join(" ")}
-              </span>
-            ) : null}
-          </p>
-        ) : null}
-        {importProductContractorRatesResult ? (
-          <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
-            Import product contractor rates — tab{" "}
-            <strong>{importProductContractorRatesResult.tabTitle}</strong> (
-            {importProductContractorRatesResult.range}, header row{" "}
-            {importProductContractorRatesResult.headerRow1Based}, data from row{" "}
-            {importProductContractorRatesResult.dataStartRow1Based}):{" "}
-            {importProductContractorRatesResult.parsed} row(s) written to{" "}
-            <code className="text-xs">data_productcontractorrates</code> (
-            {importProductContractorRatesResult.deletedPrior} removed first).
-            {importProductContractorRatesResult.parseErrors.length > 0 ? (
-              <span className="block text-xs text-amber-800 dark:text-amber-200">
-                Skipped with errors:{" "}
-                {importProductContractorRatesResult.parseErrors.join(" ")}
               </span>
             ) : null}
           </p>
@@ -2373,6 +2344,24 @@ export function ImportMasterPricesPanel() {
                 Skipped with errors: {importBuildingElementsResult.parseErrors.join(" ")}
               </span>
             ) : null}
+            {renderElementImportWarnings(importBuildingElementsResult.warnings)}
+          </p>
+        ) : null}
+        {importPaintingElementsResult ? (
+          <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
+            Import painting elements — tab <strong>{importPaintingElementsResult.tabTitle}</strong> (
+            {importPaintingElementsResult.range}, data rows{" "}
+            {importPaintingElementsResult.dataStartRow1Based}–100):{" "}
+            {importPaintingElementsResult.parsedElements} element(s),{" "}
+            {importPaintingElementsResult.parsedLines} line(s) →{" "}
+            <code className="text-xs">data_painting_elements</code> (
+            {importPaintingElementsResult.deletedPrior} removed first).
+            {importPaintingElementsResult.parseErrors.length > 0 ? (
+              <span className="block text-xs text-amber-800 dark:text-amber-200">
+                Skipped with errors: {importPaintingElementsResult.parseErrors.join(" ")}
+              </span>
+            ) : null}
+            {renderElementImportWarnings(importPaintingElementsResult.warnings)}
           </p>
         ) : null}
         {importCascadesError ? (
@@ -2387,7 +2376,7 @@ export function ImportMasterPricesPanel() {
             {importCascadesResult.deletedPrior > 0
               ? ` (${importCascadesResult.deletedPrior} prior row(s) replaced)`
               : ""}
-            .
+            . Browse in <strong>System → Cascades</strong>.
           </p>
         ) : null}
         {importSupplierDiscountsError ? (

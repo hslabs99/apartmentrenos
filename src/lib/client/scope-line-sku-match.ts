@@ -414,7 +414,7 @@ export function resolveScopeLineSupplier(
   return preferredSupplierForSku(suppliers) ?? null;
 }
 
-/** Workbench Supplier column label (supplier name + priority). */
+/** Workbench Supplier column label (supplier name + priority, optional discount). */
 export function resolveScopeLineSupplierLabel(
   line: Pick<
     ProjectAreaObjectPublic,
@@ -426,10 +426,12 @@ export function resolveScopeLineSupplierLabel(
   const row = resolveScopeLineSupplier(line, suppliersBySkuId);
   if (row) {
     const name = row.supplier.trim();
-    const base = !name ? `P${row.supplierOption}` : name;
+    const priorityLabel = `P${row.supplierOption}`;
     const pct = defaultSupplierDiscountPct(row.supplier, supplierDiscountByKey);
     const pctLabel = formatSupplierDiscountPctLabel(pct);
-    return pctLabel ? `${base} (${pctLabel})` : base;
+    if (!name) return priorityLabel;
+    if (pctLabel) return `${name} (${priorityLabel}, ${pctLabel})`;
+    return `${name} (${priorityLabel})`;
   }
   const manual = line.manualSupplier?.trim();
   if (manual) return manual;

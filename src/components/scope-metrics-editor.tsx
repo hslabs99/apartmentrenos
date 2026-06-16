@@ -36,13 +36,16 @@ export function ScopeMetricsEditor({
 
   function addMetric() {
     if (metrics.length >= MAX_SCOPE_METRICS) return;
+    const defaultAnswerids = answers
+      .filter((a) => a.attachedQuoteObjectIds.length > 0)
+      .map((a) => a.answerid);
     onChange([
       ...metrics,
       {
         metricid: crypto.randomUUID(),
         label: `Metric ${metrics.length + 1}`,
         uom: "M2",
-        answerids: [],
+        answerids: defaultAnswerids,
       },
     ]);
   }

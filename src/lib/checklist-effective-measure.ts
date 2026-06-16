@@ -1,10 +1,12 @@
 import {
   effectiveInheritMeasureSource,
+  inheritedApartmentM2FromSource,
   INHERIT_M2_LM_RUNS_UOM,
   isQuoteObjectInheritM2Source,
   measureLockedByScopeMetricInherit,
   quoteObjectUsesInheritedMeasureWithScope,
   resolveScopeMetricIdFromInherit,
+  uomSupportsInheritedAreaMeasure,
 } from "@/lib/inherit-m2-source";
 import { measureFromScopeMetricForQuoteObject } from "@/lib/scope-metrics";
 import {
@@ -118,8 +120,7 @@ export function quoteObjectUsesInheritedM2(
   scopeInheritMeasureSource?: InheritMeasureSource,
 ): boolean {
   if (!q) return false;
-  const uom = String(q.uom ?? "").trim();
-  if (uom !== "M2" && uom !== CHECKLIST_LM_RUNS_UOM) return false;
+  if (!uomSupportsInheritedAreaMeasure(String(q.uom ?? ""))) return false;
   return quoteObjectUsesInheritedMeasureWithScope(q, scopeInheritMeasureSource);
 }
 
@@ -234,34 +235,22 @@ export function checklistTemplateMeasurementFromQuote(
   if (fromMetric != null) return fromMetric;
 
   const uom = String(q.uom ?? "").trim();
-  if (uom === "M2") {
-    const src = normalizedInheritSource(q, scopeInheritMeasureSource);
-    if (!isQuoteObjectInheritM2Source(src)) return templateMeasurement;
-    if (src === "area_m2") return numOrNull(ctx.areaM2) ?? null;
-    if (src === "apartment_total_m2") return numOrNull(ctx.apartmentTotalM2) ?? null;
-    if (src === "apartment_soft_m2") return numOrNull(ctx.apartmentSoftM2) ?? null;
-    if (src === "apartment_hard_m2") return numOrNull(ctx.apartmentHardM2) ?? null;
-    return templateMeasurement;
-  }
-  if (uom === CHECKLIST_LM_RUNS_UOM) {
-    const rw = effectiveLmRunsRollWidth(q);
-    const src = normalizedInheritSource(q, scopeInheritMeasureSource);
-    if (!isQuoteObjectInheritM2Source(src)) return templateMeasurement;
-    const baseM2 =
-      src === "area_m2"
-        ? numOrNull(ctx.areaM2)
-        : src === "apartment_total_m2"
-          ? numOrNull(ctx.apartmentTotalM2)
-          : src === "apartment_soft_m2"
-            ? numOrNull(ctx.apartmentSoftM2)
-            : src === "apartment_hard_m2"
-              ? numOrNull(ctx.apartmentHardM2)
-              : numOrNull(ctx.areaM2);
-    if (baseM2 != null && baseM2 > 0) {
-      return linearMetersFromAreaM2ForLmRunsClient(baseM2, rw);
+  const src = normalizedInheritSource(q, scopeInheritMeasureSource);
+  if (isQuoteObjectInheritM2Source(src) && src !== "none") {
+    const baseM2 = inheritedApartmentM2FromSource(src, ctx);
+    if (uom === "M2") return baseM2 ?? templateMeasurement;
+    if (uom === CHECKLIST_LM_RUNS_UOM) {
+      const rw = effectiveLmRunsRollWidth(q);
+      if (baseM2 != null && baseM2 > 0) {
+        return linearMetersFromAreaM2ForLmRunsClient(baseM2, rw);
+      }
+      return templateMeasurement;
     }
-    return templateMeasurement;
+    if (uom === "Unit" && baseM2 != null) {
+      return measureFromScopeMetricWithSkuCalcM2(baseM2, skuCalcM2);
+    }
   }
+
   return templateMeasurement;
 }
 

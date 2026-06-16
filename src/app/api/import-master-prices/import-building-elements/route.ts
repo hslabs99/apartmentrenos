@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { MASTER_PRICES_BUILDING_ELEMENTS_TAB_TITLE } from "@/lib/google/master-prices-spreadsheet";
 import { runImportBuildingElements } from "@/lib/server/import-building-elements";
+import { auditElementSkuCoverage } from "@/lib/server/validate-element-sku-coverage";
 import { runSupportingImportWithLog, importRunIdFromError } from "@/lib/server/supporting-import-log";
 
 export const runtime = "nodejs";
@@ -17,7 +18,11 @@ export async function POST() {
         tabTitle: MASTER_PRICES_BUILDING_ELEMENTS_TAB_TITLE,
         sheetRange: "A1:BA100",
       },
-      () => runImportBuildingElements(db),
+      async () => {
+        const importResult = await runImportBuildingElements(db);
+        const elementCoverage = await auditElementSkuCoverage(db, "building");
+        return { ...importResult, elementCoverage };
+      },
       (result) => ({
         tabTitle: result.tabTitle,
         gid: result.gid,
@@ -28,10 +33,21 @@ export async function POST() {
         rowsCreated: result.written,
         deletedPrior: result.deletedPrior,
         parseErrors: result.parseErrors,
-        warnings: [`${result.parsedLines} detail line(s) across ${result.parsedElements} element(s)`],
+        warnings: [
+          `${result.parsedLines} detail line(s) across ${result.parsedElements} element(s)`,
+          ...result.elementCoverage.warnings,
+        ],
       }),
     );
-    return NextResponse.json({ ok: true, importRunId, ...result });
+    return NextResponse.json({
+      ok: true,
+      importRunId,
+      ...result,
+      warnings: [
+        `${result.parsedLines} detail line(s) across ${result.parsedElements} element(s)`,
+        ...result.elementCoverage.warnings,
+      ],
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to import building elements";
     return NextResponse.json(

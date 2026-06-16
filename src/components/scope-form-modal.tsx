@@ -1103,7 +1103,7 @@ export function ScopeFormModal({
                     objects to set checklist order. Use Show All on an object to create one row per
                     matching SKU instead of a dropdown. Use No Charge to import the line at $0.
                     For each selected object you can attach a
-                    calculator (e.g. benchtop m² on the benchtop). On the checklist, that icon
+                    calculator (e.g. M² calculator on benchtops or floors). On the checklist, that icon
                     appears on the SKU row and can fill the measure field.
                     Every row from Setup → Quote Objects is listed.
                     {systemScopeDraft

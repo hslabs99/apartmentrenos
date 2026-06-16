@@ -24,7 +24,7 @@ export type ScopeAnswerPublic = {
   attachedCategories: string[];
   /**
    * Optional calculator per attached quote object (`attachedQuoteObjectIds` keys).
-   * Values are `ScopeToolType` keys (e.g. BenchtopM2).
+   * Values are `ScopeToolType` keys (e.g. M2).
    */
   attachedObjectTools?: Partial<Record<string, ScopeToolType>>;
   /**

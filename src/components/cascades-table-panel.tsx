@@ -102,7 +102,7 @@ export function CascadesTablePanel({ refreshKey = 0 }: Props) {
                 <tr>
                   <td colSpan={4} className="py-8 text-sf-text-secondary dark:text-zinc-400">
                     {rows.length === 0
-                      ? "No cascades yet — run Import Cascades on the Import tab."
+                      ? "No cascades yet — run Import Cascades on Import Master Prices."
                       : "No rows match your filter."}
                   </td>
                 </tr>

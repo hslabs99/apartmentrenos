@@ -1,4 +1,4 @@
-import { findObjectLabourRateByObjectName } from "@/lib/labour-rate-lookup";
+import { findObjectLabourRateByObjectName, skuProductForObjectLabourLookup } from "@/lib/labour-rate-lookup";
 import { lookupHoursFromObjectLabourRate } from "@/lib/labour-hours-scale";
 import {
   isLabourLookupManuallyOverridden,
@@ -18,7 +18,7 @@ export function applyLookupLabourToProjectLine(
   lineUom?: string,
 ): ProjectAreaObjectPublic {
   const uom = lineUom ?? line.customuom ?? "";
-  const skuProduct = line.skuProduct?.trim() || null;
+  const skuProduct = skuProductForObjectLabourLookup(line);
   const { row } = findObjectLabourRateByObjectName(
     objectLabourRates,
     objectName,

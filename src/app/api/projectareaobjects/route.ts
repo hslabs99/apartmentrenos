@@ -45,6 +45,10 @@ import {
   readTooltipFromQuoteObjectData,
 } from "@/lib/server/area-object-tooltip";
 import { docToProjectAreaObjectPublic } from "@/lib/server/project-area-object-doc";
+import {
+  compareProjectAreaLineOrder,
+  insertProjectAreaLineAfter,
+} from "@/lib/server/project-area-line-sort";
 import { loadQuoteByObjectIdMap } from "@/lib/server/project-area-seeding";
 import { materializeSkuForNewProjectLine } from "@/lib/server/materialize-line-sku";
 import { resolveEffectivePriceLevelId } from "@/lib/server/resolve-effective-price-level";
@@ -84,7 +88,7 @@ const createSchema = z.object({
   notes1: z.string().optional().default(""),
   notes2: z.string().optional().default(""),
   manualSupplier: z.string().optional(),
-  manualSupplierSku: z.string().optional(),
+  manualSupplierSku: z.union([z.string(), z.null()]).optional(),
   constructionAssistantHours: numberOrNull.optional(),
   leadContractorHours: numberOrNull.optional(),
   electricianHours: numberOrNull.optional(),
@@ -97,6 +101,10 @@ const createSchema = z.object({
   scopeDocId: z.string().min(1).optional(),
   scopeInstanceId: z.union([z.string().min(1), z.null()]).optional(),
   answerid: z.union([z.string().uuid(), z.null()]).optional(),
+  /** Workbench: place the new line directly below this line doc id within the area. */
+  insertAfterLineDocId: z.string().min(1).optional(),
+  /** `manual2` = workbench blank line from SKU dropdown (no catalog SKU resolution). */
+  linesource: z.enum(["manual", "manual2"]).optional(),
 });
 
 function parseDateTime(value: unknown): Timestamp | null {
@@ -238,7 +246,7 @@ export async function GET(req: NextRequest) {
     let projectAreaObjects: ProjectAreaObjectPublic[] = snap.docs
       .filter((d) => !isProjectAreaObjectsMetaDocument(d.id))
       .map((d) => docToProjectAreaObjectPublic(d.id, d.data(), quoteByObjectId))
-      .sort((a, b) => a.objectid - b.objectid);
+      .sort(compareProjectAreaLineOrder);
     projectAreaObjects = await enrichLinesWithTemplateTooltips(db, projectAreaObjects);
     return NextResponse.json({ projectAreaObjects });
   } catch (e) {
@@ -270,6 +278,96 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Quote object not found" }, { status: 404 });
     }
     const quoteData = quoteSnap.data() as DocumentData;
+    const objectName = String(quoteData.objectname ?? "").trim();
+    const d = parsed.data;
+
+    if (d.linesource === "manual2") {
+      const trimmedProduct = d.skuProduct?.trim() ?? "";
+      const trimmedSupplier = d.manualSupplier?.trim() ?? "";
+      if (!trimmedProduct) {
+        return NextResponse.json({ error: "Product name is required for Manual2 lines" }, { status: 400 });
+      }
+      if (!trimmedSupplier) {
+        return NextResponse.json({ error: "Supplier is required for Manual2 lines" }, { status: 400 });
+      }
+      if (d.custommeasure == null || d.custommeasure <= 0) {
+        return NextResponse.json({ error: "Measure is required for Manual2 lines" }, { status: 400 });
+      }
+      if (!d.customuom?.trim()) {
+        return NextResponse.json({ error: "UOM is required for Manual2 lines" }, { status: 400 });
+      }
+      if (d.customumprice == null || d.customumprice < 0) {
+        return NextResponse.json({ error: "Unit price is required for Manual2 lines" }, { status: 400 });
+      }
+
+      const style = d.style !== undefined && d.style !== null ? String(d.style).trim() : "";
+      const colour = d.colour !== undefined && d.colour !== null ? String(d.colour).trim() : "";
+      const customuom = d.customuom.trim();
+      const custommeasure = d.custommeasure;
+      const customumprice = d.customumprice;
+      const totalprice =
+        d.totalprice ??
+        (custommeasure != null && customumprice != null ? custommeasure * customumprice : null);
+
+      const objectLabourRates = await loadAllObjectLabourRates(db);
+      const { hours: labourHours } = applyProjectLineLabourHours({
+        objectName,
+        skuProduct: null,
+        quoteTemplate: quoteData,
+        objectLabourRates,
+        custommeasure,
+        lineUom: customuom,
+      });
+
+      const lineDoc: Record<string, unknown> = {
+        projectid,
+        projectAreaDocId: parsed.data.projectAreaDocId,
+        areaid,
+        objectid,
+        linesource: "manual2",
+        included: true,
+        dateadded: parseDateTime(d.dateadded) ?? FieldValue.serverTimestamp(),
+        custommeasure,
+        customuom,
+        customumprice,
+        totalprice,
+        ...(style ? { style } : {}),
+        ...(colour ? { colour } : {}),
+        notes1: d.notes1 ?? "",
+        notes2: d.notes2 ?? "",
+        skuProduct: trimmedProduct,
+        manualSupplier: trimmedSupplier,
+        ...(d.manualSupplierSku?.trim() ? { manualSupplierSku: d.manualSupplierSku.trim() } : {}),
+        ...(objectName ? { objectname: objectName } : {}),
+        tooltip: readTooltipFromQuoteObjectData(quoteData),
+        ...(d.pricelevelid !== undefined ? { pricelevelid: d.pricelevelid } : {}),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        ...labourHoursToFirestore(labourHours),
+      };
+
+      const insertAfter = d.insertAfterLineDocId?.trim();
+      if (insertAfter) {
+        lineDoc.insertedAfterLineId = insertAfter;
+      }
+
+      const ref = await db.collection("projectareaobjects").add(lineDoc);
+      if (insertAfter) {
+        try {
+          await insertProjectAreaLineAfter(
+            db,
+            parsed.data.projectAreaDocId,
+            projectid,
+            ref.id,
+            insertAfter,
+          );
+        } catch (reorderErr) {
+          console.error("manual2 line reorder failed:", reorderErr);
+        }
+      }
+      return NextResponse.json({ id: ref.id });
+    }
+
     const paSnap = await db.collection("projectareas").doc(parsed.data.projectAreaDocId).get();
     const areaM2 = paSnap.exists ? numOrNull(paSnap.data()!.aream2) : undefined;
     const projDims = await loadProjectDimensionsByProjectId(db, projectid);
@@ -280,9 +378,14 @@ export async function POST(req: NextRequest) {
     );
     const template = quoteTemplatePricingForPriceLevel(quoteData, pl);
 
-    const d = parsed.data;
     const style = d.style !== undefined && d.style !== null ? String(d.style).trim() : "";
     const colour = d.colour !== undefined && d.colour !== null ? String(d.colour).trim() : "";
+    const explicitSkuProductEarly = d.skuProduct?.trim() ?? "";
+    const isWorkbenchManualBlank =
+      !d.scopeDocId?.trim() &&
+      !d.bundledFromLineId?.trim() &&
+      explicitSkuProductEarly.length > 0 &&
+      (d.customumprice !== undefined || Boolean(d.manualSupplier?.trim()));
     const measureCtx = {
       areaM2,
       apartmentTotalM2: projDims.apartmentTotalM2,
@@ -384,7 +487,7 @@ export async function POST(req: NextRequest) {
         lineColour: colour || null,
       });
     })();
-    if (materializedSku.skuId) {
+    if (materializedSku.skuId && !isWorkbenchManualBlank) {
       if (materializedSku.supplierPriceExcGst != null && d.customumprice === undefined) {
         customumprice = materializedSku.supplierPriceExcGst;
       }
@@ -393,7 +496,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const skuIdForMeasure = d.skuId?.trim() || materializedSku.skuId || null;
+    const skuIdForMeasure =
+      d.skuId?.trim() || (!isWorkbenchManualBlank ? materializedSku.skuId : null) || null;
     const skuCalcM2ForMeasure = await loadSkuCalcM2Fields(db, skuIdForMeasure);
     const inheritedMeasure = effectiveMeasurementForQuoteLine(
       quoteData,
@@ -445,7 +549,6 @@ export async function POST(req: NextRequest) {
     }
 
     const objectLabourRates = await loadAllObjectLabourRates(db);
-    const objectName = String(quoteData.objectname ?? "").trim();
     const templateOverrides: Partial<
       Record<(typeof TEMPLATE_LABOUR_SILO_KEYS)[number], number | null>
     > = {};
@@ -455,9 +558,13 @@ export async function POST(req: NextRequest) {
         templateOverrides[k] = normalizeLoadValue(d[bodyKey] as number | null);
       }
     }
-    const skuProductForLabour = d.skuId?.trim()
-      ? (d.skuProduct?.trim() || null)
-      : materializedSku.skuProduct?.trim() || null;
+    const skuProductForLabour = isWorkbenchManualBlank
+      ? d.skuId?.trim()
+        ? d.skuProduct?.trim() || null
+        : null
+      : d.skuId?.trim()
+        ? d.skuProduct?.trim() || null
+        : materializedSku.skuProduct?.trim() || null;
     const { hours: labourHours } = applyProjectLineLabourHours({
       objectName,
       skuProduct: skuProductForLabour,
@@ -508,22 +615,49 @@ export async function POST(req: NextRequest) {
     const explicitSkuId = d.skuId?.trim();
     const manualSupplier = d.manualSupplier?.trim();
     const manualSupplierSku = d.manualSupplierSku?.trim();
+    const explicitSkuProduct = explicitSkuProductEarly;
+    /** Workbench blank-line modal: user-entered product/cost/supplier — do not auto-materialize catalog SKU. */
     if (manualSupplier) lineDoc.manualSupplier = manualSupplier;
     if (manualSupplierSku) lineDoc.manualSupplierSku = manualSupplierSku;
+    if (d.pricelevelid !== undefined && !isBundled) {
+      lineDoc.pricelevelid = d.pricelevelid;
+    }
     if (explicitSkuId) {
       lineDoc.skuId = explicitSkuId;
-      lineDoc.skuProduct = d.skuProduct?.trim() ?? "";
+      lineDoc.skuProduct = explicitSkuProduct;
       if (d.supplierOption != null && isValidSupplierOption(d.supplierOption)) {
         lineDoc.supplierOption = d.supplierOption;
       }
+    } else if (isWorkbenchManualBlank) {
+      lineDoc.skuProduct = explicitSkuProduct;
     } else if (materializedSku.skuId) {
       lineDoc.skuId = materializedSku.skuId;
       lineDoc.skuProduct = materializedSku.skuProduct ?? "";
     } else if (materializedSku.skuProduct) {
       lineDoc.skuProduct = materializedSku.skuProduct;
+    } else if (explicitSkuProduct) {
+      lineDoc.skuProduct = explicitSkuProduct;
+    }
+
+    const insertAfter = d.insertAfterLineDocId?.trim();
+    if (insertAfter) {
+      lineDoc.insertedAfterLineId = insertAfter;
     }
 
     const ref = await db.collection("projectareaobjects").add(lineDoc);
+    if (insertAfter) {
+      try {
+        await insertProjectAreaLineAfter(
+          db,
+          parsed.data.projectAreaDocId,
+          projectid,
+          ref.id,
+          insertAfter,
+        );
+      } catch (reorderErr) {
+        console.error("line reorder failed:", reorderErr);
+      }
+    }
     return NextResponse.json({ id: ref.id });
   } catch (e) {
     const message =

@@ -22,6 +22,36 @@ export function uomSupportsInheritM2(uom: string): boolean {
   return u === INHERIT_M2_LM_RUNS_UOM.toLowerCase() || u === "lm runs";
 }
 
+/** Unit lines can inherit apartment/area m² as quantity (e.g. paint packages priced per m²). */
+export function uomSupportsInheritedAreaMeasure(uom: string): boolean {
+  if (uomSupportsInheritM2(uom)) return true;
+  return uom.trim().toLowerCase() === "unit";
+}
+
+function numOrNull(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  return null;
+}
+
+/** Resolve m² from apartment/area inherit source and project/area context. */
+export function inheritedApartmentM2FromSource(
+  src: QuoteObjectInheritM2Source,
+  ctx: {
+    areaM2?: number | null;
+    apartmentTotalM2?: number | null;
+    apartmentSoftM2?: number | null;
+    apartmentHardM2?: number | null;
+  },
+): number | null {
+  if (src === "none") return null;
+  if (src === "area_m2") return numOrNull(ctx.areaM2);
+  if (src === "apartment_total_m2") return numOrNull(ctx.apartmentTotalM2);
+  if (src === "apartment_soft_m2") return numOrNull(ctx.apartmentSoftM2);
+  if (src === "apartment_hard_m2") return numOrNull(ctx.apartmentHardM2);
+  return null;
+}
+
 export function isQuoteObjectInheritM2Source(v: unknown): v is QuoteObjectInheritM2Source {
   return (
     typeof v === "string" &&
@@ -52,8 +82,6 @@ export function effectiveInheritMeasureSource(
   scopeOverride: InheritMeasureSource | undefined,
 ): InheritMeasureSource {
   if (scopeOverride !== undefined && isInheritMeasureSource(scopeOverride)) {
-    if (isScopeMetricInheritSource(scopeOverride)) return scopeOverride;
-    if (!quoteObject || !uomSupportsInheritM2(String(quoteObject.uom ?? ""))) return "none";
     return scopeOverride;
   }
   if (!quoteObject || !uomSupportsInheritM2(String(quoteObject.uom ?? ""))) return "none";

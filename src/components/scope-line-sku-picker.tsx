@@ -54,6 +54,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ScopeLineSkuMatchDiagnosticModal } from "@/components/scope-line-sku-match-diagnostic-modal";
 import { diagnoseScopeLineSkuMatch } from "@/lib/client/scope-line-sku-match-diagnostic";
+import { SCOPE_LINE_SKU_ADD_BLANK_VALUE } from "@/lib/project-area-line-order";
 
 
 
@@ -129,6 +130,11 @@ type Props = {
   appendProductSpec?: string;
 
   appendParentCategory?: string;
+
+  /** Workbench: last SKU option opens blank-line flow from this row. */
+  showAddBlankLineOption?: boolean;
+
+  onAddBlankLine?: () => void;
 
 };
 
@@ -234,6 +240,10 @@ export function ScopeLineSkuPicker({
 
   appendParentCategory = "",
 
+  showAddBlankLineOption = false,
+
+  onAddBlankLine,
+
 }: Props) {
 
   const filters = useMemo(() => {
@@ -299,6 +309,7 @@ export function ScopeLineSkuPicker({
   );
 
   const [showDiagnostic, setShowDiagnostic] = useState(false);
+  const [selectEpoch, setSelectEpoch] = useState(0);
 
   const skuDiagnostic = useMemo(
     () =>
@@ -359,6 +370,7 @@ export function ScopeLineSkuPicker({
   const autoApplyPickKey = autoApplyPick
     ? `${autoApplyPick.skuId}|${autoApplyPick.supplierOption}|${autoApplyPick.priceExcGst ?? ""}`
     : null;
+  const effectiveAutoApplySingleMatch = autoApplySingleMatch && !showAddBlankLineOption;
   const onSelectSkuRef = useRef(onSelectSku);
   onSelectSkuRef.current = onSelectSku;
   /** One auto-apply per line + match identity (reset when match changes). */
@@ -371,7 +383,7 @@ export function ScopeLineSkuPicker({
   }, [line.id, autoApplyPickKey]);
 
   useEffect(() => {
-    if (!autoApplySingleMatch || disabled || !autoApplyPick) return;
+    if (!effectiveAutoApplySingleMatch || disabled || !autoApplyPick) return;
 
     if (scopeLineMatchesSkuPick(line, autoApplyPick)) return;
 
@@ -396,6 +408,7 @@ export function ScopeLineSkuPicker({
     line.supplierOption,
     line.customumprice,
     line.totalprice,
+    effectiveAutoApplySingleMatch,
   ]);
 
   useEffect(() => {
@@ -445,6 +458,25 @@ export function ScopeLineSkuPicker({
 
 
 
+  const handleSelectChange = (raw: string) => {
+    if (raw === SCOPE_LINE_SKU_ADD_BLANK_VALUE) {
+      setSelectEpoch((n) => n + 1);
+      onAddBlankLine?.();
+      return;
+    }
+    const decoded = decodeScopeLineSkuPickValue(raw);
+    if (!decoded) return;
+    const hit = picks.find(
+      (p) => p.skuId === decoded.skuId && p.supplierOption === decoded.supplierOption,
+    );
+    if (hit) onSelectSku(hit);
+  };
+
+  const addBlankLineOption =
+    showAddBlankLineOption && onAddBlankLine ? (
+      <option value={SCOPE_LINE_SKU_ADD_BLANK_VALUE}>Add Manual Row</option>
+    ) : null;
+
   const optionLabel = (pick: ScopeLineSkuPick) => {
     if (includeAllSupplierOptions) {
       const price =
@@ -486,6 +518,16 @@ export function ScopeLineSkuPicker({
         >
           {noMatchLabel}
         </button>
+        {showAddBlankLineOption && onAddBlankLine ? (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onAddBlankLine()}
+            className="mt-0.5 block w-full min-w-0 truncate text-left text-xs font-medium text-sf-brand underline underline-offset-2 hover:text-sf-brand-hover dark:text-emerald-400"
+          >
+            Add Manual Row
+          </button>
+        ) : null}
         {showDiagnostic && skuDiagnostic ? (
           <ScopeLineSkuMatchDiagnosticModal
             diagnostic={skuDiagnostic}
@@ -514,7 +556,7 @@ export function ScopeLineSkuPicker({
 
   const skuLocked = Boolean(lockToSkuId?.trim());
 
-  if (skuLocked && picks.length === 1) {
+  if (skuLocked && picks.length === 1 && !showAddBlankLineOption) {
     const only = picks[0]!;
     const lockedLabel = optionLabel(only);
     const lockedClass = inlineRow
@@ -586,32 +628,14 @@ export function ScopeLineSkuPicker({
         </span>
 
         <select
-
+          key={selectEpoch}
           className={`h-full min-w-0 flex-1 ${selectClassName}`}
 
           disabled={disabled}
 
           value={value}
 
-          onChange={(e) => {
-
-            const decoded = decodeScopeLineSkuPickValue(e.target.value);
-
-            if (!decoded) return;
-
-            const hit = picks.find(
-
-              (p) =>
-
-                p.skuId === decoded.skuId &&
-
-                p.supplierOption === decoded.supplierOption,
-
-            );
-
-            if (hit) onSelectSku(hit);
-
-          }}
+          onChange={(e) => handleSelectChange(e.target.value)}
 
         >
 
@@ -633,6 +657,8 @@ export function ScopeLineSkuPicker({
 
           ))}
 
+          {addBlankLineOption}
+
         </select>
 
       </div>
@@ -643,7 +669,7 @@ export function ScopeLineSkuPicker({
 
 
 
-  if (picks.length === 1 && !includeAllSupplierOptions) {
+  if (picks.length === 1 && !includeAllSupplierOptions && !showAddBlankLineOption) {
 
     const only = picks[0]!;
 
@@ -688,32 +714,14 @@ export function ScopeLineSkuPicker({
       </span>
 
       <select
-
+        key={selectEpoch}
         className={selectClassName}
 
         disabled={disabled}
 
         value={value}
 
-        onChange={(e) => {
-
-          const decoded = decodeScopeLineSkuPickValue(e.target.value);
-
-          if (!decoded) return;
-
-          const hit = picks.find(
-
-            (p) =>
-
-              p.skuId === decoded.skuId &&
-
-              p.supplierOption === decoded.supplierOption,
-
-          );
-
-          if (hit) onSelectSku(hit);
-
-        }}
+        onChange={(e) => handleSelectChange(e.target.value)}
 
       >
 
@@ -734,6 +742,8 @@ export function ScopeLineSkuPicker({
           </option>
 
         ))}
+
+        {addBlankLineOption}
 
       </select>
 

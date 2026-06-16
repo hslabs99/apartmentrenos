@@ -94,8 +94,8 @@ export function RectSectionsM2CalculatorBody({
   initialSections,
   onResult,
   onSectionsChange,
-  intro = "Add bench runs in millimetres (e.g. 2400 × 600). Total area is the sum of all sections.",
-  totalLabel = "Total benchtop area",
+  intro = "Add rectangular sections in millimetres (e.g. 2400 × 600). Total area is the sum of all sections.",
+  totalLabel = "Total area",
 }: RectSectionsM2CalculatorBodyProps) {
   const [sections, setSections] = useState<ScopeToolBenchSection[]>(
     () => initialSections ?? [],
@@ -402,7 +402,7 @@ export function ScopeToolModal({
     onApply({
       m2: roundScopeToolM2(resultM2),
       scopeToolBenchSections:
-        toolType === "BenchtopM2"
+        toolType === "M2"
           ? benchSections.length > 0
             ? benchSections
             : null
@@ -443,7 +443,7 @@ export function ScopeToolModal({
         </>
       }
     >
-      {toolType === "BenchtopM2" ? (
+      {toolType === "M2" ? (
         <RectSectionsM2CalculatorBody
           initialSections={initialBenchSections}
           onResult={setResultM2}
@@ -525,7 +525,7 @@ export function ScopeToolAfterAnswer({
   return (
     <ScopeToolLauncher
       toolType={scope.scopeToolType}
-      ariaLabel={`Open ${scopeToolTypeLabel(scope.scopeToolType)} calculator for: ${scope.question}`}
+      ariaLabel={`Open ${scopeToolTypeLabel(scope.scopeToolType)} for: ${scope.question}`}
       disabled={disabled}
     />
   );
@@ -557,7 +557,7 @@ export function ScopeLineMeasureTool({
   return (
     <ScopeToolLauncher
       toolType={toolType}
-      ariaLabel={`Open ${scopeToolTypeLabel(toolType)} calculator for ${objectLabel}`}
+      ariaLabel={`Open ${scopeToolTypeLabel(toolType)} for ${objectLabel}`}
       disabled={disabled}
       initialBenchSections={line.scopeToolBenchSections}
       initialWallMm={line.scopeToolWallMm}

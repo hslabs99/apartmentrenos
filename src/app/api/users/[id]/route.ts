@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { isUsersMetaDocument } from "@/lib/firestore/users-collection";
+import { normalizeUserType } from "@/types/user";
 import type { UserPublic } from "@/types/user";
 
 export const runtime = "nodejs";
@@ -12,7 +13,7 @@ const updateSchema = z.object({
   username: z.string().min(1).max(255).optional(),
   email: z.string().email().optional(),
   phone: z.string().max(80).optional(),
-  type: z.enum(["user", "admin"]).optional(),
+  type: z.enum(["sales", "admin", "management"]).optional(),
   businessName: z
     .string()
     .max(255)
@@ -35,7 +36,7 @@ function docToPublic(id: string, data: DocumentData): UserPublic {
     username: String(data.username ?? ""),
     email: String(data.email ?? ""),
     phone: String(data.phone ?? ""),
-    type: data.type === "admin" ? "admin" : "user",
+    type: normalizeUserType(data.type),
     businessName: typeof data.businessName === "string" ? data.businessName : null,
     relationshipTypeLookupId:
       typeof data.relationshipTypeLookupId === "number" && Number.isFinite(data.relationshipTypeLookupId)

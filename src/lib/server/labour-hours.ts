@@ -23,6 +23,7 @@ import {
   contractLabourRateBySiloProduct,
   findObjectLabourRateByObjectName,
   labourSiloCostExcGst,
+  skuProductForObjectLabourLookup,
   type ObjectLabourLookup,
 } from "@/lib/labour-rate-lookup";
 import { dataObjectLabourRateDocToPublic } from "@/lib/server/data-object-labour-rate-doc";
@@ -137,14 +138,18 @@ export function recalcLookupLabourHoursOnLine(
 ): { patch: Partial<LabourHours>; objectLabourDuplicate: boolean } {
   const overrides =
     manualOverrides ?? readLabourLookupManualOverrides(lineData.labourLookupManualOverrides);
-  const sku =
-    skuProduct !== undefined
-      ? skuProduct?.trim() || null
-      : String(lineData.skuProduct ?? "").trim() || null;
+  const skuForLookup = skuProductForObjectLabourLookup({
+    linesource: typeof lineData.linesource === "string" ? lineData.linesource : null,
+    skuId: typeof lineData.skuId === "string" ? lineData.skuId : null,
+    skuProduct:
+      skuProduct !== undefined
+        ? skuProduct?.trim() || null
+        : String(lineData.skuProduct ?? "").trim() || null,
+  });
   const { row, duplicateMatch } = findObjectLabourRateByObjectName(
     objectLabourRates,
     objectName,
-    sku,
+    skuForLookup,
   );
   const patch: Partial<LabourHours> = {};
   if (!row) {

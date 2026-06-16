@@ -1,7 +1,7 @@
 import type { LabourLookupManualOverrides } from "@/lib/labour-silo";
 import type { ScopeToolBenchSection, ScopeToolWallMm } from "@/lib/scope-tools";
 
-export type ProjectAreaObjectLineSource = "default" | "scope" | "manual" | "bundled";
+export type ProjectAreaObjectLineSource = "default" | "scope" | "manual" | "manual2" | "bundled";
 
 /** Built-in system object lines (not catalog quote_objects). */
 export type ProjectAreaObjectSystemKind = "blinds";
@@ -12,6 +12,10 @@ export type ProjectAreaObjectPublic = {
   /** Firestore doc id of the parent row in `projectareas` (scopes lines to one area instance). */
   projectAreaDocId?: string | null;
   objectid: number;
+  /** Explicit display order within `projectAreaDocId` (10, 20, 30…). Legacy rows omit this. */
+  lineSortOrder?: number | null;
+  /** Workbench: this manual line was inserted directly below another line (display grouping). */
+  insertedAfterLineId?: string | null;
   /** Quote object display name at line creation (kept when Setup object is removed). */
   objectname?: string | null;
   areaid: number;
@@ -62,7 +66,7 @@ export type ProjectAreaObjectPublic = {
   manualSupplierSku?: string | null;
   dateadded?: string | null;
   custommeasure?: number | null;
-  /** Benchtop calculator sections (mm) saved for this scope line. */
+  /** M² calculator sections (mm) saved for this scope line. */
   scopeToolBenchSections?: ScopeToolBenchSection[] | null;
   /** Wall calculator inputs (mm) saved for this scope line. */
   scopeToolWallMm?: ScopeToolWallMm | null;
