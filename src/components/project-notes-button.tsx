@@ -26,7 +26,18 @@ export type { ProjectNoteAreaOption, ProjectNoteObjectOption } from "@/component
 const NOTES_MODAL_PANEL =
   "!h-[70dvh] !max-h-[70dvh] !w-[70vw] !max-w-[70vw] sm:!max-w-[70vw]";
 
-export type ProjectNotesButtonSize = "default" | "compact" | "areaHeader" | "projectHeader";
+export type ProjectNotesButtonSize =
+  | "default"
+  | "compact"
+  | "areaHeader"
+  | "projectHeader"
+  /** Match workbench ⋮ menus (h-8 / h-5 glyph). */
+  | "workbench";
+
+/** Same hit target as WbProjectHdrMenu / WbLineRowMenu / WbAreaHdrMenu / workbench calculator. */
+export const WB_ICON_BTN_CLASS =
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-sf-border-strong bg-sf-surface text-sf-text-secondary shadow-sm transition hover:bg-sf-page focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sf-brand disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700";
+export const WB_ICON_GLYPH_CLASS = "h-5 w-5";
 
 type Props = {
   label: string;
@@ -44,7 +55,7 @@ type Props = {
   disabled?: boolean;
   /** @deprecated Prefer `size="compact"`. */
   compact?: boolean;
-  /** Match paired ⋮ menus: compact (rows), areaHeader, projectHeader. */
+  /** Match paired ⋮ menus: compact (CL rows), workbench, areaHeader, projectHeader. */
   size?: ProjectNotesButtonSize;
   /** When set, controls modal visibility (e.g. open notes after escalating an area). */
   modalOpen?: boolean;
@@ -126,20 +137,24 @@ export function ProjectNotesButton({
   const btnClass =
     resolved === "compact"
       ? `${clRowIconBtnClass} relative`
-      : resolved === "areaHeader"
-        ? `${clAreaHdrIconBtnClass} relative`
-        : resolved === "projectHeader"
-          ? `${clProjectHdrIconBtnClass} relative`
-          : "inline-flex shrink-0 items-center gap-0.5 rounded border border-sf-border-strong bg-sf-surface -ml-0.5 py-1 pl-1 pr-1.5 text-xs font-medium shadow-sm transition hover:bg-sf-page disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800";
+      : resolved === "workbench"
+        ? `${WB_ICON_BTN_CLASS} relative`
+        : resolved === "areaHeader"
+          ? `${clAreaHdrIconBtnClass} relative`
+          : resolved === "projectHeader"
+            ? `${clProjectHdrIconBtnClass} relative`
+            : "inline-flex shrink-0 items-center gap-0.5 rounded border border-sf-border-strong bg-sf-surface -ml-0.5 py-1 pl-1 pr-1.5 text-xs font-medium shadow-sm transition hover:bg-sf-page disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800";
 
   const glyphClass =
     resolved === "compact"
       ? clRowIconGlyphClass
-      : resolved === "areaHeader"
-        ? clAreaHdrIconGlyphClass
-        : resolved === "projectHeader"
-          ? clProjectHdrIconGlyphClass
-          : "h-4 w-4";
+      : resolved === "workbench"
+        ? WB_ICON_GLYPH_CLASS
+        : resolved === "areaHeader"
+          ? clAreaHdrIconGlyphClass
+          : resolved === "projectHeader"
+            ? clProjectHdrIconGlyphClass
+            : "h-4 w-4";
 
   const showInlineCount = hasBadgeNotes && resolved === "default";
   const showBadgeDot = hasBadgeNotes && resolved !== "default";

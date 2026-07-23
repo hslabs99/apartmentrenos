@@ -38,12 +38,14 @@ Implementation: `project-checklist-panel.tsx` — workbench `<colgroup>` and `wb
 | 11 | Line total / subtotal | 4.2rem |
 | 12 | Final price | 3.15rem |
 | 13–18 | Gen / Plumb / Elec / PM / Cntr / Ass.Cntr | 2.1rem each |
-| 19 | Notes | 2.75rem |
-| 20 | Spacer (blank) | 3.5rem |
+| 19 | Notes / Actions | 3.44rem |
+| 20 | Spacer (blank) | 2.81rem |
 
 ### Columns reduced 30% from baseline (cumulative)
 
 Baseline → current: Source 3.75→2.63; Tier 7.5→5.25; Style 7.5→5.25; Colour 8.5→5.95; Measure 3.25→2.3; Unit price 4→2.8; Line total 4→2.8; Final price 4.5→3.15. Spacer holds all saved width.
+
+Notes / Actions widened 25% from 2.75→3.44; spacer reduced by the same amount (3.5→2.81).
 
 ## Project header row (column-aligned, workbench)
 

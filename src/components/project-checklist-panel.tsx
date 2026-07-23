@@ -112,6 +112,8 @@ import { IconTrash } from "@/components/icons/lightning-icons";
 import { ProjectAreaStatusSelect } from "@/components/project-area-status-select";
 import {
   ProjectNotesButton,
+  WB_ICON_BTN_CLASS,
+  WB_ICON_GLYPH_CLASS,
   type ProjectNoteAreaOption,
   type ProjectNoteObjectOption,
 } from "@/components/project-notes-button";
@@ -404,7 +406,7 @@ const wbCellMuted = `${wbCell} text-sf-text-weak dark:text-zinc-400`;
 const WB_TABLE_COLS = 19;
 const WB_TABLE_COLS_SUMMARY = 15;
 const wbSupplierCol = "w-[6rem]";
-const wbSpacerCol = "w-[3.5rem]";
+const wbSpacerCol = "w-[2.81rem]";
 /** Line total / project & area subtotal column (widened for paint site fee breakdown). */
 const wbSubtotalCol = "w-[4.2rem]";
 const wbSpacerCell = `${wbCellMuted} border border-sf-border dark:border-zinc-700`;
@@ -2510,7 +2512,7 @@ export function ProjectChecklistPanel({
       label: string,
       opts?: {
         compact?: boolean;
-        size?: "default" | "compact" | "areaHeader" | "projectHeader";
+        size?: "default" | "compact" | "areaHeader" | "projectHeader" | "workbench";
         disabled?: boolean;
         projectAreaDocId?: string;
       },
@@ -2620,7 +2622,7 @@ export function ProjectChecklistPanel({
         renderProjectNotesButton(
           { projectid: row.projectid, areaid: row.areaid, objectid: row.objectid },
           label,
-          { compact: true, disabled: rowSavingId === row.id || paoDeleting },
+          { size: "workbench", disabled: rowSavingId === row.id || paoDeleting },
         ),
       onDeleteLine: (lineId) => setPaoDeleteId(lineId),
       onCloneLine: (lineId) => {
@@ -2856,7 +2858,7 @@ export function ProjectChecklistPanel({
                 <col className="w-[1.85rem]" />
                 <col className="w-[3.15rem]" />
                 <col className={wbSupplierCol} />
-                <col className="w-[2.75rem]" />
+                <col className="w-[3.44rem]" />
                 <col className={wbSpacerCol} />
               </colgroup>
             ) : (
@@ -2985,7 +2987,7 @@ export function ProjectChecklistPanel({
                             {renderProjectNotesButton(
                               { projectid: numericProjectId ?? 0 },
                               project.projectname,
-                              { compact: true },
+                              { size: "workbench" },
                             )}
                             <WbProjectHdrMenu
                               projectLabel={project.projectname}
@@ -4515,7 +4517,7 @@ export function ProjectChecklistPanel({
                                   { projectid: pa.projectid, areaid: pa.areaid },
                                   projectAreaHeading(pa, areas),
                                   {
-                                    compact: true,
+                                    size: "workbench",
                                     disabled: areaBusy,
                                     projectAreaDocId: pa.id,
                                   },
@@ -5222,8 +5224,8 @@ export function ProjectChecklistPanel({
                               supplierDiscountByKey={supplierDiscountByKey}
                               cellClassName={wbCellMid}
                             />
-                            <td className={`${wbCellMid} text-center`}>
-                              <div className="flex items-center justify-center gap-0.5">
+                            <td className={`${wbCellMid} text-right`}>
+                              <div className="flex items-center justify-end gap-0.5">
                                 {lineScope ? (
                                   <ScopeLineMeasureTool
                                     scope={lineScope}
@@ -5231,6 +5233,8 @@ export function ProjectChecklistPanel({
                                     quoteObjects={quoteObjects}
                                     objectLabel={objectLabel(row, quoteObjects)}
                                     disabled={saving}
+                                    buttonClassName={WB_ICON_BTN_CLASS}
+                                    iconClassName={WB_ICON_GLYPH_CLASS}
                                     onApplyMeasure={(payload) => {
                                       void patchLineItem(row.id, {
                                         custommeasure: payload.m2,
@@ -5254,7 +5258,7 @@ export function ProjectChecklistPanel({
                                     objectid: row.objectid,
                                   },
                                   objectLabel(row, quoteObjects),
-                                  { compact: true, disabled: saving || paoDeleting },
+                                  { size: "workbench", disabled: saving || paoDeleting },
                                 )}
                                 <WbLineRowMenu
                                   lineLabel={objectLabel(row, quoteObjects)}

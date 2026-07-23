@@ -539,6 +539,7 @@ type ScopeLineMeasureToolProps = {
   disabled?: boolean;
   onApplyMeasure: (payload: ScopeToolApplyPayload) => void;
   buttonClassName?: string;
+  iconClassName?: string;
 };
 
 /** Checklist line — calculator applies m² to measure and saves section measurements on the line. */
@@ -550,6 +551,7 @@ export function ScopeLineMeasureTool({
   disabled = false,
   onApplyMeasure,
   buttonClassName,
+  iconClassName,
 }: ScopeLineMeasureToolProps) {
   const toolType = resolveLineMeasureTool(line, quoteObjects, scope);
   if (!toolType) return null;
@@ -563,6 +565,7 @@ export function ScopeLineMeasureTool({
       initialWallMm={line.scopeToolWallMm}
       onApply={onApplyMeasure}
       buttonClassName={buttonClassName}
+      iconClassName={iconClassName}
     />
   );
 }

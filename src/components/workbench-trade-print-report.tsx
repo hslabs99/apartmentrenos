@@ -63,8 +63,8 @@ export function WorkbenchTradePrintReport({ data }: Props) {
       </header>
 
       {data.projectNotes.length > 0 ? (
-        <section className="mb-8 break-inside-avoid">
-          <h2 className="text-base font-semibold text-black">Project notes</h2>
+        <section className="mb-8">
+          <h2 className="break-after-avoid text-base font-semibold text-black">Project notes</h2>
           <NoteBlock notes={data.projectNotes} />
         </section>
       ) : null}
@@ -76,8 +76,8 @@ export function WorkbenchTradePrintReport({ data }: Props) {
       ) : (
         <div className="space-y-8">
           {data.areas.map((area) => (
-            <section key={area.areaid} className="break-inside-avoid">
-              <h2 className="border-b border-zinc-300 pb-1 text-base font-semibold text-black">
+            <section key={area.areaid}>
+              <h2 className="break-after-avoid border-b border-zinc-300 pb-1 text-base font-semibold text-black">
                 {area.label}
               </h2>
 
