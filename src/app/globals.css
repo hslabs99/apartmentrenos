@@ -1,16 +1,19 @@
 @import "tailwindcss";
 
-/* Lightning Experience–inspired tokens (light-first; dark is secondary) */
+/* DevFeasible brand tokens (navy + teal; light-first; dark is secondary) */
 :root {
-  --background: #f3f3f3;
-  --foreground: #080707;
-  --sf-brand: #0176d3;
-  --sf-brand-hover: #014486;
+  --background: #f5f7fa;
+  --foreground: #374151;
+  --sf-brand: #1a3c5e;
+  --sf-brand-hover: #1e4a73;
+  --sf-accent: #1d9e75;
+  --sf-accent-hover: #18896a;
+  --sf-accent-muted: #e6f7f2;
   --sf-surface: #ffffff;
-  --sf-border: #dddbda;
-  --sf-border-strong: #c9c9c9;
-  --sf-text-secondary: #3e3e3c;
-  --sf-text-weak: #706e6b;
+  --sf-border: #e5e7eb;
+  --sf-border-strong: #d1d5db;
+  --sf-text-secondary: #6b7280;
+  --sf-text-weak: #9ca3af;
 }
 
 @theme inline {
@@ -18,16 +21,19 @@
   --color-foreground: var(--foreground);
   --color-sf-brand: var(--sf-brand);
   --color-sf-brand-hover: var(--sf-brand-hover);
+  --color-sf-accent: var(--sf-accent);
+  --color-sf-accent-hover: var(--sf-accent-hover);
+  --color-sf-accent-muted: var(--sf-accent-muted);
   --color-sf-surface: var(--sf-surface);
-  --color-sf-page: #f3f3f3;
+  --color-sf-page: #f5f7fa;
   --color-sf-border: var(--sf-border);
   --color-sf-border-strong: var(--sf-border-strong);
-  --color-sf-text: #080707;
+  --color-sf-text: #374151;
   --color-sf-text-secondary: var(--sf-text-secondary);
   --color-sf-text-weak: var(--sf-text-weak);
-  --color-sf-destructive: #c23934;
-  --color-sf-destructive-hover: #a61a14;
-  --color-sf-nav-active-bg: #eef4ff;
+  --color-sf-destructive: #dc2626;
+  --color-sf-destructive-hover: #b91c1c;
+  --color-sf-nav-active-bg: #eef6f2;
   --font-sans: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Roboto,
     "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
@@ -43,6 +49,7 @@
     --sf-border-strong: #747474;
     --sf-text-secondary: #e5e5e5;
     --sf-text-weak: #c9c9c9;
+    --sf-accent-muted: #14352c;
   }
 }
 
@@ -65,18 +72,24 @@ body {
   #wb-trade-print-report,
   #wb-trade-print-report *,
   #wb-paint-litres-print-report,
-  #wb-paint-litres-print-report * {
+  #wb-paint-litres-print-report *,
+  #wb-purchasing-list-report-window,
+  #wb-purchasing-list-report-window * {
     visibility: visible;
   }
 
   #project-notes-print-report,
   #wb-trade-print-report,
-  #wb-paint-litres-print-report {
+  #wb-paint-litres-print-report,
+  #wb-purchasing-list-report-window {
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
     display: block !important;
+    visibility: visible !important;
+    background: #fff;
+    color: #000;
   }
 
   @page {

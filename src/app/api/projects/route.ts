@@ -11,6 +11,7 @@ import { ensureProjectsBootstrap } from "@/lib/firestore/collection-bootstrap";
 import { isProjectsMetaDocument } from "@/lib/firestore/projects-collection";
 import { allocateNextSequence } from "@/lib/firestore/sequences";
 import { areaCountsByProjectDocId } from "@/lib/server/project-area-counts";
+import { finalTotalsByProjectDocId } from "@/lib/server/project-list-final-totals";
 import {
   addProjectAreaWithSeed,
   loadQuoteByObjectIdMap,
@@ -150,8 +151,13 @@ export async function GET() {
       .filter((d) => !isProjectsMetaDocument(d.id))
       .map((d) => docToPublic(d.id, d.data()));
     const areaMap = await areaCountsByProjectDocId(db, pubs);
+    const finalMap = await finalTotalsByProjectDocId(db, pubs);
     const projects: ProjectListItem[] = pubs
-      .map((pub) => ({ ...pub, areaCount: areaMap.get(pub.id) ?? 0 }))
+      .map((pub) => ({
+        ...pub,
+        areaCount: areaMap.get(pub.id) ?? 0,
+        finalTotal: finalMap.get(pub.id) ?? 0,
+      }))
       .sort((a, b) =>
         a.projectname.localeCompare(b.projectname, undefined, {
           sensitivity: "base",

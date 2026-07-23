@@ -2,7 +2,10 @@
 
 import { formatProjectNoteDate } from "@/lib/project-note-display";
 import { formatProjectNoteTrades } from "@/lib/project-note-trades";
-import type { ProjectNoteViewFilter } from "@/lib/project-note-filters";
+import {
+  projectNoteListKey,
+  type ProjectNoteViewFilter,
+} from "@/lib/project-note-filters";
 import type { ProjectNotePublic } from "@/types/project-note";
 
 type Props = {
@@ -52,7 +55,7 @@ export function ProjectNotesPrintReport({
         <div className="space-y-6">
           {notes.map((n, index) => (
             <article
-              key={n.id}
+              key={projectNoteListKey(n, index)}
               className="break-inside-avoid border border-zinc-300 rounded p-4"
             >
               <h2 className="text-base font-semibold text-black">

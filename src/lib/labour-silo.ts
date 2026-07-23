@@ -58,11 +58,27 @@ export const WB_LABOUR_SILO_HEADERS: { key: LabourSiloKey; label: string; title:
     {
       key: "constructionAssistantHours",
       label: "CA",
-      title: "Construction assistant (hours)",
+      title:
+        "Construction assistant (hours). Column totals are informational — labour $ is already in line totals / subtotal.",
     },
-    { key: "leadContractorHours", label: "LC", title: "Lead contractor (hours)" },
-    { key: "electricianHours", label: "Elec", title: "Electrician (hours)" },
-    { key: "plumberHours", label: "Plumb", title: "Plumber (hours)" },
+    {
+      key: "leadContractorHours",
+      label: "LC",
+      title:
+        "Lead contractor (hours). Column totals are informational — labour $ is already in line totals / subtotal.",
+    },
+    {
+      key: "electricianHours",
+      label: "Elec",
+      title:
+        "Electrician (hours). Column totals are informational — labour $ is already in line totals / subtotal.",
+    },
+    {
+      key: "plumberHours",
+      label: "Plumb",
+      title:
+        "Plumber (hours). Column totals are informational — labour $ is already in line totals / subtotal.",
+    },
     { key: "generalHours", label: "Gen", title: "General (hours)" },
     { key: "projectManagerHours", label: "PM", title: "Project manager (hours)" },
     { key: "paintingHours", label: "Paint", title: "Painting (hours)" },

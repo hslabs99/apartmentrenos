@@ -6,19 +6,23 @@ function ToggleButton({
   active,
   children,
   onClick,
+  emphasis,
 }: {
   active: boolean;
   children: React.ReactNode;
   onClick: () => void;
+  emphasis?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`min-h-9 rounded-md px-3 text-sm font-medium transition ${
+      className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
         active
-          ? "bg-sf-brand text-white shadow-sm"
-          : "text-sf-text-secondary hover:bg-sf-page dark:text-zinc-300 dark:hover:bg-zinc-800"
+          ? emphasis
+            ? "bg-sf-accent text-white hover:bg-sf-accent-hover"
+            : "bg-white/15 text-white"
+          : "text-white/70 hover:bg-white/10 hover:text-white"
       }`}
       aria-pressed={active}
     >
@@ -37,7 +41,7 @@ export function ViewModeToggle() {
 
   return (
     <div
-      className="flex items-center gap-2 rounded-lg border border-sf-border bg-sf-surface p-1 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/70"
+      className="flex items-center gap-0.5"
       title="Preview UI as another user type"
     >
       <ToggleButton active={viewMode === "sales"} onClick={set("sales")}>
@@ -46,8 +50,12 @@ export function ViewModeToggle() {
       <ToggleButton active={viewMode === "admin"} onClick={set("admin")}>
         Admin
       </ToggleButton>
-      <ToggleButton active={viewMode === "management"} onClick={set("management")}>
-        Management
+      <ToggleButton
+        active={viewMode === "management"}
+        onClick={set("management")}
+        emphasis
+      >
+        Manage
       </ToggleButton>
     </div>
   );

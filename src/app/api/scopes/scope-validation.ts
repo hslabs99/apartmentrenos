@@ -5,6 +5,10 @@ import type { InheritMeasureSource } from "@/types/scope-metric";
 import type { ScopeMetricPublic } from "@/types/scope-metric";
 import { MAX_SCOPE_METRICS } from "@/types/scope-metric";
 import {
+  parseScopeShowAllDefaultQty,
+  type ScopeShowAllDefaultQty,
+} from "@/types/scope";
+import {
   isSystemScopeType,
   normalizeSystemScopeFields,
 } from "@/lib/system-scope-types";
@@ -70,6 +74,9 @@ export const scopeAnswerSchema = z.object({
   attachedCategories: z.array(z.string().min(1).max(120)).optional().default([]),
   attachedObjectTools: z.record(z.string().min(1).max(128), z.string().min(1).max(64)).optional(),
   attachedObjectShowAll: z.record(z.string().min(1).max(128), z.boolean()).optional(),
+  attachedObjectShowAllDefault: z
+    .record(z.string().min(1).max(128), z.union([z.number(), z.enum(["one", "zero"])]))
+    .optional(),
   attachedObjectNoCharge: z.record(z.string().min(1).max(128), z.boolean()).optional(),
   attachedObjectForce: z.record(z.string().min(1).max(128), z.boolean()).optional(),
   attachedObjectInheritM2Source: z
@@ -78,6 +85,7 @@ export const scopeAnswerSchema = z.object({
   attachedObjectInheritMeasureLocked: z
     .record(z.string().min(1).max(128), z.boolean())
     .optional(),
+  includeOnDemolitionReport: z.boolean().optional(),
 });
 
 export const scopeMetricSchema = z.object({
@@ -96,6 +104,8 @@ export const scopeWriteSchema = z
     /** Snapshot all current template areas at save time (questions only). */
     tagAllAreas: z.boolean().optional(),
     question: z.string().min(1).max(200),
+    /** Optional checklist guidance under the question (question scopes only). */
+    explanation: z.string().max(500).optional().nullable(),
     kind: z.enum(["question", "header", "footer"]).optional(),
     answers: z.array(scopeAnswerSchema).optional(),
     scopeMetrics: z.array(scopeMetricSchema).max(MAX_SCOPE_METRICS).optional(),
@@ -174,6 +184,7 @@ export const scopePatchSchema = z
     areaDocIds: z.array(z.string().min(1)).optional(),
     tagAllAreas: z.boolean().optional(),
     question: z.string().min(1).max(200).optional(),
+    explanation: z.string().max(500).optional().nullable(),
     kind: z.enum(["question", "header", "footer"]).optional(),
     answers: z.array(scopeAnswerSchema).optional(),
     scopeMetrics: z.array(scopeMetricSchema).max(MAX_SCOPE_METRICS).optional(),
@@ -274,6 +285,23 @@ function normalizeAttachedObjectFlags(
   return out;
 }
 
+function normalizeAttachedObjectShowAllDefault(
+  raw: Record<string, unknown> | undefined,
+  attachedIds: string[],
+  showAll: Record<string, boolean>,
+): Record<string, ScopeShowAllDefaultQty> {
+  if (!raw || typeof raw !== "object") return {};
+  const allowed = new Set(attachedIds);
+  const out: Record<string, ScopeShowAllDefaultQty> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const id = key.trim();
+    const parsed = parseScopeShowAllDefaultQty(value);
+    if (!id || !allowed.has(id) || !showAll[id] || parsed == null) continue;
+    out[id] = parsed;
+  }
+  return out;
+}
+
 function normalizeAttachedObjectInheritM2Sources(
   raw: Record<string, string> | undefined,
   attachedIds: string[],
@@ -336,10 +364,12 @@ export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
   attachedCategories: string[];
   attachedObjectTools: Record<string, ScopeToolType>;
   attachedObjectShowAll: Record<string, boolean>;
+  attachedObjectShowAllDefault: Record<string, ScopeShowAllDefaultQty>;
   attachedObjectNoCharge: Record<string, boolean>;
   attachedObjectForce: Record<string, boolean>;
   attachedObjectInheritM2Source: Record<string, InheritMeasureSource>;
   attachedObjectInheritMeasureLocked: Record<string, boolean>;
+  includeOnDemolitionReport: boolean;
 }[] {
   return answers.map((a) => {
     const attachedQuoteObjectIds = normalizeIdList(a.attachedQuoteObjectIds ?? []);
@@ -350,6 +380,11 @@ export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
     const attachedObjectShowAll = normalizeAttachedObjectFlags(
       a.attachedObjectShowAll,
       attachedQuoteObjectIds,
+    );
+    const attachedObjectShowAllDefault = normalizeAttachedObjectShowAllDefault(
+      a.attachedObjectShowAllDefault,
+      attachedQuoteObjectIds,
+      attachedObjectShowAll,
     );
     const attachedObjectNoCharge = normalizeAttachedObjectFlags(
       a.attachedObjectNoCharge,
@@ -376,10 +411,12 @@ export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
       attachedCategories: normalizeCategoryList(a.attachedCategories ?? []),
       attachedObjectTools,
       attachedObjectShowAll,
+      attachedObjectShowAllDefault,
       attachedObjectNoCharge,
       attachedObjectForce,
       attachedObjectInheritM2Source,
       attachedObjectInheritMeasureLocked,
+      includeOnDemolitionReport: a.includeOnDemolitionReport === true,
     };
   });
 }

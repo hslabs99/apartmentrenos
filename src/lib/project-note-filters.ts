@@ -111,3 +111,56 @@ export function filterNotesForView(
     return true;
   });
 }
+
+/** Keep first label per areaid (projects may list the same catalog area more than once). */
+export function uniqueNoteAreaOptionsByAreaId<T extends { areaid: number }>(
+  options: T[],
+): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+  for (const opt of options) {
+    if (seen.has(opt.areaid)) continue;
+    seen.add(opt.areaid);
+    out.push(opt);
+  }
+  return out;
+}
+
+/** Keep first label per objectid. */
+export function uniqueNoteObjectOptionsByObjectId<T extends { objectid: number }>(
+  options: T[],
+): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+  for (const opt of options) {
+    if (seen.has(opt.objectid)) continue;
+    seen.add(opt.objectid);
+    out.push(opt);
+  }
+  return out;
+}
+
+/**
+ * Stable React list key for a project note.
+ * Prefer Firestore doc id; fall back to noteid + index if id is missing/blank.
+ */
+export function projectNoteListKey(note: ProjectNotePublic, index: number): string {
+  const id = note.id?.trim();
+  if (id) return id;
+  if (note.noteid > 0) return `noteid-${note.noteid}`;
+  return `note-idx-${index}`;
+}
+
+/** Drop duplicate notes by doc id (or noteid when id is blank). Keeps first occurrence. */
+export function uniqueProjectNotes(notes: ProjectNotePublic[]): ProjectNotePublic[] {
+  const seen = new Set<string>();
+  const out: ProjectNotePublic[] = [];
+  for (let i = 0; i < notes.length; i++) {
+    const n = notes[i]!;
+    const key = projectNoteListKey(n, i);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(n);
+  }
+  return out;
+}

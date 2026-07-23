@@ -21,8 +21,16 @@ import { WbPaintingElementConsumptionModal } from "@/components/wb-painting-elem
 import { WbBuildingElementSkuCell } from "@/components/wb-building-element-sku-cell";
 import { ClAreaHeaderMenu } from "@/components/cl-area-header-menu";
 import { ClLineRowMenu } from "@/components/cl-line-row-menu";
+import { ClProjectHeaderMenu } from "@/components/cl-project-header-menu";
+import {
+  ClScrollContextRail,
+  type ClScrollContextArea,
+} from "@/components/cl-scroll-context-rail";
+import { ClScopeActionsMenu } from "@/components/cl-scope-actions-menu";
+import { clProjectHdrNameClass } from "@/components/cl-checklist-layout";
 import { WbAreaHdrMenu } from "@/components/wb-area-hdr-menu";
-import { WbMarginStepper } from "@/components/wb-margin-stepper";
+import { WbProjectSummary } from "@/components/wb-project-summary";
+import { WbAreaSummary } from "@/components/wb-area-summary";
 import { WbProjectHdrMenu } from "@/components/wb-project-hdr-menu";
 import { WbLineRowMenu } from "@/components/wb-line-row-menu";
 import { AddObjectPickerModal } from "@/components/add-object-picker-modal";
@@ -31,7 +39,8 @@ import {
   clAnswerInlineFieldClass,
   clAnswerWidthCh,
   clScopeQuestionSkuDividerClass,
-  clActionBtnClass,
+  clScopeQuestionHeaderBarClass,
+  clScopeQuestionAnswerRowClass,
   CL_FIELD_CONTROL_HEIGHT_CLASS,
   clInlineFieldLabelClass,
   clFieldsGridClass,
@@ -43,13 +52,16 @@ import {
   clScopeLineStackClass,
   clScopeMeasureColClass,
   clScopeNonStdColClass,
-  clScopeToolColClass,
   clScopeTotalPriceColClass,
   clTotalPriceFieldClass,
-  clToolCellClass,
+  clScopeNotesColClass,
+  clScopeCalculatorColClass,
+  clScopeActionsColClass,
+  clNotesCellClass,
+  clCalculatorCellClass,
+  clActionsCellClass,
   clScopeQuestionAnswerGroupClass,
   clScopeQuestionAnswerGroupBlindsClass,
-  clScopeQuestionAnswerRowClass,
   clScopeQuestionTextClass,
   clScopeSkuColClass,
   clScopeUomColClass,
@@ -57,6 +69,9 @@ import {
   clSkuPickerWrapClass,
   clSkuSelectExtraClass,
   clUomFieldClass,
+  clAreaNameNicknameGroupClass,
+  clAreaNicknameFieldClass,
+  clAreaNicknameInputClass,
 } from "@/components/cl-checklist-layout";
 import { ScopeLineMeasureTool, ScopeToolAfterAnswer } from "@/components/scope-tool-modal";
 import { ScopeLineSkuPicker } from "@/components/scope-line-sku-picker";
@@ -80,7 +95,13 @@ import {
   workbenchFlatDisplayLines,
 } from "@/lib/project-area-line-order";
 import { isManual2Line } from "@/lib/client/manual2-line";
-import { lineFinalPrice } from "@/lib/client/line-final-price";
+import {
+  lineExtendedTotalBreakdownTitle,
+  lineExtendedTotalExcGst,
+  lineFinalPrice,
+  lineFinalPriceBreakdown,
+  lineFinalPriceBreakdownTitle,
+} from "@/lib/client/line-final-price";
 import {
   resolveScopeLineSkuUnitPriceExcGst,
   scopeLineMatchesSkuPick,
@@ -114,7 +135,10 @@ import { ChecklistProjectDimensionsRow } from "@/components/checklist-project-di
 import { ProjectAreaCeilingHeightField } from "@/components/project-area-ceiling-height-field";
 import { ProjectAreaM2Calculator } from "@/components/project-area-m2-calculator";
 import { compareProjectAreasDisplayOrder } from "@/lib/project-area-display-order";
-import { projectAreaHeading } from "@/lib/project-area-display-name";
+import {
+  projectAreaHeading,
+  projectAreaTemplateName,
+} from "@/lib/project-area-display-name";
 import { sfRowIconBtn, sfRowIconBtnDanger } from "@/lib/sf-row-actions";
 import { singleYesAnswerId } from "@/lib/scope-single-yes-answer";
 import {
@@ -141,7 +165,6 @@ import {
   persistWorkbenchLookupLabour,
 } from "@/lib/client/sync-workbench-lookup-labour";
 import { WbLabourSiloRowCells, sumLabourHours } from "@/components/wb-labour-silo-row-cells";
-import { WbLabourSiloValue } from "@/components/wb-labour-silo-cell";
 import { WbLineSupplierCell } from "@/components/wb-line-supplier-cell";
 import { WbBlankLineModal, type WbBlankLineSaveBody, type WbBlankLineSeed } from "@/components/wb-blank-line-modal";
 import { WbObjectName } from "@/components/wb-object-name";
@@ -155,6 +178,8 @@ import type { DataObjectLabourRatePublic } from "@/types/data-object-labour-rate
 import { distinctLookupValues } from "@/lib/lookup-list-values";
 import {
   filterNotesForTarget,
+  uniqueNoteAreaOptionsByAreaId,
+  uniqueProjectNotes,
   type ProjectNoteTarget,
   type ProjectNoteViewFilter,
 } from "@/lib/project-note-filters";
@@ -190,13 +215,19 @@ import {
   type WbPaintLitresReportData,
 } from "@/lib/workbench-paint-litres-report";
 import {
+  buildWorkbenchPurchasingListReport,
+  wbPurchasingListReportHasContent,
+  WB_PURCHASING_LIST_REPORT_WINDOW_LABEL,
+  type WbPurchasingListReportData,
+} from "@/lib/workbench-purchasing-list-report";
+import {
   paintingSiteFeeExcGst,
   paintingSiteFeeWithMarginExcGst,
   projectHasPaintConsumption,
-  PAINTING_SITE_FEE_PRODUCT,
 } from "@/lib/painting-site-fee";
 import { WorkbenchTradePrintReport } from "@/components/workbench-trade-print-report";
 import { WorkbenchPaintLitresPrintReport } from "@/components/workbench-paint-litres-print-report";
+import { WorkbenchPurchasingListReportWindow } from "@/components/workbench-purchasing-list-report-window";
 import { supplierDiscountByKeyFromRows } from "@/lib/client/supplier-discount-price";
 import type { DataSupplierDiscountPublic } from "@/types/data-supplier-discount-public";
 import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
@@ -228,6 +259,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 
 async function readApiResponse<T>(res: Response): Promise<T> {
@@ -313,9 +345,19 @@ function lineSourceLabel(row: ProjectAreaObjectPublic): string {
   return "Default";
 }
 
-/** Amount counted toward area / project totals when line is included. */
-function includedLineTotal(row: ProjectAreaObjectPublic): number {
+/**
+ * Amount counted toward area / project subtotals when line is included.
+ * Material + lookup labour (pre-margin). Checklist retail totals use lineFinalPrice
+ * (this base × margin). Labour silo headers stay informational on workbench.
+ */
+function includedLineTotal(
+  row: ProjectAreaObjectPublic,
+  contractLabourRates?: DataLabourRatePublic[],
+): number {
   if (row.included === false) return 0;
+  if (contractLabourRates && contractLabourRates.length > 0) {
+    return lineExtendedTotalExcGst(row, undefined, undefined, undefined, contractLabourRates) ?? 0;
+  }
   const t = row.totalprice;
   return typeof t === "number" && Number.isFinite(t) ? t : 0;
 }
@@ -328,18 +370,23 @@ function parseOptionalNumber(raw: string): number | null {
 }
 
 const thBase =
-  "border border-sf-border-strong bg-sf-page px-1 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-sf-text-secondary dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
+  "border border-sf-border-strong bg-sf-brand px-1 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-white dark:border-zinc-600 dark:bg-sf-brand dark:text-zinc-100";
 /** Workbench object header row inside an area band (background comes from `<tr>`). */
 const thBaseWb =
-  "border border-sf-border-strong py-1.5 pl-2.5 pr-1 text-left text-xs font-semibold uppercase tracking-wide text-sf-text-secondary dark:border-zinc-600 dark:text-zinc-300";
+  "border border-sf-border-strong bg-sf-brand/90 py-1.5 pl-2.5 pr-1 text-left text-xs font-semibold uppercase tracking-wide text-white dark:border-zinc-600 dark:text-zinc-100";
 /** Workbench area: darker header row, lighter object table (lines + column headers + notes). */
-const wbAreaHdrBand = "bg-sky-100 dark:bg-sky-900/55";
-/** Checklist area header: ~30% darker band + larger area name for scanability. */
-const clAreaHdrBand =
-  "bg-[color-mix(in_srgb,var(--color-sky-100)_70%,black)] dark:bg-[color-mix(in_srgb,var(--color-sky-900)_72%,black)]";
+const wbAreaHdrBand = "bg-[#f0f4f8] dark:bg-slate-900/55";
+/** Checklist area header: slate bar matching v0. */
+const clAreaHdrBand = "bg-[#3D5166] dark:bg-[#2d3d4f]";
 const clAreaNameText =
-  "text-[1.3125rem] font-semibold leading-snug text-sf-text dark:text-zinc-50";
-const wbAreaObjectBand = "bg-sky-50 dark:bg-sky-950/30";
+  "text-xl font-bold tracking-tight text-white";
+const clAreaHdrLabel =
+  "text-[9px] font-semibold uppercase tracking-wider text-white/50";
+const clAreaHdrInput =
+  "h-8 rounded-md border border-white/20 bg-white/10 px-2.5 text-xs font-medium text-white outline-none transition-all placeholder:text-white/30 focus:bg-white/15 focus:ring-2 focus:ring-sf-accent/60";
+const clAreaHdrSelect =
+  "h-8 appearance-none rounded-md border border-white/20 bg-white/10 px-2 pr-6 text-xs font-medium text-white outline-none transition-all focus:ring-2 focus:ring-sf-accent/60";
+const wbAreaObjectBand = "bg-sf-surface dark:bg-zinc-950/30";
 const wbAreaGapCell =
   "h-4 border-0 bg-sf-page p-0 dark:border-0 dark:bg-zinc-800";
 const cell =
@@ -351,9 +398,11 @@ const wbCell =
 const wbCellMuted = `${wbCell} text-sf-text-weak dark:text-zinc-400`;
 /**
  * Workbench table layout — see docs/layout-rules.md and .cursor/rules/layout-rules.mdc.
- * Col widths: colgroup only; reclaimed width → wbSpacerCol (19th column).
+ * Col widths: colgroup only; reclaimed width → wbSpacerCol (last column).
+ * Detail = all columns (19). Summary hides Source + Elevate + Style + Colour (15).
  */
 const WB_TABLE_COLS = 19;
+const WB_TABLE_COLS_SUMMARY = 15;
 const wbSupplierCol = "w-[6rem]";
 const wbSpacerCol = "w-[3.5rem]";
 /** Line total / project & area subtotal column (widened for paint site fee breakdown). */
@@ -364,14 +413,14 @@ const wbAreaHdrCell = "border-0 align-top px-1 py-1.5";
 const wbAreaHdrCellRight = `${wbAreaHdrCell} text-right`;
 /** Workbench area header row: outer border only (no vertical rules between cells). */
 const wbAreaHdrOutline = "border-sf-border dark:border-zinc-700";
-const wbAreaHdrCellOutlineFirst = `border-0 border-b border-l border-t ${wbAreaHdrOutline} align-middle py-1.5 pl-3 pr-1`;
+const wbAreaHdrCellOutlineFirst = `border-0 border-b border-l border-t ${wbAreaHdrOutline} align-top py-1.5 pl-3 pr-1`;
 const wbAreaHdrCellOutlineMid = `border-0 border-b border-t ${wbAreaHdrOutline} align-top px-1 py-1.5`;
 const wbAreaHdrCellOutlineMidRight = `${wbAreaHdrCellOutlineMid} text-right`;
 const wbAreaHdrCellOutlineLast = `border-0 border-b border-r border-t ${wbAreaHdrOutline} align-top px-1 py-1.5`;
 const wbProjectHdrRow =
-  "border-b border-sf-border bg-sf-page dark:border-zinc-700 dark:bg-zinc-900/60";
+  "border-b border-sf-border bg-sf-surface dark:border-zinc-700 dark:bg-zinc-900/60";
 const linkArea =
-  "font-semibold text-sf-text underline decoration-zinc-400 underline-offset-2 hover:decoration-zinc-600 dark:text-zinc-50 dark:decoration-zinc-500 dark:hover:decoration-zinc-300";
+  "font-semibold text-sf-brand underline decoration-sf-border underline-offset-2 hover:decoration-sf-brand dark:text-emerald-300 dark:decoration-zinc-500 dark:hover:decoration-emerald-300";
 
 function clAreaAnchorId(projectAreaDocId: string): string {
   return `cl-area-${projectAreaDocId}`;
@@ -381,7 +430,7 @@ function ClAreaJumpNavRow({
   projectAreas,
   areas,
   colSpan,
-  cellClassName = "border-b border-sf-border bg-sf-page px-4 py-2 dark:border-zinc-700 dark:bg-zinc-900/60",
+          cellClassName="border-b border-sf-border bg-sf-page px-5 py-2 dark:border-zinc-700 dark:bg-zinc-900/60",
 }: {
   projectAreas: ProjectAreaPublic[];
   areas: AreaPublic[];
@@ -394,23 +443,23 @@ function ClAreaJumpNavRow({
       <td colSpan={colSpan} className={cellClassName}>
         <nav
           aria-label="Jump to area"
-          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+          className="flex flex-wrap items-center gap-x-1 gap-y-1 overflow-x-auto text-sm"
         >
-          <span className="text-xs font-semibold uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
-            Jump to area
+          <span className="mr-1 whitespace-nowrap text-[10px] font-bold uppercase tracking-wider text-sf-text-weak dark:text-zinc-400">
+            Jump to Area
           </span>
           {projectAreas.map((areaPa, i) => {
             const areaLabel = projectAreaHeading(areaPa, areas);
             return (
               <Fragment key={areaPa.id}>
                 {i > 0 ? (
-                  <span aria-hidden className="text-sf-text-weak dark:text-zinc-500">
+                  <span aria-hidden className="select-none text-sf-border dark:text-zinc-600">
                     ·
                   </span>
                 ) : null}
                 <a
                   href={`#${clAreaAnchorId(areaPa.id)}`}
-                  className={linkArea}
+                  className="whitespace-nowrap rounded px-1 py-0.5 text-sm font-medium text-sf-brand transition-colors hover:text-sf-accent hover:underline dark:text-emerald-300"
                   title={`Jump to ${areaLabel}`}
                 >
                   {areaLabel}
@@ -425,52 +474,20 @@ function ClAreaJumpNavRow({
 }
 
 const inputNum =
-  "w-full min-w-0 rounded border border-sf-border-strong bg-sf-surface px-1.5 py-1 text-sm tabular-nums text-right outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400/60 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-emerald-500";
+  "w-full min-w-0 rounded border border-sf-border-strong bg-sf-surface px-1.5 py-1 text-sm tabular-nums text-right outline-none focus:border-sf-accent focus:ring-1 focus:ring-sf-accent/40 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-sf-accent";
 const inputText =
-  "w-full min-w-0 rounded border border-sf-border-strong bg-sf-surface px-1.5 py-1 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400/60 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-emerald-500";
+  "w-full min-w-0 rounded border border-sf-border-strong bg-sf-surface px-1.5 py-1 text-sm outline-none focus:border-sf-accent focus:ring-1 focus:ring-sf-accent/40 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-sf-accent";
 const inputLong =
-  "w-full min-w-0 rounded border border-sf-border-strong bg-sf-surface px-2 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400/60 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-emerald-500";
+  "w-full min-w-0 rounded border border-sf-border-strong bg-sf-surface px-2 py-2 text-sm outline-none focus:border-sf-accent focus:ring-1 focus:ring-sf-accent/40 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-sf-accent";
 const selectBase =
-  "rounded border border-sf-border-strong bg-sf-surface px-1 py-1 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400/60 dark:border-zinc-600 dark:bg-zinc-950";
+  "rounded-lg border border-sf-border bg-sf-surface px-2 py-1 text-sm outline-none focus:border-sf-accent focus:ring-2 focus:ring-sf-accent/40 dark:border-zinc-600 dark:bg-zinc-950";
 const selectCell = `${selectBase} w-full min-w-0`;
 /** Workbench row controls (no text-sm — avoids conflicting with text-xs). */
 const wbFieldBase =
-  "rounded border border-sf-border-strong bg-sf-surface px-1 py-0.5 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400/60 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-emerald-500";
+  "rounded border border-sf-border-strong bg-sf-surface px-1 py-0.5 outline-none focus:border-sf-accent focus:ring-1 focus:ring-sf-accent/40 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-sf-accent";
 /** Workbench column-aligned field labels (project/area header rows). */
 const wbHdrLabel =
   "mb-0.5 block text-xs font-semibold uppercase tracking-wide text-sf-text-secondary dark:text-zinc-400";
-/** Project / area header totals columns — same wrap + label band height in both rows. */
-const wbHdrTotalLabel =
-  `${wbHdrLabel} min-h-[2rem] hyphens-auto break-words leading-tight`;
-/** Fixed-height detail row under subtotal labels (lines + paint site fee). */
-const wbHdrDetailLineClass =
-  "mt-0.5 block h-[1.125rem] whitespace-nowrap text-[11px] leading-tight tabular-nums text-sf-text-secondary dark:text-zinc-400";
-
-function wbHdrDetailSpacers(count: number) {
-  if (count <= 0) return null;
-  return Array.from({ length: count }, (_, i) => (
-    <span key={`wb-hdr-detail-spacer-${i}`} className={wbHdrDetailLineClass} aria-hidden="true">
-      <span className="invisible select-none">—</span>
-    </span>
-  ));
-}
-
-function wbHdrPaintingSiteFeeDetail(amountExcGst: number) {
-  return (
-    <span
-      className={wbHdrDetailLineClass}
-      title="Once per project when paint consumption exists"
-    >
-      {PAINTING_SITE_FEE_PRODUCT.replace(/ /g, "\u00a0")}
-      {"\u00a0"}
-      {formatMoney(amountExcGst)}
-    </span>
-  );
-}
-const wbProjectHdrTotalCell = "border-0 align-bottom px-1 py-1.5 text-right";
-const wbProjectHdrSubtotalCell = "border-0 align-bottom px-1 py-1.5 text-left";
-/** Workbench: Elevate select ~30 characters; colour ~10. */
-const wbSelectTier = `${selectBase} w-[30ch] max-w-full`;
 const wbSelectColour = `${selectBase} w-[10ch] max-w-full`;
 /** Area colour override (longer placeholder text). */
 const wbSelectColourWide = `${selectBase} w-[22ch] max-w-full`;
@@ -492,15 +509,8 @@ const wbAreaHdrSelectColour = `${wbFieldBase} w-[24ch] max-w-full text-xs`;
 const wbAreaHdrSelectStatus = `${wbFieldBase} w-[11ch] max-w-full text-xs`;
 /** Single-row area header: label + control stacks, even horizontal gap, bottom-aligned. */
 const wbAreaHdrFieldsRow = "flex flex-wrap items-end gap-x-3 gap-y-2";
-/** Area header: cols 1–3 leading fields; 4–6 elevate/style/colour (aligned with project row). */
-const WB_AREA_HDR_LEADING_COLSPAN = 3;
-const WB_AREA_HDR_TRAILING_FIELD_COLSPAN = 4;
-const WB_AREA_HDR_FIELD_COLSPAN = 10;
-const wbProjectHdrFieldCell = "border-0 align-bottom px-1 py-1.5";
-const wbAreaHdrCellOutlineMidBottom = `border-0 border-b border-t ${wbAreaHdrOutline} align-bottom px-1 py-1.5`;
-const wbAreaHdrCellOutlineMidLeftBottom = `${wbAreaHdrCellOutlineMidBottom} text-left`;
-const wbAreaHdrCellOutlineMidRightBottom = `${wbAreaHdrCellOutlineMidBottom} text-right`;
-const wbAreaHdrCellOutlineLastBottom = `border-0 border-b border-r border-t ${wbAreaHdrOutline} align-bottom px-1 py-1.5`;
+/** Workbench: Elevate select ~30 characters; colour ~10. */
+const wbSelectTier = `${selectBase} w-[30ch] max-w-full`;
 /** Shared workbench area footer: notes + questions (same title, label, 2-row fields). */
 const wbAreaSectionTitle =
   "text-sm font-semibold text-sf-text dark:text-zinc-100";
@@ -517,6 +527,57 @@ const clSkuInput = `${selectBase} ${clSkuSelectExtraClass}`;
 const clUomInput = `${selectBase} box-border block w-full max-w-full min-w-0 text-xs leading-tight py-0 ${CL_FIELD_CONTROL_HEIGHT_CLASS}`;
 const clMeasureInput = `${selectBase} box-border block w-full max-w-full min-w-0 tabular-nums text-right text-xs leading-tight py-0 ${CL_FIELD_CONTROL_HEIGHT_CLASS}`;
 export type ProjectChecklistPanelMode = "checklist" | "workbench";
+
+function ClScopeQuestionHeader({
+  scopeLabel,
+  busy = false,
+  canCloneScope = false,
+  onAddObject,
+  onClone,
+  children,
+}: {
+  scopeLabel: string;
+  busy?: boolean;
+  canCloneScope?: boolean;
+  onAddObject: () => void;
+  onClone: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className={clScopeQuestionHeaderBarClass}>
+      <div className={clScopeQuestionAnswerRowClass}>{children}</div>
+      <ClScopeActionsMenu
+        scopeLabel={scopeLabel}
+        disabled={busy}
+        onAddObject={onAddObject}
+        onClone={canCloneScope ? onClone : undefined}
+      />
+    </div>
+  );
+}
+
+/** Question title plus optional admin explanation under it. */
+function ClScopeQuestionLabel({
+  question,
+  explanation,
+}: {
+  question: string;
+  explanation?: string | null;
+}) {
+  const tip = explanation?.trim() || "";
+  return (
+    <div className="min-w-0 shrink-0">
+      <span className={clScopeQuestionTextClass} title={question}>
+        {question}
+      </span>
+      {tip ? (
+        <p className="mt-0.5 max-w-prose text-left text-sm font-normal leading-snug text-sf-text-secondary dark:text-zinc-400">
+          {tip}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 function redundantScopeDetailParts(entry: RedundantScopeEntry): string[] {
   const parts: string[] = [];
@@ -554,7 +615,7 @@ export function ProjectChecklistPanel({
     () => ({ colourLookupIndex }),
     [colourLookupIndex],
   );
-  const { canViewAdminWorkbenchFeatures, canAdjustWorkbenchMargin } = useViewMode();
+  const { canAdjustWorkbenchMargin } = useViewMode();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -647,6 +708,9 @@ export function ProjectChecklistPanel({
   const [wbTradeReportData, setWbTradeReportData] = useState<WbTradeReportData | null>(null);
   const [wbPaintLitresReportData, setWbPaintLitresReportData] =
     useState<WbPaintLitresReportData | null>(null);
+  const [wbPurchasingListReportWindowData, setWbPurchasingListReportWindowData] =
+    useState<WbPurchasingListReportData | null>(null);
+  const [wbColumnView, setWbColumnView] = useState<"detail" | "summary">("detail");
   const [wbCloningLineId, setWbCloningLineId] = useState<string | null>(null);
   const includeAllSuppliersForLine = useCallback(
     (lineId: string) => skuShowAllByLineId[lineId] === true,
@@ -758,7 +822,12 @@ export function ProjectChecklistPanel({
     let lines = objData.projectAreaObjects ?? [];
     if (mode === "workbench" && lines.length > 0) {
       try {
-        lines = await persistWorkbenchLookupLabour(lines, quoteObjects, objectLabourRates);
+        lines = await persistWorkbenchLookupLabour(
+          lines,
+          quoteObjects,
+          objectLabourRates,
+          catalogSkus,
+        );
       } catch (e) {
         setError(
           e instanceof Error ? e.message : "Failed to sync labour hours from rates table",
@@ -766,7 +835,7 @@ export function ProjectChecklistPanel({
       }
     }
     setAllObjects(lines);
-  }, [projectDocId, mode, quoteObjects, objectLabourRates]);
+  }, [projectDocId, mode, quoteObjects, objectLabourRates, catalogSkus]);
 
   const reloadProjectAreas = useCallback(async () => {
     if (!projectDocId) return;
@@ -802,7 +871,7 @@ export function ProjectChecklistPanel({
       error?: string;
     };
     if (!res.ok) throw new Error(data.error ?? "Failed to reload project notes");
-    setProjectNotes(data.projectNotes ?? []);
+    setProjectNotes(uniqueProjectNotes(data.projectNotes ?? []));
   }, [projectDocId]);
 
   const createProjectNote = useCallback(
@@ -828,7 +897,7 @@ export function ProjectChecklistPanel({
       if (!res.ok || !data.projectNote) {
         throw new Error(data.error ?? "Failed to save note");
       }
-      setProjectNotes((prev) => [data.projectNote!, ...prev]);
+      setProjectNotes((prev) => uniqueProjectNotes([data.projectNote!, ...prev]));
     },
     [numericProjectId],
   );
@@ -1271,7 +1340,8 @@ export function ProjectChecklistPanel({
           prev.map((o) => {
             if (o.id !== id) return o;
             const q = quoteObjects.find((qo) => qo.objectid === o.objectid);
-            const objectName = q?.objectname?.trim() ?? "";
+            const objectName =
+              q?.objectname?.trim() || o.objectname?.trim() || "";
             const measure =
               body.custommeasure !== undefined
                 ? (body.custommeasure as number | null)
@@ -1527,11 +1597,13 @@ export function ProjectChecklistPanel({
   /** Workbench: apply object labour rates table to lookup silos on load and when rates/lines change. */
   useEffect(() => {
     if (mode !== "workbench" || loading || !projectDocId) return;
+    if (objectLabourRates.length === 0) return;
 
     const updates = lookupLabourUpdatesForLines(
       allObjects,
       quoteObjects,
       objectLabourRates,
+      catalogSkus,
     );
     if (updates.length === 0) return;
     if (workbenchLookupLabourSyncingRef.current) return;
@@ -1545,6 +1617,7 @@ export function ProjectChecklistPanel({
           allObjects,
           quoteObjects,
           objectLabourRates,
+          catalogSkus,
         );
         if (!cancelled) setAllObjects(merged);
       } catch (e) {
@@ -1562,7 +1635,7 @@ export function ProjectChecklistPanel({
       cancelled = true;
       workbenchLookupLabourSyncingRef.current = false;
     };
-  }, [mode, loading, projectDocId, allObjects, quoteObjects, objectLabourRates]);
+  }, [mode, loading, projectDocId, allObjects, quoteObjects, objectLabourRates, catalogSkus]);
 
   const objectsByProjectAreaDocId = useMemo(() => {
     const m = new Map<string, ProjectAreaObjectPublic[]>();
@@ -2056,8 +2129,12 @@ export function ProjectChecklistPanel({
   }
 
   const grandLineTotal = useMemo(
-    () => allObjects.reduce((sum, row) => sum + includedLineTotal(row), 0),
-    [allObjects],
+    () =>
+      allObjects.reduce(
+        (sum, row) => sum + includedLineTotal(row, contractLabourRates),
+        0,
+      ),
+    [allObjects, contractLabourRates],
   );
 
   const settingsMarginPct = useMemo(() => marginPercentFromSettings(settings), [settings]);
@@ -2149,11 +2226,36 @@ export function ProjectChecklistPanel({
 
   const grandTotal = grandLineTotal + workbenchPaintingSiteFeeExcGst;
 
-  const wbHdrSubtotalBreakdownLines = workbenchPaintingSiteFeeExcGst > 0 ? 2 : 0;
+  /** Material-only (ex labour) — Excel-style Line Sub Total in the page header summary. */
+  const projectMaterialTotal = useMemo(
+    () =>
+      allObjects.reduce((sum, row) => {
+        const b = lineFinalPriceBreakdown(
+          row,
+          0,
+          undefined,
+          undefined,
+          undefined,
+          contractLabourRates,
+        );
+        return sum + (b?.materialExcGst ?? 0);
+      }, 0),
+    [allObjects, contractLabourRates],
+  );
+
+  const projectLabourCostBySilo = useMemo(() => {
+    const out = {} as Record<(typeof LOOKUP_LABOUR_SILO_KEYS)[number], number | null>;
+    for (const key of LOOKUP_LABOUR_SILO_KEYS) {
+      const hoursSum = projectLoadTotals[key];
+      const rate = contractLabourRateBySiloProduct(contractLabourRates, key);
+      out[key] = labourSiloCostExcGst(hoursSum > 0 ? hoursSum : null, rate);
+    }
+    return out;
+  }, [projectLoadTotals, contractLabourRates]);
 
   const grandFinalTotal = useMemo(() => {
     const linesFinal = allObjects.reduce((sum, row) => {
-      const f = lineFinalPrice(row, marginPct);
+      const f = lineFinalPrice(row, marginPct, undefined, undefined, undefined, contractLabourRates);
       return sum + (f != null ? f : 0);
     }, 0);
     const feeFinal =
@@ -2161,7 +2263,38 @@ export function ProjectChecklistPanel({
         ? paintingSiteFeeWithMarginExcGst(workbenchPaintingSiteFeeExcGst, marginPct)
         : 0;
     return linesFinal + feeFinal;
-  }, [allObjects, marginPct, workbenchPaintingSiteFeeExcGst]);
+  }, [allObjects, marginPct, workbenchPaintingSiteFeeExcGst, contractLabourRates]);
+
+  const clScrollContextAreas = useMemo((): ClScrollContextArea[] => {
+    if (mode === "workbench") return [];
+    return sortedProjectAreas.map((pa) => {
+      const rows = objectsByProjectAreaDocId.get(pa.id) ?? [];
+      const areaFinal = rows.reduce((sum, row) => {
+        const f = lineFinalPrice(
+          row,
+          marginPct,
+          undefined,
+          undefined,
+          undefined,
+          contractLabourRates,
+        );
+        return sum + (f ?? 0);
+      }, 0);
+      const hasMoney = rows.some((r) => includedLineTotal(r, contractLabourRates) > 0);
+      return {
+        id: pa.id,
+        name: projectAreaHeading(pa, areas),
+        totalLabel: hasMoney ? formatMoney(areaFinal) : "—",
+      };
+    });
+  }, [
+    mode,
+    sortedProjectAreas,
+    objectsByProjectAreaDocId,
+    marginPct,
+    contractLabourRates,
+    areas,
+  ]);
 
   const projectRealisedMarginExcGst = useMemo(() => {
     if (grandTotal <= 0 && grandFinalTotal <= 0) return null;
@@ -2171,10 +2304,12 @@ export function ProjectChecklistPanel({
   const authorFallback = project?.quotedby?.trim() ?? "";
 
   const projectNoteAreaOptions = useMemo((): ProjectNoteAreaOption[] => {
-    return sortedProjectAreas.map((pa) => ({
-      areaid: pa.areaid,
-      label: projectAreaHeading(pa, areas),
-    }));
+    return uniqueNoteAreaOptionsByAreaId(
+      sortedProjectAreas.map((pa) => ({
+        areaid: pa.areaid,
+        label: projectAreaHeading(pa, areas),
+      })),
+    );
   }, [sortedProjectAreas, areas]);
 
   const projectNoteObjectLabelByArea = useMemo(() => {
@@ -2278,6 +2413,7 @@ export function ProjectChecklistPanel({
       }
       setError(null);
       setWbPaintLitresReportData(null);
+      setWbPurchasingListReportWindowData(null);
       setWbTradeReportData(data);
       window.setTimeout(() => window.print(), 50);
     },
@@ -2317,6 +2453,7 @@ export function ProjectChecklistPanel({
     }
     setError(null);
     setWbTradeReportData(null);
+    setWbPurchasingListReportWindowData(null);
     setWbPaintLitresReportData(data);
     window.setTimeout(() => window.print(), 50);
   }, [
@@ -2334,12 +2471,46 @@ export function ProjectChecklistPanel({
     marginPct,
   ]);
 
+  const openWorkbenchPurchasingListReport = useCallback(() => {
+    if (!project) return;
+    const data = buildWorkbenchPurchasingListReport({
+      project,
+      projectAreas: sortedProjectAreas,
+      catalogSkus,
+      suppliersBySkuId,
+      supplierDiscountByKey,
+      buildingElementBySkuName,
+      paintingElementBySkuName,
+      objectsByProjectAreaDocId,
+    });
+    if (!wbPurchasingListReportHasContent(data)) {
+      setError(
+        `No included products found on this project for ${WB_PURCHASING_LIST_REPORT_WINDOW_LABEL}.`,
+      );
+      return;
+    }
+    setError(null);
+    setWbTradeReportData(null);
+    setWbPaintLitresReportData(null);
+    setWbPurchasingListReportWindowData(data);
+  }, [
+    project,
+    sortedProjectAreas,
+    catalogSkus,
+    suppliersBySkuId,
+    supplierDiscountByKey,
+    buildingElementBySkuName,
+    paintingElementBySkuName,
+    objectsByProjectAreaDocId,
+  ]);
+
   const renderProjectNotesButton = useCallback(
     (
       target: ProjectNoteTarget,
       label: string,
       opts?: {
         compact?: boolean;
+        size?: "default" | "compact" | "areaHeader" | "projectHeader";
         disabled?: boolean;
         projectAreaDocId?: string;
       },
@@ -2371,6 +2542,7 @@ export function ProjectChecklistPanel({
           authorFallback={authorFallback}
           disabled={opts?.disabled}
           compact={opts?.compact}
+          size={opts?.size}
           modalOpen={opts?.projectAreaDocId != null ? notesModalOpen : undefined}
           initialDraftNotetype={escalationDraft ? ESCALATION_NOTE_TYPE : undefined}
           focusDraftOnMount={escalationDraft}
@@ -2428,17 +2600,19 @@ export function ProjectChecklistPanel({
       wbCellLoad,
       wbSpacerCell,
       areaObjectBand: wbAreaObjectBand,
+      showCascadeDetailColumns: wbColumnView === "detail",
       cascades,
       baseStyleOptions,
       marginPct,
-      showIncludeAllSupplierOptions: canViewAdminWorkbenchFeatures,
+      showIncludeAllSupplierOptions: true,
       paoDeleting,
       includeAllSuppliersForLine,
       setIncludeAllSuppliersForLine,
       inputKey,
       objectLabel,
       lineSourceLabel,
-      lineFinalPrice,
+      lineFinalPrice: (row, pct) =>
+        lineFinalPrice(row, pct, undefined, undefined, undefined, contractLabourRates),
       effectiveCascadeStyleForLine,
       wbLineColourEmptyLabel,
       formatMoney,
@@ -2472,7 +2646,6 @@ export function ProjectChecklistPanel({
     cascades,
     baseStyleOptions,
     marginPct,
-    canViewAdminWorkbenchFeatures,
     paoDeleting,
     includeAllSuppliersForLine,
     setIncludeAllSuppliersForLine,
@@ -2487,131 +2660,142 @@ export function ProjectChecklistPanel({
     colourLookupIndex,
     wbBlankLineContext,
     wbBlankLineSaving,
+    wbColumnView,
   ]);
 
+  const wbDetailView = wbColumnView === "detail";
+  const wbTableCols =
+    mode === "workbench" && !wbDetailView ? WB_TABLE_COLS_SUMMARY : WB_TABLE_COLS;
+
   return (
-    <div className="space-y-6">
-      <div className="space-y-4">
-        <h1 className="text-xl font-normal tracking-tight text-sf-text md:text-2xl dark:text-zinc-50">
-          {mode === "workbench" ? "Workbench" : "Check List"}
-        </h1>
-        <ProjectsTabs />
-      </div>
+    <div className={mode === "workbench" ? "space-y-0" : "space-y-0"}>
+      <ProjectsTabs />
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {mode !== "workbench" ? (
-          <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
-            {project
-              ? `${project.projectname}${numericProjectId != null ? ` · ID ${numericProjectId}` : ""}`
-              : "At-a-glance scope, measurements, and line totals by area."}
-          </p>
-        ) : (
-          <span className="sr-only">Workbench</span>
-        )}
-        {projectDocId && project && numericProjectId != null && !loading ? (
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {mode !== "workbench" ? (
-              <button
-                type="button"
-                onClick={openPickAreaModal}
-                className="min-h-11 shrink-0 rounded-lg bg-sf-brand px-4 py-2.5 text-sm font-medium text-white"
-              >
-                Add area…
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-
-      <p className="text-xs text-sf-text-weak dark:text-zinc-400">
-        {mode === "workbench" ? (
-          <>
+      {mode === "workbench" ? (
+        <div className="border-b border-sf-border bg-sf-surface px-5 py-2 dark:border-zinc-700">
+          <p className="max-w-3xl text-xs text-sf-text-weak dark:text-zinc-400">
             Edits save when you leave a cell (Tab or click away). Unchecked lines are excluded from
-            subtotals. Line total updates from measure × unit price when both are set.{" "}
-            <span className="font-medium text-sf-text-secondary dark:text-zinc-300">
-              Margin {marginPct}%
-            </span>{" "}
-            {canAdjustWorkbenchMargin
-              ? "(adjust in project header; defaults from System → Settings) applies to Final price."
-              : "(from System → Settings) applies to Final price."}{" "}
-            <span className="font-medium text-sf-text-secondary dark:text-zinc-300">Load rates</span>{" "}
-            ($/unit) show as dollar lines under each load total when set.
-          </>
-        ) : (
-          <>
-            Total price includes margin ({marginPct}% from System → Settings) — client-facing
-            totals only. Internal line costs are on Workbench.
-          </>
-        )}
-      </p>
+            subtotals. Line total is measure × unit price plus labour; labour columns are informational
+            (already in line totals). Margin applies to Final / Grand Total.
+          </p>
+        </div>
+      ) : null}
 
       {error ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
+        <div className="mx-5 mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
           {error}
         </div>
       ) : null}
 
       {projectDocId && project && !loading && mode !== "workbench" ? (
-          <div className="flex flex-wrap items-end gap-x-3 gap-y-2 rounded-lg border border-sf-border bg-sf-page px-4 py-3 dark:border-zinc-700 dark:bg-zinc-900/60">
+        <div className="border-b border-sf-border bg-sf-surface dark:border-zinc-700">
+          {/* Project identity + total — v0 ChecklistProjectPanel */}
+          <div className="flex flex-wrap items-center gap-3 border-b border-sf-border px-5 py-3 dark:border-zinc-700">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <div>
+                <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wider text-sf-text-secondary">
+                  Project
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={clProjectHdrNameClass} title={project.projectname}>
+                    {project.projectname}
+                  </span>
+                  {numericProjectId != null ? (
+                    <span className="inline-flex items-center rounded-full border border-sf-accent/20 bg-sf-accent-muted px-2 py-0.5 text-[11px] font-semibold text-sf-accent">
+                      ID {numericProjectId}
+                    </span>
+                  ) : null}
+                  {renderProjectNotesButton(
+                    { projectid: numericProjectId ?? 0 },
+                    project.projectname,
+                    { size: "projectHeader" },
+                  )}
+                  {numericProjectId != null ? (
+                    <ClProjectHeaderMenu
+                      projectLabel={project.projectname}
+                      disabled={projectSaving}
+                      onAddArea={openPickAreaModal}
+                    />
+                  ) : null}
+                  <div className="ml-1 flex flex-col items-start">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-sf-text-secondary">
+                      Total Price
+                    </span>
+                    <span className="text-2xl font-bold tabular-nums text-sf-accent">
+                      {grandFinalTotal > 0 ? formatMoney(grandFinalTotal) : "—"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Metrics */}
+          <div className="space-y-3 border-b border-sf-border px-5 py-4 dark:border-zinc-700">
             <ChecklistProjectDimensionsRow
               project={project}
               disabled={projectSaving}
               onPatch={(body) => void patchProject(body)}
               onValidationError={setError}
             />
-            <label className="flex min-w-[10rem] flex-col gap-0.5">
-              <span className={wbHdrLabel}>Default Elevate</span>
-              <CascadeElevateSelect
+            <div className="flex flex-wrap items-end gap-4">
+              <label className="flex min-w-[10rem] flex-col gap-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-sf-text-secondary">
+                  Default Elevate
+                </span>
+                <CascadeElevateSelect
+                  cascades={cascades}
+                  priceLevels={priceLevels}
+                  priceLevelId={project.defaultpricelevelid ?? null}
+                  projectFinish={project.projectfinish}
+                  onChange={({ priceLevelId, projectFinish }) =>
+                    void patchProject({
+                      defaultpricelevelid: priceLevelId,
+                      projectfinish: projectFinish,
+                      defaultstyle: "",
+                      defaultcolour: "",
+                    })
+                  }
+                  className="h-8 rounded-lg border border-sf-border bg-sf-page px-2.5 text-sm font-medium text-sf-text outline-none focus:ring-2 focus:ring-sf-accent/40 dark:border-zinc-600 dark:bg-zinc-950"
+                  disabled={projectSaving}
+                  emptyLabel="Not set"
+                />
+              </label>
+              <CascadeStyleColourFields
                 cascades={cascades}
-                priceLevels={priceLevels}
-                priceLevelId={project.defaultpricelevelid ?? null}
-                projectFinish={project.projectfinish}
-                onChange={({ priceLevelId, projectFinish }) =>
-                  void patchProject({
-                    defaultpricelevelid: priceLevelId,
-                    projectfinish: projectFinish,
-                    defaultstyle: "",
-                    defaultcolour: "",
-                  })
-                }
-                className={selectCell}
+                level={cascadeLevelFromPriceLevel(
+                  priceLevels,
+                  project.defaultpricelevelid,
+                  project.projectfinish,
+                  cascades,
+                )}
+                style={project.defaultstyle ?? ""}
+                colour={project.defaultcolour ?? ""}
                 disabled={projectSaving}
-                emptyLabel="Not set"
+                selectClassName="h-8 rounded-lg border border-sf-border bg-sf-page px-2.5 text-sm font-medium text-sf-text outline-none focus:ring-2 focus:ring-sf-accent/40 dark:border-zinc-600 dark:bg-zinc-950"
+                styleSelectClassName="h-8 rounded-lg border border-sf-border bg-sf-page px-2.5 text-sm font-medium text-sf-text outline-none focus:ring-2 focus:ring-sf-accent/40 dark:border-zinc-600 dark:bg-zinc-950"
+                colourSelectClassName="h-8 rounded-lg border border-sf-border bg-sf-page px-2.5 text-sm font-medium text-sf-text outline-none focus:ring-2 focus:ring-sf-accent/40 dark:border-zinc-600 dark:bg-zinc-950"
+                layout="compact"
+                styleLabel="Style"
+                colourLabel="Colour"
+                styleEmptyLabel="Not set"
+                colourEmptyLabel="Not set"
+                onStyleChange={(v) =>
+                  void patchProject({ defaultstyle: v, defaultcolour: "" })
+                }
+                onColourChange={(v) => void patchProject({ defaultcolour: v })}
               />
-            </label>
-            <CascadeStyleColourFields
-              cascades={cascades}
-              level={cascadeLevelFromPriceLevel(
-                priceLevels,
-                project.defaultpricelevelid,
-                project.projectfinish,
-                cascades,
-              )}
-              style={project.defaultstyle ?? ""}
-              colour={project.defaultcolour ?? ""}
-              disabled={projectSaving}
-              selectClassName={selectCell}
-              styleSelectClassName={selectCell}
-              colourSelectClassName={selectCell}
-              layout="compact"
-              styleLabel="Style"
-              colourLabel="Colour"
-              styleEmptyLabel="Not set"
-              colourEmptyLabel="Not set"
-              onStyleChange={(v) =>
-                void patchProject({ defaultstyle: v, defaultcolour: "" })
-              }
-              onColourChange={(v) => void patchProject({ defaultcolour: v })}
-            />
-            <span className="w-full text-xs text-sf-text-weak dark:text-zinc-400">
+            </div>
+            <p className="text-[11px] leading-relaxed text-sf-text-weak">
               Style and colour options come from Cascades (Import). Used for SKU matching on scope
               lines unless an area overrides them.
-            </span>
+            </p>
           </div>
+        </div>
       ) : null}
 
       {!projectDocId ? (
-        <div className="rounded-lg border border-sf-border bg-sf-surface p-6 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/50">
+        <div className="m-5 rounded-lg border border-sf-border bg-sf-surface p-6 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/50">
           <p className="text-sf-text-secondary dark:text-zinc-300">
             Open this screen from a project: use <span className="font-medium">Check List</span> on a
             project tile, or the Check List tab with{" "}
@@ -2622,14 +2806,14 @@ export function ProjectChecklistPanel({
           </p>
         </div>
       ) : loading ? (
-        <p className="text-sf-text-secondary dark:text-zinc-400">Loading…</p>
+        <p className="m-5 text-sf-text-secondary dark:text-zinc-400">Loading…</p>
       ) : numericProjectId == null ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+        <div className="m-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
           This project needs a numeric ID before line items can load. Save it once from the Project
           tab, or run Assign missing numeric IDs from the Projects list.
         </div>
       ) : sortedProjectAreas.length === 0 && mode !== "workbench" ? (
-        <div className="rounded-lg border border-sf-border bg-sf-surface p-6 text-sm text-sf-text-secondary shadow-sm dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400">
+        <div className="m-5 rounded-lg border border-sf-border bg-sf-surface p-6 text-sm text-sf-text-secondary shadow-sm dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400">
           No areas on this project yet.{" "}
           <button
             type="button"
@@ -2641,7 +2825,7 @@ export function ProjectChecklistPanel({
           to pick a template from Setup (scopes and default lines copy in).
         </div>
       ) : mode === "workbench" || sortedProjectAreas.length > 0 ? (
-        <div className="w-full min-w-0">
+        <div className={mode === "workbench" ? "w-full min-w-0 px-4 py-3 md:px-5" : "w-full min-w-0"}>
           <table
             className={
               mode === "workbench"
@@ -2653,10 +2837,14 @@ export function ProjectChecklistPanel({
               <colgroup>
                 <col className="w-[2.25rem]" />
                 <col className="w-[4rem]" />
-                <col className="w-[2.63rem]" />
-                <col className="w-[5.25rem]" />
-                <col className="w-[5.25rem]" />
-                <col className="w-[5.95rem]" />
+                {wbDetailView ? (
+                  <>
+                    <col className="w-[2.63rem]" />
+                    <col className="w-[5.25rem]" />
+                    <col className="w-[5.25rem]" />
+                    <col className="w-[5.95rem]" />
+                  </>
+                ) : null}
                 <col className="w-[11.5rem]" />
                 <col className="w-[2.3rem]" />
                 <col className="w-[2.75rem]" />
@@ -2695,40 +2883,6 @@ export function ProjectChecklistPanel({
               </colgroup>
             )}
             <tbody>
-              {mode !== "workbench" && project ? (
-                <tr className="border-b border-sf-border bg-sf-page dark:border-zinc-700 dark:bg-zinc-900/60">
-                  <td colSpan={WB_TABLE_COLS} className="px-4 py-3">
-                    <div className="flex flex-wrap items-end justify-between gap-3">
-                      <div className="flex flex-wrap items-end gap-3">
-                        <div>
-                          <span className="block text-[10px] font-semibold uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
-                            Project
-                          </span>
-                          <span className="mt-0.5 block text-lg font-semibold text-sf-text dark:text-zinc-50">
-                            {project.projectname}
-                            {numericProjectId != null ? (
-                              <span className="font-normal text-sf-text-secondary dark:text-zinc-400">
-                                {" "}
-                                · ID {numericProjectId}
-                              </span>
-                            ) : null}
-                          </span>
-                        </div>
-                        {renderProjectNotesButton(
-                          { projectid: numericProjectId ?? 0 },
-                          project.projectname,
-                        )}
-                      </div>
-                      <div className="text-right">
-                        <span className={wbHdrLabel}>Total price</span>
-                        <span className="block text-lg font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
-                          {grandFinalTotal > 0 ? formatMoney(grandFinalTotal) : "—"}
-                        </span>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              ) : null}
               {mode === "checklist" && projectRedundantScopeEntries.length > 0 ? (
                 <tr className="border-b border-amber-200/80 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20">
                   <td colSpan={WB_TABLE_COLS} className="px-4 py-3">
@@ -2805,209 +2959,192 @@ export function ProjectChecklistPanel({
               ) : null}
               {mode === "workbench" && project ? (
                 <tr className={wbProjectHdrRow}>
-                  <td colSpan={3} className={`${wbAreaHdrCell} pl-2.5 align-bottom`}>
-                    <div className="flex items-end gap-2">
-                      <div className="flex min-w-0 flex-col gap-0.5">
-                        <span className="block text-[10px] font-semibold uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
-                          Project
-                        </span>
-                        <span
-                          className="mt-0.5 block truncate text-sm font-bold leading-tight text-sf-text dark:text-zinc-50"
-                          title={project.projectname}
-                        >
-                          {project.projectname}
-                          {numericProjectId != null ? (
-                            <span className="font-normal text-sf-text-secondary dark:text-zinc-400">
-                              {" "}
-                              · ID {numericProjectId}
+                  <td
+                    colSpan={wbTableCols}
+                    className="border-0 border-b border-sf-border px-5 pb-3 pt-4 align-top dark:border-zinc-700"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+                      {/* Left: project identity + cascade selectors */}
+                      <div className="flex min-w-0 flex-col gap-2">
+                        <div className="flex min-w-0 flex-col gap-0.5">
+                          <span className="text-[10px] font-semibold uppercase tracking-widest text-sf-text-secondary dark:text-zinc-400">
+                            Project
+                          </span>
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <span
+                              className="truncate text-xl font-bold leading-tight text-sf-brand dark:text-zinc-50"
+                              title={project.projectname}
+                            >
+                              {project.projectname}
                             </span>
-                          ) : null}
-                        </span>
+                            {numericProjectId != null ? (
+                              <span className="inline-flex items-center rounded-full border border-sf-accent/20 bg-sf-accent-muted px-2 py-0.5 text-[11px] font-semibold text-sf-accent dark:border-sf-accent/30 dark:bg-sf-accent/15 dark:text-emerald-300">
+                                ID {numericProjectId}
+                              </span>
+                            ) : null}
+                            {renderProjectNotesButton(
+                              { projectid: numericProjectId ?? 0 },
+                              project.projectname,
+                              { compact: true },
+                            )}
+                            <WbProjectHdrMenu
+                              projectLabel={project.projectname}
+                              exportDisabled={wbExporting}
+                              onPrintTradeReport={printWorkbenchTradeReport}
+                              onPrintPaintLitresReport={printWorkbenchPaintLitresReport}
+                              onOpenPurchasingListReport={openWorkbenchPurchasingListReport}
+                              onExport={(sortMode) => {
+                                void (async () => {
+                                  setWbExporting(true);
+                                  setError(null);
+                                  try {
+                                    await downloadProjectWorkbenchXls(
+                                      projectDocId,
+                                      project.projectname || "project",
+                                      sortMode,
+                                    );
+                                  } catch (e) {
+                                    setError(
+                                      e instanceof Error
+                                        ? e.message
+                                        : "Workbench export failed",
+                                    );
+                                  } finally {
+                                    setWbExporting(false);
+                                  }
+                                })();
+                              }}
+                              onAddArea={openPickAreaModal}
+                            />
+                          </div>
+                        </div>
+                        <div className={`${wbAreaHdrFieldsRow} mt-1`}>
+                          <label className="flex w-fit shrink-0 flex-col gap-0.5">
+                            <span className={wbHdrLabel}>Default Elevate</span>
+                            <CascadeElevateSelect
+                              cascades={cascades}
+                              priceLevels={priceLevels}
+                              priceLevelId={project.defaultpricelevelid ?? null}
+                              projectFinish={project.projectfinish}
+                              onChange={({ priceLevelId, projectFinish }) =>
+                                void patchProject({
+                                  defaultpricelevelid: priceLevelId,
+                                  projectfinish: projectFinish,
+                                  defaultstyle: "",
+                                  defaultcolour: "",
+                                })
+                              }
+                              className={wbAreaHdrSelectElevate}
+                              disabled={projectSaving}
+                              emptyLabel="Not set"
+                            />
+                          </label>
+                          <CascadeStyleColourFields
+                            cascades={cascades}
+                            level={cascadeLevelFromPriceLevel(
+                              priceLevels,
+                              project.defaultpricelevelid,
+                              project.projectfinish,
+                              cascades,
+                            )}
+                            style={project.defaultstyle ?? ""}
+                            colourFilterStyle={project.defaultstyle ?? ""}
+                            colour={project.defaultcolour ?? ""}
+                            disabled={projectSaving}
+                            styleSelectClassName={wbAreaHdrSelectStyle}
+                            colourSelectClassName={wbAreaHdrSelectColour}
+                            layout="compact"
+                            compactField="style"
+                            styleLabel="Style"
+                            colourLabel="Colour"
+                            styleEmptyLabel="Not set"
+                            colourEmptyLabel="Not set"
+                            onStyleChange={(v) =>
+                              void patchProject({ defaultstyle: v, defaultcolour: "" })
+                            }
+                            onColourChange={(v) => void patchProject({ defaultcolour: v })}
+                          />
+                          <CascadeStyleColourFields
+                            cascades={cascades}
+                            level={cascadeLevelFromPriceLevel(
+                              priceLevels,
+                              project.defaultpricelevelid,
+                              project.projectfinish,
+                              cascades,
+                            )}
+                            style={project.defaultstyle ?? ""}
+                            colourFilterStyle={project.defaultstyle ?? ""}
+                            colour={project.defaultcolour ?? ""}
+                            disabled={projectSaving}
+                            styleSelectClassName={wbAreaHdrSelectStyle}
+                            colourSelectClassName={wbAreaHdrSelectColour}
+                            layout="compact"
+                            compactField="colour"
+                            styleLabel="Style"
+                            colourLabel="Colour"
+                            styleEmptyLabel="Not set"
+                            colourEmptyLabel="Not set"
+                            onStyleChange={(v) =>
+                              void patchProject({ defaultstyle: v, defaultcolour: "" })
+                            }
+                            onColourChange={(v) => void patchProject({ defaultcolour: v })}
+                          />
+                        </div>
                       </div>
-                      {renderProjectNotesButton(
-                        { projectid: numericProjectId ?? 0 },
-                        project.projectname,
-                        { compact: true },
-                      )}
+
+                      {/* Right: Detail/Summary + trade tags + financial cards */}
+                      <div className="flex flex-col items-end gap-3">
+                        <div
+                          className="flex w-fit items-center gap-0.5 rounded-lg border border-sf-border bg-sf-page p-0.5 dark:border-zinc-700 dark:bg-zinc-900/70"
+                          role="group"
+                          aria-label="Workbench column view"
+                        >
+                          <button
+                            type="button"
+                            aria-pressed={wbDetailView}
+                            onClick={() => setWbColumnView("detail")}
+                            className={`min-h-8 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                              wbDetailView
+                                ? "border border-sf-border bg-sf-surface text-sf-brand shadow-sm dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
+                                : "text-sf-text-secondary hover:text-sf-text dark:text-zinc-400 dark:hover:text-zinc-200"
+                            }`}
+                          >
+                            Detail
+                          </button>
+                          <button
+                            type="button"
+                            aria-pressed={!wbDetailView}
+                            onClick={() => setWbColumnView("summary")}
+                            className={`min-h-8 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                              !wbDetailView
+                                ? "border border-sf-border bg-sf-surface text-sf-brand shadow-sm dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
+                                : "text-sf-text-secondary hover:text-sf-text dark:text-zinc-400 dark:hover:text-zinc-200"
+                            }`}
+                            title="Hide Source, Elevate, Style, and Colour columns"
+                          >
+                            Summary
+                          </button>
+                        </div>
+                        <WbProjectSummary
+                          lineSubTotal={projectMaterialTotal}
+                          paintingExcGst={workbenchPaintingSiteFeeExcGst}
+                          labourCostBySilo={projectLabourCostBySilo}
+                          netTotal={grandTotal}
+                          marginPct={marginPct}
+                          marginExcGst={projectRealisedMarginExcGst}
+                          grandTotal={grandFinalTotal}
+                          canAdjustMargin={canAdjustWorkbenchMargin}
+                          onMarginChange={setWbMarginPct}
+                        />
+                      </div>
                     </div>
                   </td>
-                  <td className={`${wbProjectHdrFieldCell} pl-2.5`}>
-                    <label className="flex w-fit shrink-0 flex-col gap-0.5">
-                      <span className={wbHdrLabel}>Default Elevate</span>
-                      <CascadeElevateSelect
-                        cascades={cascades}
-                        priceLevels={priceLevels}
-                        priceLevelId={project.defaultpricelevelid ?? null}
-                        projectFinish={project.projectfinish}
-                        onChange={({ priceLevelId, projectFinish }) =>
-                          void patchProject({
-                            defaultpricelevelid: priceLevelId,
-                            projectfinish: projectFinish,
-                            defaultstyle: "",
-                            defaultcolour: "",
-                          })
-                        }
-                        className={wbAreaHdrSelectElevate}
-                        disabled={projectSaving}
-                        emptyLabel="Not set"
-                      />
-                    </label>
-                  </td>
-                  <td className={wbProjectHdrFieldCell}>
-                    <CascadeStyleColourFields
-                      cascades={cascades}
-                      level={cascadeLevelFromPriceLevel(
-                        priceLevels,
-                        project.defaultpricelevelid,
-                        project.projectfinish,
-                        cascades,
-                      )}
-                      style={project.defaultstyle ?? ""}
-                      colourFilterStyle={project.defaultstyle ?? ""}
-                      colour={project.defaultcolour ?? ""}
-                      disabled={projectSaving}
-                      styleSelectClassName={wbAreaHdrSelectStyle}
-                      colourSelectClassName={wbAreaHdrSelectColour}
-                      layout="compact"
-                      compactField="style"
-                      styleLabel="Style"
-                      colourLabel="Colour"
-                      styleEmptyLabel="Not set"
-                      colourEmptyLabel="Not set"
-                      onStyleChange={(v) =>
-                        void patchProject({ defaultstyle: v, defaultcolour: "" })
-                      }
-                      onColourChange={(v) => void patchProject({ defaultcolour: v })}
-                    />
-                  </td>
-                  <td className={wbProjectHdrFieldCell}>
-                    <CascadeStyleColourFields
-                      cascades={cascades}
-                      level={cascadeLevelFromPriceLevel(
-                        priceLevels,
-                        project.defaultpricelevelid,
-                        project.projectfinish,
-                        cascades,
-                      )}
-                      style={project.defaultstyle ?? ""}
-                      colourFilterStyle={project.defaultstyle ?? ""}
-                      colour={project.defaultcolour ?? ""}
-                      disabled={projectSaving}
-                      styleSelectClassName={wbAreaHdrSelectStyle}
-                      colourSelectClassName={wbAreaHdrSelectColour}
-                      layout="compact"
-                      compactField="colour"
-                      styleLabel="Style"
-                      colourLabel="Colour"
-                      styleEmptyLabel="Not set"
-                      colourEmptyLabel="Not set"
-                      onStyleChange={(v) =>
-                        void patchProject({ defaultstyle: v, defaultcolour: "" })
-                      }
-                      onColourChange={(v) => void patchProject({ defaultcolour: v })}
-                    />
-                  </td>
-                  <td className={wbAreaHdrCell} />
-                  <td className={wbAreaHdrCell} />
-                  <td className={wbAreaHdrCell} />
-                  <td className={wbAreaHdrCell} />
-                  <td className={wbProjectHdrSubtotalCell}>
-                    <span className={wbHdrTotalLabel}>Project subtotal</span>
-                    {wbHdrSubtotalBreakdownLines > 0 ? (
-                      <>
-                        <span className={wbHdrDetailLineClass}>
-                          Lines {formatMoney(grandLineTotal)}
-                        </span>
-                        {wbHdrPaintingSiteFeeDetail(workbenchPaintingSiteFeeExcGst)}
-                      </>
-                    ) : null}
-                    <span className="block text-sm font-semibold tabular-nums text-sf-text dark:text-zinc-100">
-                      {grandTotal > 0 ? formatMoney(grandTotal) : "—"}
-                    </span>
-                  </td>
-                  {WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key, label, title }) => {
-                    const hoursSum = projectLoadTotals[key];
-                    const rate = contractLabourRateBySiloProduct(contractLabourRates, key);
-                    const cost = labourSiloCostExcGst(hoursSum > 0 ? hoursSum : null, rate);
-                    return (
-                      <td key={key} className={wbProjectHdrTotalCell} title={title}>
-                        <span className={wbHdrTotalLabel}>{label}</span>
-                        {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
-                        <WbLabourSiloValue
-                          hours={hoursSum > 0 ? hoursSum : null}
-                          cost={cost}
-                        />
-                      </td>
-                    );
-                  })}
-                  <td className={wbProjectHdrTotalCell}>
-                    <span className={wbHdrTotalLabel}>Final (incl. margin)</span>
-                    {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
-                    <span className="block text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
-                      {grandFinalTotal > 0 ? formatMoney(grandFinalTotal) : "—"}
-                    </span>
-                  </td>
-                  <td className={wbProjectHdrTotalCell}>
-                    {canAdjustWorkbenchMargin ? (
-                      <WbMarginStepper
-                        value={wbMarginPct}
-                        onChange={setWbMarginPct}
-                        realisedMarginExcGst={projectRealisedMarginExcGst}
-                        detailSpacerLines={wbHdrSubtotalBreakdownLines}
-                      />
-                    ) : (
-                      <>
-                        <span className={wbHdrTotalLabel}>Margin</span>
-                        {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
-                        <span className="block text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
-                          {marginPct}%
-                        </span>
-                        <span
-                          className="block text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200"
-                          title="Final (incl. margin) minus project subtotal"
-                        >
-                          {projectRealisedMarginExcGst != null
-                            ? formatMoney(projectRealisedMarginExcGst)
-                            : "—"}
-                        </span>
-                      </>
-                    )}
-                  </td>
-                  <td className={`${wbAreaHdrCell} text-center`}>
-                    <WbProjectHdrMenu
-                      projectLabel={project.projectname}
-                      exportDisabled={wbExporting}
-                      onPrintTradeReport={printWorkbenchTradeReport}
-                      onPrintPaintLitresReport={printWorkbenchPaintLitresReport}
-                      onExport={(sortMode) => {
-                        void (async () => {
-                          setWbExporting(true);
-                          setError(null);
-                          try {
-                            await downloadProjectWorkbenchXls(
-                              projectDocId,
-                              project.projectname || "project",
-                              sortMode,
-                            );
-                          } catch (e) {
-                            setError(
-                              e instanceof Error ? e.message : "Workbench export failed",
-                            );
-                          } finally {
-                            setWbExporting(false);
-                          }
-                        })();
-                      }}
-                      onAddArea={openPickAreaModal}
-                    />
-                  </td>
-                  <td className={wbAreaHdrCell} />
                 </tr>
               ) : null}
               {sortedProjectAreas.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={WB_TABLE_COLS}
+                    colSpan={wbTableCols}
                     className="border border-sf-border bg-sf-surface px-4 py-6 text-sm text-sf-text-secondary dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400"
                   >
                     No areas on this project yet. Use{" "}
@@ -3019,12 +3156,52 @@ export function ProjectChecklistPanel({
               sortedProjectAreas.map((pa, areaIndex) => {
                 const rows = objectsByProjectAreaDocId.get(pa.id) ?? [];
                 const { topLevel: areaTopLines, bundledByParentId } = partitionAreaLines(rows);
-                const areaSubtotal = rows.reduce((sum, row) => sum + includedLineTotal(row), 0);
-                const areaFinalSubtotal = areaSubtotal * (1 + marginPct / 100);
-                const hasIncludedMoney = rows.some((r) => includedLineTotal(r) > 0);
+                const areaSubtotal = rows.reduce(
+                  (sum, row) => sum + includedLineTotal(row, contractLabourRates),
+                  0,
+                );
+                const areaMaterialTotal = rows.reduce((sum, row) => {
+                  const b = lineFinalPriceBreakdown(
+                    row,
+                    0,
+                    undefined,
+                    undefined,
+                    undefined,
+                    contractLabourRates,
+                  );
+                  return sum + (b?.materialExcGst ?? 0);
+                }, 0);
+                const areaFinalSubtotal = rows.reduce((sum, row) => {
+                  const f = lineFinalPrice(
+                    row,
+                    marginPct,
+                    undefined,
+                    undefined,
+                    undefined,
+                    contractLabourRates,
+                  );
+                  return sum + (f ?? 0);
+                }, 0);
+                const areaRealisedMarginExcGst =
+                  areaSubtotal > 0 || areaFinalSubtotal > 0
+                    ? Math.round((areaFinalSubtotal - areaSubtotal) * 100) / 100
+                    : null;
+                const hasIncludedMoney = rows.some(
+                  (r) => includedLineTotal(r, contractLabourRates) > 0,
+                );
                 const areaLoadTotals = Object.fromEntries(
                   LOOKUP_LABOUR_SILO_KEYS.map((k) => [k, sumLabourHours(rows, k)]),
                 ) as Record<LabourSiloKey, number>;
+                const areaLabourCostBySilo = Object.fromEntries(
+                  LOOKUP_LABOUR_SILO_KEYS.map((key) => {
+                    const hoursSum = areaLoadTotals[key];
+                    const rate = contractLabourRateBySiloProduct(contractLabourRates, key);
+                    return [
+                      key,
+                      labourSiloCostExcGst(hoursSum > 0 ? hoursSum : null, rate),
+                    ];
+                  }),
+                ) as Record<(typeof LOOKUP_LABOUR_SILO_KEYS)[number], number | null>;
                 const areaBusy = areaSavingId === pa.id;
                 const areaScopes = scopesForProjectArea(pa, areas, scopes);
                 const redundantScopeEntries =
@@ -3032,6 +3209,7 @@ export function ProjectChecklistPanel({
                     ? redundantScopeEntriesForProjectArea(pa, areas, scopes, rows)
                     : [];
                 const areaNameForHeading = projectAreaHeading(pa, areas);
+                const areaTemplateName = projectAreaTemplateName(pa, areas);
                 const templateAreaDocId =
                   areas.find((a) => a.areaid != null && Number(a.areaid) === Number(pa.areaid))
                     ?.id ?? null;
@@ -3052,38 +3230,68 @@ export function ProjectChecklistPanel({
                           <td colSpan={19} className={wbAreaGapCell} />
                         </tr>
                       ) : null}
-                      <ClAreaJumpNavRow
-                        projectAreas={sortedProjectAreas}
-                        areas={areas}
-                        colSpan={19}
-                        cellClassName="border-x border-b border-sf-border bg-sf-page px-4 py-2 dark:border-zinc-700 dark:bg-zinc-900/60"
-                      />
+                      {areaIndex === 0 ? (
+                        <ClAreaJumpNavRow
+                          projectAreas={sortedProjectAreas}
+                          areas={areas}
+                          colSpan={19}
+                          cellClassName="border-b border-sf-border bg-sf-surface px-5 py-2 dark:border-zinc-700"
+                        />
+                      ) : null}
                       <tr>
                         <td
                           colSpan={19}
-                          className="border-x border-b border-sf-border p-0 align-top dark:border-zinc-700"
+                          className="border-0 p-0 align-top"
                         >
                           <div
-                            id={clAreaAnchorId(pa.id)}
-                            className={`${clAreaHdrBand} scroll-mt-4 border-b border-sf-border px-3 py-3 dark:border-zinc-700`}
+                            data-cl-area-id={pa.id}
+                            className="min-w-0"
                           >
-                            <div className="flex w-full flex-wrap items-end justify-between gap-x-4 gap-y-2">
-                            <div className="inline-flex max-w-full flex-wrap items-end gap-x-4 gap-y-2">
+                          <div
+                            id={clAreaAnchorId(pa.id)}
+                            className={`${clAreaHdrBand} sticky top-0 z-20 scroll-mt-4 border-b border-[#2d3d4f]`}
+                          >
+                            <div className="flex flex-wrap items-end gap-3 px-5 py-3">
                               <span
-                                className={`shrink-0 ${clAreaNameText}`}
-                                title={areaNameForHeading}
+                                className={`shrink-0 pb-0.5 ${clAreaNameText}`}
+                                title={areaTemplateName}
                               >
-                                {areaNameForHeading}
+                                {areaTemplateName}
                               </span>
-                              <label className="flex shrink-0 flex-col gap-0.5">
-                                <span className={wbHdrLabel}>Area m²</span>
+                              <div className="mx-1 w-px self-stretch bg-white/20" aria-hidden />
+                              <label className="flex flex-col gap-1">
+                                <span className={clAreaHdrLabel}>Nickname</span>
+                                <input
+                                  key={areaFieldKey(pa, "displayName")}
+                                  type="text"
+                                  className={`${clAreaHdrInput} w-36`}
+                                  defaultValue={pa.displayName ?? ""}
+                                  disabled={areaBusy}
+                                  placeholder="e.g. Master, En-suite…"
+                                  aria-label={`Nickname for ${areaTemplateName}`}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                  }}
+                                  onBlur={(e) => {
+                                    const next = e.target.value.trim();
+                                    const prev = (pa.displayName ?? "").trim();
+                                    if (next === prev) return;
+                                    void patchProjectArea(pa.id, {
+                                      displayName: next || null,
+                                    });
+                                  }}
+                                />
+                              </label>
+                              <label className="flex flex-col gap-1">
+                                <span className={clAreaHdrLabel}>Area m²</span>
                                 <input
                                   key={areaFieldKey(pa, "m2")}
                                   type="text"
                                   inputMode="decimal"
-                                  className={wbInputM2}
+                                  className={`${clAreaHdrInput} w-14 px-2 text-center`}
                                   defaultValue={pa.aream2 ?? ""}
                                   disabled={areaBusy}
+                                  placeholder="—"
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                                   }}
@@ -3101,24 +3309,27 @@ export function ProjectChecklistPanel({
                                   }}
                                 />
                               </label>
-                              <ProjectAreaM2Calculator
-                                pa={pa}
-                                areaLabel={areaNameForHeading}
-                                disabled={areaBusy}
-                                labelClassName={wbHdrLabel}
-                                onApply={(body) => void patchProjectArea(pa.id, body)}
-                              />
                               <ProjectAreaCeilingHeightField
                                 pa={pa}
                                 project={project}
                                 disabled={areaBusy}
-                                labelClassName={wbHdrLabel}
-                                inputClassName={wbInputM2}
+                                labelClassName={clAreaHdrLabel}
+                                inputClassName={`${clAreaHdrInput} w-14 px-2 text-center`}
                                 fieldKey={areaFieldKey(pa, "ceiling")}
                                 onPatch={(body) => void patchProjectArea(pa.id, body)}
                                 onValidationError={setError}
                               />
-                              <div className="shrink-0 pr-3">
+                              <div className="pb-0">
+                                <ProjectAreaM2Calculator
+                                  pa={pa}
+                                  areaLabel={areaNameForHeading}
+                                  disabled={areaBusy}
+                                  labelClassName="sr-only"
+                                  areaHeaderChrome
+                                  onApply={(body) => void patchProjectArea(pa.id, body)}
+                                />
+                              </div>
+                              <div className="shrink-0">
                                 <ClNonStdTierOpenButton
                                   active={hasClNonStandardTierStyleColour(pa)}
                                   disabled={areaBusy}
@@ -3132,46 +3343,51 @@ export function ProjectChecklistPanel({
                                   }
                                 />
                               </div>
-                              {checklistAreaActionsMenu(pa, areaBusy)}
-                              {renderProjectNotesButton(
-                                { projectid: pa.projectid, areaid: pa.areaid },
-                                areaNameForHeading,
-                                { disabled: areaBusy, projectAreaDocId: pa.id },
-                              )}
+                              <div className="flex items-center gap-1">
+                                {renderProjectNotesButton(
+                                  { projectid: pa.projectid, areaid: pa.areaid },
+                                  areaNameForHeading,
+                                  {
+                                    size: "areaHeader",
+                                    disabled: areaBusy,
+                                    projectAreaDocId: pa.id,
+                                  },
+                                )}
+                                {checklistAreaActionsMenu(pa, areaBusy)}
+                              </div>
                               <ProjectAreaStatusSelect
                                 value={pa.areaStatus}
                                 disabled={areaBusy}
-                                labelClassName={wbHdrLabel}
-                                selectClassName={`${selectBase} text-xs`}
+                                labelClassName={clAreaHdrLabel}
+                                selectClassName={clAreaHdrSelect}
                                 onChange={(next) =>
                                   handleAreaStatusChange(pa, next, areaNameForHeading)
                                 }
                               />
-                            </div>
-                            <div className="flex shrink-0 flex-col items-end gap-y-2 text-right">
-                              <div>
-                              <span className={wbHdrLabel}>Total price</span>
-                              <span className="block text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
-                                {hasIncludedMoney ? formatMoney(areaFinalSubtotal) : "—"}
-                              </span>
+                              <div className="flex flex-col items-start">
+                                <span className={clAreaHdrLabel}>Total Price</span>
+                                <span className="text-lg font-bold tabular-nums text-[#4ECFA0]">
+                                  {hasIncludedMoney ? formatMoney(areaFinalSubtotal) : "—"}
+                                </span>
                               </div>
                             </div>
+                            <div className="border-t border-sf-border bg-sf-page px-5 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+                              <span className="text-xs font-bold uppercase tracking-wide text-sf-text dark:text-zinc-100">
+                                Scope Questions
+                              </span>
                             </div>
                           </div>
-                          <div className={`${wbAreaObjectBand} space-y-3 px-3 py-3`}>
-                          <h4 className="text-sm font-semibold text-sf-text dark:text-zinc-100">
-                            Scope Questions
-                          </h4>
+                          <div className={`${wbAreaObjectBand} space-y-0 px-0 py-0`}>
                           {areaScopes.length > 0 ? (
-                            <ul className="flex w-full flex-col items-start space-y-2">
+                            <ul className="flex w-full flex-col items-stretch space-y-0">
                               {areaScopes.flatMap((scope) => {
                                 if (scope.kind === "header") {
                                   return [
                                     <li
                                       key={scope.id}
-                                      className="border-b border-sf-border pb-2 pt-1 dark:border-zinc-700"
+                                      className="border-b border-sf-border bg-sf-page px-5 py-2 dark:border-zinc-700 dark:bg-zinc-900"
                                     >
-                                      <span className="text-xs font-semibold uppercase tracking-wide text-sf-text-secondary dark:text-zinc-300">
+                                      <span className="text-xs font-bold uppercase tracking-wide text-sf-text-secondary dark:text-zinc-300">
                                         {scope.question}
                                       </span>
                                     </li>,
@@ -3271,14 +3487,27 @@ export function ProjectChecklistPanel({
                                   >
                                     {scopeLines.length === 0 ? (
                                       <div className={clScopeLineStackClass}>
-                                        <div className={clScopeQuestionAnswerRowClass}>
+                                        <ClScopeQuestionHeader
+                                          scopeLabel={scope.question}
+                                          busy={busy}
+                                          canCloneScope={canCloneScope}
+                                          onAddObject={() =>
+                                            openPickObjectModal(pa, {
+                                              scopeDocId: scope.id,
+                                              scopeInstanceId,
+                                              answerid: value || null,
+                                              scopeLabel: scope.question,
+                                            })
+                                          }
+                                          onClone={() =>
+                                            void cloneScopeInstance(pa, scope.id, scopeInstanceId)
+                                          }
+                                        >
                                           <div className={clScopeQuestionAnswerGroupClass}>
-                                            <span
-                                              className={clScopeQuestionTextClass}
-                                              title={scope.question}
-                                            >
-                                              {scope.question}
-                                            </span>
+                                            <ClScopeQuestionLabel
+                                              question={scope.question}
+                                              explanation={scope.explanation}
+                                            />
                                             <label
                                               className={clAnswerInlineFieldClass}
                                               style={yesOnlyId ? undefined : answerWidthStyle}
@@ -3379,16 +3608,7 @@ export function ProjectChecklistPanel({
                                               ×
                                             </button>
                                           ) : null}
-                                          {canCloneScope ? (
-                                            <ClLineRowMenu
-                                              lineLabel={scope.question}
-                                              disabled={busy}
-                                              onClone={() =>
-                                                void cloneScopeInstance(pa, scope.id, scopeInstanceId)
-                                              }
-                                            />
-                                          ) : null}
-                                        </div>
+                                        </ClScopeQuestionHeader>
                                         {activeScopeMetrics.length > 0 ? (
                                           <ScopeChecklistMetricsRow
                                             pa={pa}
@@ -3434,7 +3654,15 @@ export function ProjectChecklistPanel({
                                             aria-hidden
                                           />
                                           <div
-                                            className={`${clToolCellClass} ${clScopeToolColClass}`}
+                                            className={`${clNotesCellClass} ${clScopeNotesColClass}`}
+                                            aria-hidden
+                                          />
+                                          <div
+                                            className={`${clCalculatorCellClass} ${clScopeCalculatorColClass}`}
+                                            aria-hidden
+                                          />
+                                          <div
+                                            className={`${clActionsCellClass} ${clScopeActionsColClass}`}
                                             aria-hidden
                                           />
                                         </div>
@@ -3502,14 +3730,31 @@ export function ProjectChecklistPanel({
                                             }
                                           >
                                             {isFirstRow ? (
-                                              <div className={clScopeQuestionAnswerRowClass}>
+                                              <ClScopeQuestionHeader
+                                                scopeLabel={scope.question}
+                                                busy={busy}
+                                                canCloneScope={canCloneScope}
+                                                onAddObject={() =>
+                                                  openPickObjectModal(pa, {
+                                                    scopeDocId: scope.id,
+                                                    scopeInstanceId,
+                                                    answerid: value || null,
+                                                    scopeLabel: scope.question,
+                                                  })
+                                                }
+                                                onClone={() =>
+                                                  void cloneScopeInstance(
+                                                    pa,
+                                                    scope.id,
+                                                    scopeInstanceId,
+                                                  )
+                                                }
+                                              >
                                                 {isFirstRow && usesBlindsAnswer && blindsLine ? (
-                                                  <span
-                                                    className={clScopeQuestionTextClass}
-                                                    title={scope.question}
-                                                  >
-                                                    {scope.question}
-                                                  </span>
+                                                  <ClScopeQuestionLabel
+                                                    question={scope.question}
+                                                    explanation={scope.explanation}
+                                                  />
                                                 ) : null}
                                                 <div
                                                   className={
@@ -3519,12 +3764,10 @@ export function ProjectChecklistPanel({
                                                   }
                                                 >
                                                   {!(isFirstRow && usesBlindsAnswer && blindsLine) ? (
-                                                    <span
-                                                      className={clScopeQuestionTextClass}
-                                                      title={scope.question}
-                                                    >
-                                                      {scope.question}
-                                                    </span>
+                                                    <ClScopeQuestionLabel
+                                                      question={scope.question}
+                                                      explanation={scope.explanation}
+                                                    />
                                                   ) : null}
                                                   <label
                                                     className={clAnswerInlineFieldClass}
@@ -3649,20 +3892,7 @@ export function ProjectChecklistPanel({
                                                     ×
                                                   </button>
                                                 ) : null}
-                                                {canCloneScope ? (
-                                                  <ClLineRowMenu
-                                                    lineLabel={scope.question}
-                                                    disabled={busy}
-                                                    onClone={() =>
-                                                      void cloneScopeInstance(
-                                                        pa,
-                                                        scope.id,
-                                                        scopeInstanceId,
-                                                      )
-                                                    }
-                                                  />
-                                                ) : null}
-                                              </div>
+                                              </ClScopeQuestionHeader>
                                             ) : null}
                                             {isFirstRow && activeScopeMetrics.length > 0 ? (
                                               <ScopeChecklistMetricsRow
@@ -3814,49 +4044,50 @@ export function ProjectChecklistPanel({
                                                 scopeInheritMeasureSource,
                                                 scopeInheritMeasureLocked,
                                               )}
+                                              contractLabourRates={contractLabourRates}
                                             />
-                                            <div className={`${clToolCellClass} ${clScopeToolColClass}`}>
-                                              <div className="flex flex-col items-end gap-0.5">
-                                                <div className="flex items-center gap-0.5">
-                                                  {renderProjectNotesButton(
-                                                    {
-                                                      projectid: lineRow.projectid,
-                                                      areaid: lineRow.areaid,
-                                                      objectid: lineRow.objectid,
-                                                    },
-                                                    objectLabel(lineRow, quoteObjects),
-                                                    { compact: true, disabled: lineSaving },
-                                                  )}
-                                                  <ClLineRowMenu
-                                                    lineLabel={objectLabel(lineRow, quoteObjects)}
-                                                    disabled={
-                                                      lineSaving || wbCloningLineId === lineRow.id
-                                                    }
-                                                    onClone={() => void cloneLineItem(lineRow.id)}
-                                                  />
-                                                </div>
-                                                <ScopeLineMeasureTool
-                                                  scope={scope}
-                                                  line={lineRow}
-                                                  quoteObjects={quoteObjects}
-                                                  objectLabel={objectLabel(lineRow, quoteObjects)}
-                                                  disabled={lineSaving}
-                                                  onApplyMeasure={(payload) => {
-                                                    void patchLineItem(lineRow.id, {
-                                                      custommeasure: payload.m2,
-                                                      ...(payload.scopeToolBenchSections !== undefined
-                                                        ? {
-                                                            scopeToolBenchSections:
-                                                              payload.scopeToolBenchSections,
-                                                          }
-                                                        : {}),
-                                                      ...(payload.scopeToolWallMm !== undefined
-                                                        ? { scopeToolWallMm: payload.scopeToolWallMm }
-                                                        : {}),
-                                                    });
-                                                  }}
-                                                />
-                                              </div>
+                                            <div className={`${clNotesCellClass} ${clScopeNotesColClass}`}>
+                                              {renderProjectNotesButton(
+                                                {
+                                                  projectid: lineRow.projectid,
+                                                  areaid: lineRow.areaid,
+                                                  objectid: lineRow.objectid,
+                                                },
+                                                objectLabel(lineRow, quoteObjects),
+                                                { compact: true, disabled: lineSaving },
+                                              )}
+                                            </div>
+                                            <div className={`${clCalculatorCellClass} ${clScopeCalculatorColClass}`}>
+                                              <ScopeLineMeasureTool
+                                                scope={scope}
+                                                line={lineRow}
+                                                quoteObjects={quoteObjects}
+                                                objectLabel={objectLabel(lineRow, quoteObjects)}
+                                                disabled={lineSaving}
+                                                onApplyMeasure={(payload) => {
+                                                  void patchLineItem(lineRow.id, {
+                                                    custommeasure: payload.m2,
+                                                    ...(payload.scopeToolBenchSections !== undefined
+                                                      ? {
+                                                          scopeToolBenchSections:
+                                                            payload.scopeToolBenchSections,
+                                                        }
+                                                      : {}),
+                                                    ...(payload.scopeToolWallMm !== undefined
+                                                      ? { scopeToolWallMm: payload.scopeToolWallMm }
+                                                      : {}),
+                                                  });
+                                                }}
+                                              />
+                                            </div>
+                                            <div className={`${clActionsCellClass} ${clScopeActionsColClass}`}>
+                                              <ClLineRowMenu
+                                                lineLabel={objectLabel(lineRow, quoteObjects)}
+                                                disabled={
+                                                  lineSaving || wbCloningLineId === lineRow.id
+                                                }
+                                                onClone={() => void cloneLineItem(lineRow.id)}
+                                              />
                                             </div>
                                             </div>
                                           </div>
@@ -3884,16 +4115,18 @@ export function ProjectChecklistPanel({
                                               onValidationError={setError}
                                               marginPct={marginPct}
                                               colourLookupIndex={colourLookupIndex}
+                                              contractLabourRates={contractLabourRates}
                                             />
                                           ) : null}
                                           </Fragment>
                                         );
                                       })
                                     )}
-                                    <div className="mt-2 flex justify-end px-1">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
+                                    <div className="mt-2 flex justify-end px-3">
+                                      <ClScopeActionsMenu
+                                        scopeLabel={scope.question}
+                                        disabled={busy}
+                                        onAddObject={() =>
                                           openPickObjectModal(pa, {
                                             scopeDocId: scope.id,
                                             scopeInstanceId,
@@ -3901,11 +4134,17 @@ export function ProjectChecklistPanel({
                                             scopeLabel: scope.question,
                                           })
                                         }
-                                        disabled={busy}
-                                        className={clActionBtnClass}
-                                      >
-                                        Add object…
-                                      </button>
+                                        onClone={
+                                          canCloneScope
+                                            ? () =>
+                                                void cloneScopeInstance(
+                                                  pa,
+                                                  scope.id,
+                                                  scopeInstanceId,
+                                                )
+                                            : undefined
+                                        }
+                                      />
                                     </div>
                                   </li>
                                 );
@@ -4086,8 +4325,23 @@ export function ProjectChecklistPanel({
                                           />
                                         </label>
                                         <div className={`${clNonStdCellClass} ${clScopeNonStdColClass}`} aria-hidden />
-                                        <ClTotalPriceCell line={lineRow} marginPct={marginPct} />
-                                        <div className={`flex items-end justify-end gap-0.5 pb-0.5 ${clScopeToolColClass}`}>
+                                        <ClTotalPriceCell
+                                          line={lineRow}
+                                          marginPct={marginPct}
+                                          contractLabourRates={contractLabourRates}
+                                        />
+                                        <div className={`${clNotesCellClass} ${clScopeNotesColClass}`}>
+                                          {renderProjectNotesButton(
+                                            {
+                                              projectid: lineRow.projectid,
+                                              areaid: lineRow.areaid,
+                                              objectid: lineRow.objectid,
+                                            },
+                                            objectLabel(lineRow, quoteObjects),
+                                            { compact: true, disabled: lineSaving || paoDeleting },
+                                          )}
+                                        </div>
+                                        <div className={`${clCalculatorCellClass} ${clScopeCalculatorColClass}`}>
                                           <ScopeLineMeasureTool
                                             line={lineRow}
                                             quoteObjects={quoteObjects}
@@ -4108,24 +4362,8 @@ export function ProjectChecklistPanel({
                                               });
                                             }}
                                           />
-                                          {renderProjectNotesButton(
-                                            {
-                                              projectid: lineRow.projectid,
-                                              areaid: lineRow.areaid,
-                                              objectid: lineRow.objectid,
-                                            },
-                                            objectLabel(lineRow, quoteObjects),
-                                            { compact: true, disabled: lineSaving || paoDeleting },
-                                          )}
-                                          <ClLineRowMenu
-                                            lineLabel={objectLabel(lineRow, quoteObjects)}
-                                            disabled={
-                                              lineSaving ||
-                                              paoDeleting ||
-                                              wbCloningLineId === lineRow.id
-                                            }
-                                            onClone={() => void cloneLineItem(lineRow.id)}
-                                          />
+                                        </div>
+                                        <div className={`${clActionsCellClass} ${clScopeActionsColClass}`}>
                                           <button
                                             type="button"
                                             onClick={() => setPaoDeleteId(lineRow.id)}
@@ -4136,6 +4374,15 @@ export function ProjectChecklistPanel({
                                           >
                                             <IconTrash className="h-4 w-4" />
                                           </button>
+                                          <ClLineRowMenu
+                                            lineLabel={objectLabel(lineRow, quoteObjects)}
+                                            disabled={
+                                              lineSaving ||
+                                              paoDeleting ||
+                                              wbCloningLineId === lineRow.id
+                                            }
+                                            onClone={() => void cloneLineItem(lineRow.id)}
+                                          />
                                         </div>
                                         </div>
                                       </div>
@@ -4163,6 +4410,7 @@ export function ProjectChecklistPanel({
                                           onValidationError={setError}
                                           marginPct={marginPct}
                                           colourLookupIndex={colourLookupIndex}
+                                          contractLabourRates={contractLabourRates}
                                         />
                                       ) : null}
                                       </Fragment>
@@ -4230,6 +4478,7 @@ export function ProjectChecklistPanel({
                             )}
                           </div>
                           </div>
+                          </div>
                         </td>
                       </tr>
                       </>
@@ -4238,252 +4487,247 @@ export function ProjectChecklistPanel({
                       <>
                         {areaIndex > 0 ? (
                           <tr aria-hidden>
-                            <td colSpan={WB_TABLE_COLS} className={wbAreaGapCell} />
+                            <td colSpan={wbTableCols} className={wbAreaGapCell} />
                           </tr>
                         ) : null}
                         <tr className={wbAreaHdrBand}>
                       <td
-                        colSpan={WB_AREA_HDR_LEADING_COLSPAN}
-                        className={`border-0 border-b border-l border-t ${wbAreaHdrOutline} align-bottom py-1.5 pl-3 pr-1`}
+                        colSpan={wbTableCols}
+                        className={`border border-sf-border px-5 py-3 align-top dark:border-zinc-700`}
                       >
-                        <div className={wbAreaHdrFieldsRow}>
-                          <div className="flex shrink-0 items-end gap-2">
-                            <div className="flex flex-col gap-0.5">
-                              <span className={`${wbHdrLabel} whitespace-nowrap`}>Area</span>
-                              <span
-                                className="text-base font-semibold leading-tight text-sf-text dark:text-zinc-50"
-                                title={projectAreaHeading(pa, areas)}
-                              >
-                                {projectAreaHeading(pa, areas)}
-                              </span>
-                            </div>
-                            {renderProjectNotesButton(
-                              { projectid: pa.projectid, areaid: pa.areaid },
-                              projectAreaHeading(pa, areas),
-                              { compact: true, disabled: areaBusy, projectAreaDocId: pa.id },
-                            )}
-                          </div>
-                          <label className="flex shrink-0 flex-col gap-0.5">
-                            <span className={`${wbHdrLabel} whitespace-nowrap`}>Area m²</span>
-                            <input
-                              key={areaFieldKey(pa, "m2")}
-                              type="text"
-                              inputMode="decimal"
-                              className={wbInputM2}
-                              defaultValue={pa.aream2 ?? ""}
-                              disabled={areaBusy}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                              }}
-                              onBlur={(e) => {
-                                const raw = e.target.value.trim();
-                                if (raw !== "" && parseOptionalNumber(raw) === null) {
-                                  setError("Area m² must be a valid number (or empty).");
-                                  e.target.value = pa.aream2 != null ? String(pa.aream2) : "";
-                                  return;
+                        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+                          {/* Left: area identity + controls */}
+                          <div className="flex min-w-0 flex-col gap-3">
+                            <div className={wbAreaHdrFieldsRow}>
+                              <div className="flex shrink-0 items-end gap-2">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className={`${wbHdrLabel} whitespace-nowrap`}>
+                                    Area
+                                  </span>
+                                  <span
+                                    className="text-lg font-bold leading-tight text-sf-brand dark:text-zinc-50"
+                                    title={projectAreaHeading(pa, areas)}
+                                  >
+                                    {projectAreaHeading(pa, areas)}
+                                  </span>
+                                </div>
+                                {renderProjectNotesButton(
+                                  { projectid: pa.projectid, areaid: pa.areaid },
+                                  projectAreaHeading(pa, areas),
+                                  {
+                                    compact: true,
+                                    disabled: areaBusy,
+                                    projectAreaDocId: pa.id,
+                                  },
+                                )}
+                                <div className="flex items-end pb-0.5">
+                                  <WbAreaHdrMenu
+                                    areaLabel={projectAreaHeading(pa, areas)}
+                                    addObjectDisabled={
+                                      areaBusy ||
+                                      paDeleting ||
+                                      wbBlankLineContext?.paId === pa.id
+                                    }
+                                    addBlankLineDisabled={
+                                      areaBusy ||
+                                      paDeleting ||
+                                      wbBlankLineContext?.paId === pa.id ||
+                                      wbBlankLineSaving
+                                    }
+                                    removeDisabled={areaBusy || paDeleting}
+                                    onAddObject={() => openPickObjectModal(pa)}
+                                    onAddBlankLine={() => openWbBlankLineFromArea(pa)}
+                                    onRemove={() => setPaDeleteId(pa.id)}
+                                  />
+                                </div>
+                              </div>
+                              <label className="flex shrink-0 flex-col gap-0.5">
+                                <span className={`${wbHdrLabel} whitespace-nowrap`}>
+                                  Area m²
+                                </span>
+                                <input
+                                  key={areaFieldKey(pa, "m2")}
+                                  type="text"
+                                  inputMode="decimal"
+                                  className={wbInputM2}
+                                  defaultValue={pa.aream2 ?? ""}
+                                  disabled={areaBusy}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter")
+                                      (e.target as HTMLInputElement).blur();
+                                  }}
+                                  onBlur={(e) => {
+                                    const raw = e.target.value.trim();
+                                    if (raw !== "" && parseOptionalNumber(raw) === null) {
+                                      setError(
+                                        "Area m² must be a valid number (or empty).",
+                                      );
+                                      e.target.value =
+                                        pa.aream2 != null ? String(pa.aream2) : "";
+                                      return;
+                                    }
+                                    const next = parseOptionalNumber(raw);
+                                    const prev = pa.aream2 ?? null;
+                                    if (next === prev) return;
+                                    void patchProjectArea(pa.id, { aream2: next });
+                                  }}
+                                />
+                              </label>
+                              <ProjectAreaM2Calculator
+                                pa={pa}
+                                areaLabel={projectAreaHeading(pa, areas)}
+                                disabled={areaBusy}
+                                labelClassName={wbHdrLabel}
+                                onApply={(body) => void patchProjectArea(pa.id, body)}
+                              />
+                              <ProjectAreaCeilingHeightField
+                                pa={pa}
+                                project={project}
+                                disabled={areaBusy}
+                                labelClassName={`${wbHdrLabel} whitespace-nowrap`}
+                                inputClassName={wbAreaHdrInputCeiling}
+                                fieldKey={areaFieldKey(pa, "ceiling")}
+                                onPatch={(body) => void patchProjectArea(pa.id, body)}
+                                onValidationError={setError}
+                              />
+                              <ProjectAreaStatusSelect
+                                value={pa.areaStatus}
+                                disabled={areaBusy}
+                                labelClassName={`${wbHdrLabel} whitespace-nowrap`}
+                                selectClassName={wbAreaHdrSelectStatus}
+                                onChange={(next) =>
+                                  handleAreaStatusChange(
+                                    pa,
+                                    next,
+                                    projectAreaHeading(pa, areas),
+                                  )
                                 }
-                                const next = parseOptionalNumber(raw);
-                                const prev = pa.aream2 ?? null;
-                                if (next === prev) return;
-                                void patchProjectArea(pa.id, { aream2: next });
-                              }}
-                            />
-                          </label>
-                          <ProjectAreaM2Calculator
-                            pa={pa}
-                            areaLabel={projectAreaHeading(pa, areas)}
-                            disabled={areaBusy}
-                            labelClassName={wbHdrLabel}
-                            onApply={(body) => void patchProjectArea(pa.id, body)}
-                          />
-                          <ProjectAreaCeilingHeightField
-                            pa={pa}
-                            project={project}
-                            disabled={areaBusy}
-                            labelClassName={`${wbHdrLabel} whitespace-nowrap`}
-                            inputClassName={wbAreaHdrInputCeiling}
-                            fieldKey={areaFieldKey(pa, "ceiling")}
-                            onPatch={(body) => void patchProjectArea(pa.id, body)}
-                            onValidationError={setError}
-                          />
-                        </div>
-                      </td>
-                      <td className={`${wbAreaHdrCellOutlineMidBottom} pl-2.5`}>
-                        <label className="flex w-fit shrink-0 flex-col gap-0.5">
-                          <span className={`${wbHdrLabel} whitespace-nowrap`}>Elevate</span>
-                          <CascadeElevateSelect
-                            cascades={cascades}
-                            priceLevels={priceLevels}
-                            priceLevelId={pa.pricelevelid ?? null}
-                            projectFinish={project?.projectfinish}
-                            onChange={({ priceLevelId }) => {
-                              void patchProjectArea(pa.id, { pricelevelid: priceLevelId });
-                            }}
-                            className={wbAreaHdrSelectElevate}
-                            disabled={areaBusy}
-                            emptyLabel="Default (project)"
-                          />
-                        </label>
-                      </td>
-                      <td className={wbAreaHdrCellOutlineMidBottom}>
-                        <CascadeStyleColourFields
-                          cascades={cascades}
-                          level={cascadeLevelFromPriceLevel(
-                            priceLevels,
-                            pa.pricelevelid ?? project?.defaultpricelevelid,
-                            project?.projectfinish,
-                            cascades,
-                          )}
-                          style={pa.style ?? ""}
-                          colourFilterStyle={effectiveCascadeStyleForArea(pa, project)}
-                          colour={pa.colour ?? ""}
-                          disabled={areaBusy}
-                          styleSelectClassName={wbAreaHdrSelectStyle}
-                          colourSelectClassName={wbAreaHdrSelectColour}
-                          layout="compact"
-                          compactField="style"
-                          styleLabel="Style override"
-                          colourLabel="Colour override"
-                          styleEmptyLabel="Default (project)"
-                          colourEmptyLabel={wbAreaColourEmptyLabel(project)}
-                          onStyleChange={(v) =>
-                            void patchProjectArea(pa.id, {
-                              style: v ? v : null,
-                              colour: null,
-                            })
-                          }
-                          onColourChange={(v) =>
-                            void patchProjectArea(pa.id, { colour: v ? v : null })
-                          }
-                        />
-                      </td>
-                      <td className={wbAreaHdrCellOutlineMidBottom}>
-                        <CascadeStyleColourFields
-                          cascades={cascades}
-                          level={cascadeLevelFromPriceLevel(
-                            priceLevels,
-                            pa.pricelevelid ?? project?.defaultpricelevelid,
-                            project?.projectfinish,
-                            cascades,
-                          )}
-                          style={pa.style ?? ""}
-                          colourFilterStyle={effectiveCascadeStyleForArea(pa, project)}
-                          colour={pa.colour ?? ""}
-                          disabled={areaBusy}
-                          styleSelectClassName={wbAreaHdrSelectStyle}
-                          colourSelectClassName={wbAreaHdrSelectColour}
-                          layout="compact"
-                          compactField="colour"
-                          styleLabel="Style override"
-                          colourLabel="Colour override"
-                          styleEmptyLabel="Default (project)"
-                          colourEmptyLabel={wbAreaColourEmptyLabel(project)}
-                          onStyleChange={(v) =>
-                            void patchProjectArea(pa.id, {
-                              style: v ? v : null,
-                              colour: null,
-                            })
-                          }
-                          onColourChange={(v) =>
-                            void patchProjectArea(pa.id, { colour: v ? v : null })
-                          }
-                        />
-                      </td>
-                      <td
-                        colSpan={WB_AREA_HDR_TRAILING_FIELD_COLSPAN}
-                        className={`${wbAreaHdrCellOutlineMidBottom} pr-2`}
-                      >
-                        <div className={wbAreaHdrFieldsRow}>
-                          <ProjectAreaStatusSelect
-                            value={pa.areaStatus}
-                            disabled={areaBusy}
-                            labelClassName={`${wbHdrLabel} whitespace-nowrap`}
-                            selectClassName={wbAreaHdrSelectStatus}
-                            onChange={(next) =>
-                              handleAreaStatusChange(pa, next, projectAreaHeading(pa, areas))
-                            }
-                          />
-                        </div>
-                      </td>
-                      <td className={wbAreaHdrCellOutlineMidLeftBottom}>
-                        <span className={wbHdrTotalLabel}>Area subtotal</span>
-                        {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
-                        <span className="block text-sm font-semibold tabular-nums text-sf-text dark:text-zinc-100">
-                          {hasIncludedMoney ? formatMoney(areaSubtotal) : "—"}
-                        </span>
-                      </td>
-                      {WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key, label, title }) => {
-                        const hoursSum = areaLoadTotals[key];
-                        const rate = contractLabourRateBySiloProduct(contractLabourRates, key);
-                        const cost = labourSiloCostExcGst(hoursSum > 0 ? hoursSum : null, rate);
-                        return (
-                          <td
-                            key={key}
-                            className={wbAreaHdrCellOutlineMidRightBottom}
-                            title={title}
-                          >
-                            <span className={wbHdrTotalLabel}>{label}</span>
-                            {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
-                            <WbLabourSiloValue
-                              hours={hoursSum > 0 ? hoursSum : null}
-                              cost={cost}
-                            />
-                          </td>
-                        );
-                      })}
-                      <td className={wbAreaHdrCellOutlineMidRightBottom}>
-                        <span className={wbHdrTotalLabel}>Final (incl. margin)</span>
-                        {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
-                        <span className="block text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-200">
-                          {hasIncludedMoney ? formatMoney(areaFinalSubtotal) : "—"}
-                        </span>
-                      </td>
-                      <td className={wbAreaHdrCellOutlineMidBottom} aria-hidden="true">
-                        <span className={`${wbHdrTotalLabel} invisible select-none`}>Margin</span>
-                        {wbHdrDetailSpacers(wbHdrSubtotalBreakdownLines)}
-                        <div className="invisible h-[1.375rem]" />
-                      </td>
-                      <td className={`${wbAreaHdrCellOutlineMidBottom} text-center`}>
-                        <span className={`${wbHdrLabel} whitespace-nowrap`} aria-hidden="true">
-                          {"\u00a0"}
-                        </span>
-                        <WbAreaHdrMenu
-                          areaLabel={projectAreaHeading(pa, areas)}
-                          addObjectDisabled={
-                            areaBusy || paDeleting || wbBlankLineContext?.paId === pa.id
-                          }
-                          addBlankLineDisabled={
-                            areaBusy ||
-                            paDeleting ||
-                            wbBlankLineContext?.paId === pa.id ||
-                            wbBlankLineSaving
-                          }
-                          removeDisabled={areaBusy || paDeleting}
-                          onAddObject={() => openPickObjectModal(pa)}
-                          onAddBlankLine={() => openWbBlankLineFromArea(pa)}
-                          onRemove={() => setPaDeleteId(pa.id)}
-                        />
-                      </td>
-                      <td className={wbAreaHdrCellOutlineLastBottom} />
-                        </tr>
-                        {wbScopeMetricEntries.length > 0 ? (
-                          <tr className={wbAreaHdrBand}>
-                            <td colSpan={WB_TABLE_COLS} className={`${wbAreaHdrCellOutlineFirst} px-2.5 py-2`}>
+                              />
+                            </div>
+                            <div className={wbAreaHdrFieldsRow}>
+                              <label className="flex w-fit shrink-0 flex-col gap-0.5">
+                                <span className={`${wbHdrLabel} whitespace-nowrap`}>
+                                  Elevate
+                                </span>
+                                <CascadeElevateSelect
+                                  cascades={cascades}
+                                  priceLevels={priceLevels}
+                                  priceLevelId={pa.pricelevelid ?? null}
+                                  projectFinish={project?.projectfinish}
+                                  onChange={({ priceLevelId }) => {
+                                    void patchProjectArea(pa.id, {
+                                      pricelevelid: priceLevelId,
+                                    });
+                                  }}
+                                  className={wbAreaHdrSelectElevate}
+                                  disabled={areaBusy}
+                                  emptyLabel="Default (project)"
+                                />
+                              </label>
+                              <CascadeStyleColourFields
+                                cascades={cascades}
+                                level={cascadeLevelFromPriceLevel(
+                                  priceLevels,
+                                  pa.pricelevelid ?? project?.defaultpricelevelid,
+                                  project?.projectfinish,
+                                  cascades,
+                                )}
+                                style={pa.style ?? ""}
+                                colourFilterStyle={effectiveCascadeStyleForArea(
+                                  pa,
+                                  project,
+                                )}
+                                colour={pa.colour ?? ""}
+                                disabled={areaBusy}
+                                styleSelectClassName={wbAreaHdrSelectStyle}
+                                colourSelectClassName={wbAreaHdrSelectColour}
+                                layout="compact"
+                                compactField="style"
+                                styleLabel="Style override"
+                                colourLabel="Colour override"
+                                styleEmptyLabel="Default (project)"
+                                colourEmptyLabel={wbAreaColourEmptyLabel(project)}
+                                onStyleChange={(v) =>
+                                  void patchProjectArea(pa.id, {
+                                    style: v ? v : null,
+                                    colour: null,
+                                  })
+                                }
+                                onColourChange={(v) =>
+                                  void patchProjectArea(pa.id, {
+                                    colour: v ? v : null,
+                                  })
+                                }
+                              />
+                              <CascadeStyleColourFields
+                                cascades={cascades}
+                                level={cascadeLevelFromPriceLevel(
+                                  priceLevels,
+                                  pa.pricelevelid ?? project?.defaultpricelevelid,
+                                  project?.projectfinish,
+                                  cascades,
+                                )}
+                                style={pa.style ?? ""}
+                                colourFilterStyle={effectiveCascadeStyleForArea(
+                                  pa,
+                                  project,
+                                )}
+                                colour={pa.colour ?? ""}
+                                disabled={areaBusy}
+                                styleSelectClassName={wbAreaHdrSelectStyle}
+                                colourSelectClassName={wbAreaHdrSelectColour}
+                                layout="compact"
+                                compactField="colour"
+                                styleLabel="Style override"
+                                colourLabel="Colour override"
+                                styleEmptyLabel="Default (project)"
+                                colourEmptyLabel={wbAreaColourEmptyLabel(project)}
+                                onStyleChange={(v) =>
+                                  void patchProjectArea(pa.id, {
+                                    style: v ? v : null,
+                                    colour: null,
+                                  })
+                                }
+                                onColourChange={(v) =>
+                                  void patchProjectArea(pa.id, {
+                                    colour: v ? v : null,
+                                  })
+                                }
+                              />
+                            </div>
+                            {wbScopeMetricEntries.length > 0 ? (
                               <ScopeWorkbenchMetricsRow
                                 pa={pa}
                                 entries={wbScopeMetricEntries}
                                 disabled={areaBusy}
                                 onProjectAreaUpdated={(updatedPa) => {
                                   setProjectAreas((prev) =>
-                                    prev.map((p) => (p.id === updatedPa.id ? updatedPa : p)),
+                                    prev.map((p) =>
+                                      p.id === updatedPa.id ? updatedPa : p,
+                                    ),
                                   );
                                 }}
                                 onRepriced={() => void reloadLineItems()}
                                 onError={setError}
                               />
-                            </td>
-                          </tr>
-                        ) : null}
+                            ) : null}
+                          </div>
+
+                          {/* Right: trade tags + financial cards */}
+                          <div className="mt-1 flex shrink-0 justify-end self-start">
+                            <WbAreaSummary
+                              lineSubTotal={areaMaterialTotal}
+                              labourCostBySilo={areaLabourCostBySilo}
+                              netTotal={hasIncludedMoney ? areaSubtotal : 0}
+                              marginExcGst={
+                                hasIncludedMoney ? areaRealisedMarginExcGst : null
+                              }
+                              finalTotal={hasIncludedMoney ? areaFinalSubtotal : 0}
+                            />
+                          </div>
+                        </div>
+                      </td>
+                        </tr>
                         <tr className={areaObjectBand}>
                       <th scope="col" className={thBaseWb} title="Include in totals">
                         Incl.
@@ -4491,6 +4735,8 @@ export function ProjectChecklistPanel({
                       <th scope="col" className={thBaseWb}>
                         Description
                       </th>
+                      {wbDetailView ? (
+                        <>
                       <th
                         scope="col"
                         className={thBaseWb}
@@ -4511,6 +4757,8 @@ export function ProjectChecklistPanel({
                       <th scope="col" className={thBaseWb}>
                         Colour
                       </th>
+                        </>
+                      ) : null}
                       <th
                         scope="col"
                         className={thBaseWb}
@@ -4527,7 +4775,11 @@ export function ProjectChecklistPanel({
                       <th scope="col" className={thBaseWb}>
                         Unit price
                       </th>
-                      <th scope="col" className={thBaseWb}>
+                      <th
+                        scope="col"
+                        className={thBaseWb}
+                        title="Measure × unit price + labour on this line (before margin)"
+                      >
                         Line total
                       </th>
                       {WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key, label, title }) => (
@@ -4538,7 +4790,7 @@ export function ProjectChecklistPanel({
                       <th
                         scope="col"
                         className={thBaseWb}
-                        title="Line total including project margin"
+                        title="Line total (material + labour) including project margin"
                       >
                         Final price
                       </th>
@@ -4552,7 +4804,7 @@ export function ProjectChecklistPanel({
                         </tr>
                         {areaTopLines.length === 0 ? (
                           <tr className={areaObjectBand}>
-                            <td colSpan={WB_TABLE_COLS} className={`${cellMuted} py-3 pl-8 text-xs`}>
+                            <td colSpan={wbTableCols} className={`${cellMuted} py-3 pl-8 text-xs`}>
                               <span className="italic text-sf-text-weak dark:text-zinc-400">
                                 No objects in this area yet.{" "}
                               </span>
@@ -4576,7 +4828,7 @@ export function ProjectChecklistPanel({
                         const rowStyle = included
                           ? rowDisabledForBlankLine
                             ? `${areaObjectBand} opacity-50`
-                            : `${areaObjectBand} hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30`
+                            : `${areaObjectBand} hover:bg-sf-accent-muted/70 dark:hover:bg-sf-accent/10`
                           : `${areaObjectBand} text-sf-text-weak opacity-60 dark:text-sf-text-weak`;
                         const lineScope = row.scopeDocId?.trim()
                           ? scopes.find((s) => s.id === row.scopeDocId?.trim())
@@ -4632,19 +4884,22 @@ export function ProjectChecklistPanel({
                           suppliersBySkuId,
                           supplierDiscountByKey,
                         );
-                        const lineTotalExGst =
-                          metricMeasureLocked &&
-                          effectiveMeasureForRow != null &&
-                          unitPriceForRow != null
-                            ? effectiveMeasureForRow * unitPriceForRow
-                            : row.totalprice;
-                        const lf = lineFinalPrice(
+                        const lfBreakdown = lineFinalPriceBreakdown(
                           row,
                           marginPct,
                           effectiveMeasureForRow,
                           unitPriceForRow,
                           metricMeasureLocked,
+                          contractLabourRates,
                         );
+                        const lineTotalExGst =
+                          lfBreakdown?.baseExcGst ??
+                          (metricMeasureLocked &&
+                          effectiveMeasureForRow != null &&
+                          unitPriceForRow != null
+                            ? effectiveMeasureForRow * unitPriceForRow
+                            : row.totalprice);
+                        const lf = lfBreakdown?.finalExcGst ?? null;
                         const measureKey =
                           row.custommeasure != null && !metricMeasureLocked
                             ? inputKey(row, "m")
@@ -4687,6 +4942,8 @@ export function ProjectChecklistPanel({
                                 </p>
                               ) : null}
                             </td>
+                            {wbDetailView ? (
+                              <>
                             <td
                               className={`${wbCellMid} truncate text-xs font-medium text-sf-text-secondary dark:text-zinc-400`}
                             >
@@ -4755,6 +5012,8 @@ export function ProjectChecklistPanel({
                                 }
                               />
                             </td>
+                              </>
+                            ) : null}
                             <td className={wbCellSku}>
                               {isManual2Line(row) ? (
                                 <span
@@ -4801,12 +5060,13 @@ export function ProjectChecklistPanel({
                                       showSupplierPrice
                                       shortMatchLabels
                                       inlineRow
+                                      skuPickerUi="popup"
                                       autoApplySingleMatch
                                       autoApplyOnlyWhenEmptySku
                                       syncUnitPriceFromPick
                                       lockToSkuId={row.scopeShowAllSku ? row.skuId : null}
                                       colourLookupIndex={colourLookupIndex}
-                                      showIncludeAllSupplierOptions={canViewAdminWorkbenchFeatures}
+                                      showIncludeAllSupplierOptions
                                       includeAllSupplierOptions={includeAllSuppliersForLine(
                                         row.id,
                                       )}
@@ -4924,7 +5184,14 @@ export function ProjectChecklistPanel({
                                 }}
                               />
                             </td>
-                            <td className={wbCellNum}>
+                            <td
+                              className={wbCellNum}
+                              title={
+                                lfBreakdown
+                                  ? lineExtendedTotalBreakdownTitle(lfBreakdown)
+                                  : undefined
+                              }
+                            >
                               {formatMoney(lineTotalExGst)}
                             </td>
                             <WbLabourSiloRowCells
@@ -4940,7 +5207,12 @@ export function ProjectChecklistPanel({
                               onPatch={(lineId, body) => void patchLineItem(lineId, body)}
                             />
                             <td
-                              className={`${wbCellNum} font-medium text-emerald-800 dark:text-emerald-200`}
+                              className={`${wbCellNum} font-medium text-sf-accent dark:text-emerald-300`}
+                              title={
+                                lfBreakdown
+                                  ? lineFinalPriceBreakdownTitle(lfBreakdown)
+                                  : undefined
+                              }
                             >
                               {lf != null ? formatMoney(lf) : "—"}
                             </td>
@@ -5021,7 +5293,7 @@ export function ProjectChecklistPanel({
                         )}
                         <tr className={areaObjectBand}>
                           <td
-                            colSpan={WB_TABLE_COLS}
+                            colSpan={wbTableCols}
                             className="border-x border-b border-sf-border px-3 py-3 align-top dark:border-zinc-700"
                           >
                             <div className="space-y-4">
@@ -5090,70 +5362,7 @@ export function ProjectChecklistPanel({
                 );
               })
               )}
-              {sortedProjectAreas.length > 0 ? (
-              mode === "workbench" ? (
-              <tr className="border-t-2 border-t-zinc-400 bg-sf-page font-semibold dark:border-t-zinc-500 dark:bg-zinc-800">
-                <td colSpan={10} className={`${cell} bg-sf-page text-right align-top dark:bg-zinc-800`}>
-                  <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
-                    Project total (incl. lines)
-                  </span>
-                </td>
-                <td
-                  className={`${cell} bg-sf-page text-right align-top text-base tabular-nums dark:bg-zinc-800`}
-                >
-                  <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
-                    Line total
-                  </span>
-                  {workbenchPaintingSiteFeeExcGst > 0 ? (
-                    <>
-                      <span className="block text-[11px] tabular-nums text-sf-text-secondary dark:text-zinc-400">
-                        Lines {formatMoney(grandLineTotal)}
-                      </span>
-                      <span className="block whitespace-nowrap text-[11px] tabular-nums text-sf-text-secondary dark:text-zinc-400">
-                        {PAINTING_SITE_FEE_PRODUCT}{" "}
-                        {formatMoney(workbenchPaintingSiteFeeExcGst)}
-                      </span>
-                    </>
-                  ) : null}
-                  <span className="text-base font-semibold text-sf-text dark:text-zinc-100">
-                    {formatMoney(grandTotal)}
-                  </span>
-                </td>
-                {WB_WORKBENCH_LABOUR_SILO_HEADERS.map(({ key, label, title }) => {
-                  const hoursSum = projectLoadTotals[key];
-                  const rate = contractLabourRateBySiloProduct(contractLabourRates, key);
-                  const cost = labourSiloCostExcGst(hoursSum > 0 ? hoursSum : null, rate);
-                  return (
-                    <td
-                      key={key}
-                      className={`${cell} bg-sf-page text-right align-top dark:bg-zinc-800`}
-                      title={title}
-                    >
-                      <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
-                        {label}
-                      </span>
-                      <WbLabourSiloValue
-                        hours={hoursSum > 0 ? hoursSum : null}
-                        cost={cost}
-                      />
-                    </td>
-                  );
-                })}
-                <td
-                  className={`${cell} bg-sf-page text-right align-top text-base tabular-nums text-emerald-900 dark:text-emerald-100 dark:bg-zinc-800`}
-                >
-                  <span className="block text-xs font-medium uppercase tracking-wide text-emerald-900/80 dark:text-emerald-200/90">
-                    Final price
-                  </span>
-                  <span className="text-base font-semibold">
-                    {formatMoney(grandFinalTotal)}
-                  </span>
-                </td>
-                <td className={`${cell} bg-sf-page dark:bg-zinc-800`} />
-                <td className={`${cell} bg-sf-page dark:bg-zinc-800`} />
-                <td className={`${wbSpacerCell} bg-sf-page dark:bg-zinc-800`} />
-              </tr>
-              ) : (
+              {sortedProjectAreas.length > 0 && mode !== "workbench" ? (
               <tr className="border-t-2 border-t-zinc-400 bg-sf-page font-semibold dark:border-t-zinc-500 dark:bg-zinc-800">
                 <td colSpan={WB_TABLE_COLS - 1} className={`${cell} bg-sf-page text-right align-top dark:bg-zinc-800`}>
                   <span className="block text-xs font-medium uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
@@ -5161,9 +5370,9 @@ export function ProjectChecklistPanel({
                   </span>
                 </td>
                 <td
-                  className={`${cell} bg-sf-page text-right align-top text-base tabular-nums text-emerald-900 dark:text-emerald-100 dark:bg-zinc-800`}
+                  className={`${cell} bg-sf-page text-right align-top text-base tabular-nums text-sf-accent dark:text-emerald-200 dark:bg-zinc-800`}
                 >
-                  <span className="block text-xs font-medium uppercase tracking-wide text-emerald-900/80 dark:text-emerald-200/90">
+                  <span className="block text-xs font-medium uppercase tracking-wide text-sf-accent/80 dark:text-emerald-200/90">
                     Total price
                   </span>
                   <span className="text-base font-semibold">
@@ -5171,11 +5380,19 @@ export function ProjectChecklistPanel({
                   </span>
                 </td>
               </tr>
-              )
               ) : null}
             </tbody>
           </table>
         </div>
+      ) : null}
+
+      {mode !== "workbench" && clScrollContextAreas.length > 0 ? (
+        <ClScrollContextRail
+          areas={clScrollContextAreas}
+          projectTotalLabel={
+            grandFinalTotal > 0 ? formatMoney(grandFinalTotal) : "—"
+          }
+        />
       ) : null}
 
       {wbBlindsEditLineId && mode === "workbench"
@@ -5309,16 +5526,17 @@ export function ProjectChecklistPanel({
             <>
               <label className="mb-3 block">
                 <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Area name on this project (optional)
+                  Area nickname (optional)
                 </span>
                 <input
                   value={addAreaDisplayName}
                   onChange={(e) => setAddAreaDisplayName(e.target.value)}
-                  placeholder="e.g. Master bedroom, Bedroom 2"
+                  placeholder="e.g. Master, En-suite"
                   className={addAreaModalInputClass}
                 />
                 <span className="mt-1 block text-xs text-sf-text-weak dark:text-zinc-400">
-                  Leave blank to use the template name only (fine for a single kitchen, etc.).
+                  Display only — useful when you have two of the same area (e.g. two bathrooms).
+                  Leave blank to show the template name only.
                 </span>
               </label>
               {project?.defaultpricelevelid == null ? (
@@ -5474,6 +5692,12 @@ export function ProjectChecklistPanel({
       {wbTradeReportData ? <WorkbenchTradePrintReport data={wbTradeReportData} /> : null}
       {wbPaintLitresReportData ? (
         <WorkbenchPaintLitresPrintReport data={wbPaintLitresReportData} />
+      ) : null}
+      {wbPurchasingListReportWindowData ? (
+        <WorkbenchPurchasingListReportWindow
+          data={wbPurchasingListReportWindowData}
+          onClose={() => setWbPurchasingListReportWindowData(null)}
+        />
       ) : null}
     </div>
   );

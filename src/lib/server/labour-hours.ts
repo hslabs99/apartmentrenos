@@ -136,6 +136,10 @@ export function recalcLookupLabourHoursOnLine(
   skuProduct?: string | null,
   manualOverrides?: LabourLookupManualOverrides | null,
 ): { patch: Partial<LabourHours>; objectLabourDuplicate: boolean } {
+  // Rates not loaded — do not clear existing hours.
+  if (objectLabourRates.length === 0) {
+    return { patch: {}, objectLabourDuplicate: false };
+  }
   const overrides =
     manualOverrides ?? readLabourLookupManualOverrides(lineData.labourLookupManualOverrides);
   const skuForLookup = skuProductForObjectLabourLookup({

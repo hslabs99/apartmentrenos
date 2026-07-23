@@ -110,6 +110,12 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     if (parsed.data.question !== undefined) {
       update.question = parsed.data.question;
     }
+    if (parsed.data.explanation !== undefined) {
+      update.explanation =
+        typeof parsed.data.explanation === "string"
+          ? parsed.data.explanation.trim() || null
+          : null;
+    }
 
     let nextAreaDocIds = prevNorm.areaDocIds;
     const areaPayload =

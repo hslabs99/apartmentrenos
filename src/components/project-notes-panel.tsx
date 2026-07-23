@@ -11,7 +11,11 @@ import { useLookups } from "@/lib/client/use-lookups";
 import { distinctLookupValues } from "@/lib/lookup-list-values";
 import { LOOKUP_TYPE_NOTE_TYPES } from "@/lib/lookup-types";
 import { projectAreaHeading } from "@/lib/project-area-display-name";
-import type { ProjectNoteTarget } from "@/lib/project-note-filters";
+import {
+  uniqueNoteAreaOptionsByAreaId,
+  uniqueProjectNotes,
+  type ProjectNoteTarget,
+} from "@/lib/project-note-filters";
 import type { AreaPublic } from "@/types/area";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
@@ -70,7 +74,7 @@ export function ProjectNotesPanel() {
       error?: string;
     };
     if (!res.ok) throw new Error(data.error ?? "Failed to reload project notes");
-    setProjectNotes(data.projectNotes ?? []);
+    setProjectNotes(uniqueProjectNotes(data.projectNotes ?? []));
   }, [projectDocId]);
 
   useEffect(() => {
@@ -157,10 +161,12 @@ export function ProjectNotesPanel() {
   const authorFallback = project?.quotedby?.trim() ?? "";
 
   const projectNoteAreaOptions = useMemo((): ProjectNoteAreaOption[] => {
-    return sortedProjectAreas.map((pa) => ({
-      areaid: pa.areaid,
-      label: projectAreaHeading(pa, areas),
-    }));
+    return uniqueNoteAreaOptionsByAreaId(
+      sortedProjectAreas.map((pa) => ({
+        areaid: pa.areaid,
+        label: projectAreaHeading(pa, areas),
+      })),
+    );
   }, [sortedProjectAreas, areas]);
 
   const projectNoteObjectLabelByArea = useMemo(() => {
@@ -251,7 +257,9 @@ export function ProjectNotesPanel() {
       if (!res.ok || !data.projectNote) {
         throw new Error(data.error ?? "Failed to save note");
       }
-      setProjectNotes((prev) => [data.projectNote!, ...prev]);
+      setProjectNotes((prev) =>
+        uniqueProjectNotes([data.projectNote!, ...prev]),
+      );
     },
     [numericProjectId],
   );
@@ -324,13 +332,14 @@ export function ProjectNotesPanel() {
   ]);
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-4 print:hidden">
-        <h1 className="text-xl font-normal tracking-tight text-sf-text md:text-2xl dark:text-zinc-50">
-          Project notes
-        </h1>
+    <div className="min-h-full bg-sf-page dark:bg-zinc-950">
+      <div className="print:hidden">
         <ProjectsTabs />
       </div>
+      <div className="space-y-4 px-5 py-5 md:px-6 md:py-6 lg:px-8 print:px-0">
+        <h1 className="text-2xl font-semibold tracking-tight text-sf-brand dark:text-zinc-50 print:hidden">
+          Project notes
+        </h1>
 
       {error ? (
         <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
@@ -350,6 +359,7 @@ export function ProjectNotesPanel() {
           <ProjectNotesBrowser {...browserProps} className="min-h-[32rem] flex-1 print:hidden" />
         </div>
       ) : null}
+      </div>
     </div>
   );
 }

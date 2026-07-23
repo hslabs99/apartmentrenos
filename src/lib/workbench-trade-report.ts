@@ -43,8 +43,15 @@ export const WB_TRADE_REPORTS = [
     label: "Contractor",
     /** Closest project-note trade tag for on-site contractor work. */
     noteTradeTag: "Building",
-    labourSiloKeys: ["constructionAssistantHours", "leadContractorHours"] as const,
+    labourSiloKeys: ["constructionAssistantHours"] as const,
     tradeCategories: ["Building"],
+  },
+  {
+    id: "leadContractor",
+    label: "Lead Contractor",
+    noteTradeTag: "Lead Contractor",
+    labourSiloKeys: ["leadContractorHours"] as const,
+    tradeCategories: [] as const,
   },
   {
     id: "cleaning",
@@ -80,8 +87,8 @@ export type WbTradeReportObject = {
   notes: ProjectNotePublic[];
   /** Total trade labour hours across all lines on this object in the area. */
   tradeLabourSummary?: string;
-  /** Scope answers such as "Keep Existing" — demolition team must not remove these items. */
-  keepExistingLabels?: string[];
+  /** Scope answers tagged for the demolition report — do not remove these items. */
+  demolitionReportLabels?: string[];
 };
 
 export type WbTradeReportArea = {
@@ -226,12 +233,6 @@ function measureLabel(row: ProjectAreaObjectPublic): string {
     : String(row.custommeasure);
 }
 
-const KEEP_EXISTING_ANSWER_PREFIX = "keep existing";
-
-function isKeepExistingScopeAnswerLabel(label: string): boolean {
-  return label.trim().toLowerCase().startsWith(KEEP_EXISTING_ANSWER_PREFIX);
-}
-
 /** Demolition report: trade tag or note type "Demolition". Other trades: trade tag only. */
 function noteMatchesTradeReport(note: ProjectNotePublic, config: WbTradeReportConfig): boolean {
   if (noteHasTradeTag(note, config.noteTradeTag)) return true;
@@ -240,7 +241,8 @@ function noteMatchesTradeReport(note: ProjectNotePublic, config: WbTradeReportCo
   return noteType.toLowerCase() === "demolition";
 }
 
-function keepExistingLabelsByObjectId(
+/** Attached objects from scope answers tagged `includeOnDemolitionReport`. */
+function demolitionReportLabelsByObjectId(
   pa: ProjectAreaPublic,
   scopes: ScopePublic[],
   quoteObjects: QuoteObjectPublic[],
@@ -251,7 +253,7 @@ function keepExistingLabelsByObjectId(
   for (const entry of pa.scopeAnswers ?? []) {
     const scope = scopes.find((s) => s.id === entry.scopeDocId);
     const answer = scope?.answers.find((a) => a.answerid === entry.answerid);
-    if (!answer || !isKeepExistingScopeAnswerLabel(answer.label)) continue;
+    if (!answer?.includeOnDemolitionReport) continue;
 
     const label = answer.label.trim();
     const objectIds = new Set<number>();
@@ -365,9 +367,9 @@ export function buildWorkbenchTradeReport(args: BuildWorkbenchTradeReportArgs): 
   for (const pa of projectAreas) {
     const rows = objectsByProjectAreaDocId.get(pa.id) ?? [];
     const areaNotes = areaLevelTradeNotes(projectNotes, projectid, pa.areaid, config);
-    const keepExistingByObject =
+    const demolitionByObject =
       config.id === "demolition"
-        ? keepExistingLabelsByObjectId(pa, scopes, quoteObjects)
+        ? demolitionReportLabelsByObjectId(pa, scopes, quoteObjects)
         : new Map<number, string[]>();
 
     const linesByObject = new Map<number, ProjectAreaObjectPublic[]>();
@@ -385,7 +387,7 @@ export function buildWorkbenchTradeReport(args: BuildWorkbenchTradeReportArgs): 
     }
 
     const objectIds = new Set([...linesByObject.keys(), ...objectIdsWithNotes]);
-    for (const objectid of keepExistingByObject.keys()) objectIds.add(objectid);
+    for (const objectid of demolitionByObject.keys()) objectIds.add(objectid);
     const objects: WbTradeReportObject[] = [...objectIds]
       .sort((a, b) => a - b)
       .map((objectid) => {
@@ -414,7 +416,7 @@ export function buildWorkbenchTradeReport(args: BuildWorkbenchTradeReportArgs): 
           })),
           notes: objectLevelTradeNotes(projectNotes, projectid, pa.areaid, objectid, config),
           tradeLabourSummary,
-          keepExistingLabels: keepExistingByObject.get(objectid),
+          demolitionReportLabels: demolitionByObject.get(objectid),
         };
       })
       .filter(
@@ -422,7 +424,7 @@ export function buildWorkbenchTradeReport(args: BuildWorkbenchTradeReportArgs): 
           o.lines.length > 0 ||
           o.notes.length > 0 ||
           Boolean(o.tradeLabourSummary) ||
-          (o.keepExistingLabels?.length ?? 0) > 0,
+          (o.demolitionReportLabels?.length ?? 0) > 0,
       );
 
     if (areaNotes.length === 0 && objects.length === 0) continue;
@@ -454,7 +456,7 @@ export function wbTradeReportHasContent(data: WbTradeReportData): boolean {
           o.lines.length > 0 ||
           o.notes.length > 0 ||
           Boolean(o.tradeLabourSummary) ||
-          (o.keepExistingLabels?.length ?? 0) > 0,
+          (o.demolitionReportLabels?.length ?? 0) > 0,
       ),
   );
 }

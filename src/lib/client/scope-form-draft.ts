@@ -12,7 +12,8 @@ import {
   isSystemScopeObjectId,
   systemScopeObjectLabel,
 } from "@/lib/system-scope-types";
-import type { ScopeAnswerPublic } from "@/types/scope";
+import type { ScopeAnswerPublic, ScopeShowAllDefaultQty } from "@/types/scope";
+import { parseScopeShowAllDefaultQty } from "@/types/scope";
 
 export type ScopeFormDraftAnswer = {
   answerid: string;
@@ -20,10 +21,12 @@ export type ScopeFormDraftAnswer = {
   attachedQuoteObjectIds: string[];
   attachedObjectTools: Partial<Record<string, ScopeToolType>>;
   attachedObjectShowAll: Partial<Record<string, boolean>>;
+  attachedObjectShowAllDefault: Partial<Record<string, ScopeShowAllDefaultQty>>;
   attachedObjectNoCharge: Partial<Record<string, boolean>>;
   attachedObjectForce: Partial<Record<string, boolean>>;
   attachedObjectInheritM2Source: Partial<Record<string, InheritMeasureSource>>;
   attachedObjectInheritMeasureLocked: Partial<Record<string, boolean>>;
+  includeOnDemolitionReport: boolean;
 };
 function normalizeDraftTools(
   raw: Partial<Record<string, ScopeToolType>> | undefined,
@@ -52,6 +55,23 @@ function normalizeDraftFlags(
     const id = key.trim();
     if (!id || !allowed.has(id) || value !== true) continue;
     out[id] = true;
+  }
+  return out;
+}
+
+function normalizeDraftShowAllDefault(
+  raw: Partial<Record<string, ScopeShowAllDefaultQty>> | undefined,
+  attachedIds: string[],
+  showAll: Partial<Record<string, boolean>>,
+): Partial<Record<string, ScopeShowAllDefaultQty>> {
+  if (!raw) return {};
+  const allowed = new Set(attachedIds);
+  const out: Partial<Record<string, ScopeShowAllDefaultQty>> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const id = key.trim();
+    const parsed = parseScopeShowAllDefaultQty(value);
+    if (!id || !allowed.has(id) || !showAll[id] || parsed == null) continue;
+    out[id] = parsed;
   }
   return out;
 }
@@ -127,6 +147,11 @@ export function publicAnswersToDraft(
       attachedQuoteObjectIds: ids,
       attachedObjectTools: normalizeDraftTools(a.attachedObjectTools, ids),
       attachedObjectShowAll: normalizeDraftFlags(a.attachedObjectShowAll, ids),
+      attachedObjectShowAllDefault: normalizeDraftShowAllDefault(
+        a.attachedObjectShowAllDefault,
+        ids,
+        normalizeDraftFlags(a.attachedObjectShowAll, ids),
+      ),
       attachedObjectNoCharge: normalizeDraftFlags(a.attachedObjectNoCharge, ids),
       attachedObjectForce: normalizeDraftFlags(a.attachedObjectForce, ids),
       attachedObjectInheritM2Source: normalizeDraftInheritM2Sources(
@@ -140,6 +165,7 @@ export function publicAnswersToDraft(
         normalizeDraftInheritM2Sources(a.attachedObjectInheritM2Source, ids, quoteById),
         quoteById,
       ),
+      includeOnDemolitionReport: a.includeOnDemolitionReport === true,
     };
   });
 }
@@ -154,10 +180,12 @@ export function draftToPayload(
   attachedObjectNames: string[];
   attachedObjectTools: Record<string, ScopeToolType>;
   attachedObjectShowAll: Record<string, boolean>;
+  attachedObjectShowAllDefault: Record<string, ScopeShowAllDefaultQty>;
   attachedObjectNoCharge: Record<string, boolean>;
   attachedObjectForce: Record<string, boolean>;
   attachedObjectInheritM2Source: Record<string, InheritMeasureSource>;
   attachedObjectInheritMeasureLocked: Record<string, boolean>;
+  includeOnDemolitionReport: boolean;
 }[] {
   return answers.map((a) => {    const ids = [...new Set(a.attachedQuoteObjectIds.map((id) => id.trim()).filter(Boolean))];
     const attachedObjectTools = normalizeDraftTools(a.attachedObjectTools, ids) as Record<
@@ -168,6 +196,11 @@ export function draftToPayload(
       string,
       boolean
     >;
+    const attachedObjectShowAllDefault = normalizeDraftShowAllDefault(
+      a.attachedObjectShowAllDefault,
+      ids,
+      attachedObjectShowAll,
+    ) as Record<string, ScopeShowAllDefaultQty>;
     const attachedObjectNoCharge = normalizeDraftFlags(a.attachedObjectNoCharge, ids) as Record<
       string,
       boolean
@@ -212,10 +245,12 @@ export function draftToPayload(
       attachedObjectNames: names,
       attachedObjectTools,
       attachedObjectShowAll,
+      attachedObjectShowAllDefault,
       attachedObjectNoCharge,
       attachedObjectForce,
       attachedObjectInheritM2Source,
       attachedObjectInheritMeasureLocked,
+      includeOnDemolitionReport: a.includeOnDemolitionReport === true,
     };
   });
 }

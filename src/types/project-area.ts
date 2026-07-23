@@ -17,8 +17,8 @@ export type ProjectAreaPublic = {
   projectid: number;
   areaid: number;
   /**
-   * Optional label for this instance (e.g. "Master bedroom"). When empty, the Setup → Areas
-   * template name is shown.
+   * Optional area nickname for display only (e.g. "Master", "En-suite"). Not used as a key or
+   * relationship. When empty, only the Setup → Areas template name is shown.
    */
   displayName?: string | null;
   /** Copied from template area at add time; drives list order with Setup → Areas. */

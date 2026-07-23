@@ -267,6 +267,12 @@ export type ScopeLineSkuPick = {
 
   supplier: string;
 
+  /** Supplier model / description (Data_SKU supplier col). */
+  model: string;
+
+  /** Supplier product URL (Data_SKU supplier col). */
+  link: string;
+
   priceExcGst: number | null;
 
   /** Default supplier discount % applied to retail SKU price (when &gt; 0). */
@@ -489,6 +495,8 @@ function pickFromSupplier(
     product: sku.product?.trim() ?? "",
     supplierOption: sup.supplierOption,
     supplier: sup.supplier.trim(),
+    model: sup.model.trim(),
+    link: sup.link.trim(),
     priceExcGst,
     discountPctApplied,
   };
@@ -550,6 +558,8 @@ export function preferredSkuPickForProductName(
       product: sku.product?.trim() ?? "",
       supplierOption: 1,
       supplier: "",
+      model: "",
+      link: "",
       priceExcGst: null,
       discountPctApplied: null,
     };
@@ -605,6 +615,8 @@ export function buildScopeLineSkuPicks(
           product: sku.product?.trim() ?? "",
           supplierOption: PREFERRED_SUPPLIER_OPTION,
           supplier: "",
+          model: "",
+          link: "",
           priceExcGst: null,
           discountPctApplied: null,
         });

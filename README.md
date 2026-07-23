@@ -86,7 +86,7 @@ Open [http://localhost:3000](http://localhost:3000) — the app redirects to **P
 | Symptom | What to do |
 |--------|------------|
 | **localhost refused to connect** / **can’t reach localhost:3000** | Run `npm run dev` from the project folder and leave the terminal running. |
-| **Users** page shows a server error | Add **`FIREBASE_SERVICE_ACCOUNT_JSON`** or **`FIREBASE_SERVICE_ACCOUNT_PATH`** to `.env.local`. Restart `npm run dev`. |
+| **Import Master Prices** shows “Set FIREBASE_SERVICE_ACCOUNT_…” / no sheet link on **live** | App Hosting is missing Sheets credentials. Set **`FIREBASE_SERVICE_ACCOUNT_JSON`** as an App Hosting secret (see Deploy), **or** share the sheet with `firebase-app-hosting-compute@…` as Viewer (ADC). Redeploy after changing secrets. |
 | Error: **FIRESTORE_EMULATOR_HOST is set** | Remove `FIRESTORE_EMULATOR_HOST` from `.env.local` and your environment; this app uses cloud Firestore only. |
 | **`PERMISSION_DENIED` / Firestore API / wrong project** | The **service account JSON** must be from the **same** Firebase project as **`NEXT_PUBLIC_FIREBASE_PROJECT_ID`**. In Firebase Console → **Project settings** → **Service accounts** → **Generate new private key** for the correct project. |
 | **ENOENT** on `.next\...\app-build-manifest.json` or `_buildManifest.js.tmp.*` | Stop dev (Ctrl+C). Run **`npm run dev:fresh`** or **`dev-web-fresh.bat`**. Exclude the project folder (or `.next`) from Defender / cloud sync if it keeps happening. |
@@ -98,6 +98,18 @@ GitHub Actions (`.github/workflows/ci.yml`) runs `lint`, `typecheck`, and `build
 ## Deploy
 
 **App Hosting** is wired to this GitHub repo in the Firebase console; pushes to the connected branch trigger builds/deploys per your App Hosting settings.
+
+### Google Sheets import on live (App Hosting)
+
+Imports call the **Google Sheets API** on the server. Locally you use `FIREBASE_SERVICE_ACCOUNT_PATH` in `.env.local`. On live, either:
+
+1. **Recommended:** set **`FIREBASE_SERVICE_ACCOUNT_JSON`** as an App Hosting secret (same JSON as the local adminsdk key), then redeploy:
+   - `firebase apphosting:secrets:set FIREBASE_SERVICE_ACCOUNT_JSON`
+   - Grant access when prompted, or `firebase apphosting:secrets:grantaccess FIREBASE_SERVICE_ACCOUNT_JSON`
+   - Or Firebase Console → App Hosting → backend → Settings → Environment / Secrets
+2. **ADC fallback:** with no JSON secret, the app uses Application Default Credentials (`firebase-app-hosting-compute@…`). Share the master-prices spreadsheet with that email as **Viewer**.
+
+Also share the sheet with `firebase-adminsdk-fbsvc@apartmentrenos-1575e.iam.gserviceaccount.com` if you use that key locally or as the JSON secret. Enable **Google Sheets API** on GCP project `apartmentrenos-1575e`.
 
 For rules/indexes only: `firebase deploy --only firestore` (use `FIREBASE_TOKEN` or workload identity in CI — store in GitHub secrets, never in the repo).
 

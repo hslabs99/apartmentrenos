@@ -7,6 +7,7 @@ import {
   type WbTradeReportId,
 } from "@/lib/workbench-trade-report";
 import { WB_PAINT_LITRES_REPORT_LABEL } from "@/lib/workbench-paint-litres-report";
+import { WB_PURCHASING_LIST_REPORT_WINDOW_LABEL } from "@/lib/workbench-purchasing-list-report";
 import { useEffect, useRef, useState } from "react";
 
 type Props = {
@@ -14,6 +15,7 @@ type Props = {
   exportDisabled?: boolean;
   onPrintTradeReport: (tradeId: WbTradeReportId) => void;
   onPrintPaintLitresReport: () => void;
+  onOpenPurchasingListReport: () => void;
   onExport: (sortMode: WorkbenchXlsSortMode) => void;
   onAddArea: () => void;
 };
@@ -47,6 +49,7 @@ export function WbProjectHdrMenu({
   exportDisabled = false,
   onPrintTradeReport,
   onPrintPaintLitresReport,
+  onOpenPurchasingListReport,
   onExport,
   onAddArea,
 }: Props) {
@@ -81,8 +84,23 @@ export function WbProjectHdrMenu({
           role="menu"
           className="absolute right-0 z-30 mt-1 min-w-[14rem] rounded-lg border border-sf-border bg-sf-surface py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
         >
+          <button
+            type="button"
+            role="menuitem"
+            className={menuItemClass}
+            onClick={() => {
+              setOpen(false);
+              onAddArea();
+            }}
+          >
+            Add area…
+          </button>
+          <div
+            className="my-1 border-t border-sf-border dark:border-zinc-700"
+            role="separator"
+          />
           <div className={menuSectionLabelClass} role="presentation">
-            Trade report
+            Reports
           </div>
           {WB_TRADE_REPORTS.map((report) => (
             <button
@@ -109,13 +127,18 @@ export function WbProjectHdrMenu({
           >
             {WB_PAINT_LITRES_REPORT_LABEL}
           </button>
-          <div
-            className="my-1 border-t border-sf-border dark:border-zinc-700"
-            role="separator"
-          />
-          <div className={menuSectionLabelClass} role="presentation">
-            Reporting
-          </div>
+          <button
+            type="button"
+            role="menuitem"
+            title="Purchasing report by supplier — open, then Print / Save PDF"
+            className={menuItemClass}
+            onClick={() => {
+              setOpen(false);
+              onOpenPurchasingListReport();
+            }}
+          >
+            {WB_PURCHASING_LIST_REPORT_WINDOW_LABEL}
+          </button>
           {WB_XLS_EXPORT_OPTIONS.map((option) => (
             <button
               key={option.sortMode}
@@ -132,21 +155,6 @@ export function WbProjectHdrMenu({
               {exportDisabled ? "Exporting…" : option.label}
             </button>
           ))}
-          <div
-            className="my-1 border-t border-sf-border dark:border-zinc-700"
-            role="separator"
-          />
-          <button
-            type="button"
-            role="menuitem"
-            className={menuItemClass}
-            onClick={() => {
-              setOpen(false);
-              onAddArea();
-            }}
-          >
-            Add area…
-          </button>
         </div>
       ) : null}
     </div>

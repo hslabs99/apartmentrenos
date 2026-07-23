@@ -67,6 +67,8 @@ function pickFromSkuAndSupplier(
     product: sku.product?.trim() ?? "",
     supplierOption: sup.supplierOption,
     supplier: sup.supplier.trim(),
+    model: sup.model.trim(),
+    link: sup.link.trim(),
     priceExcGst,
     discountPctApplied,
   };

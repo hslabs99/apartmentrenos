@@ -1,7 +1,12 @@
 import { compareProjectAreasDisplayOrder } from "@/lib/project-area-display-order";
 import { projectAreaHeading } from "@/lib/project-area-display-name";
+import {
+  lineExtendedTotalExcGst,
+  lineFinalPrice,
+} from "@/lib/client/line-final-price";
 import { marginPercentFromSettings } from "@/lib/settings-margin";
 import type { AreaPublic } from "@/types/area";
+import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import type { ProjectAreaPublic } from "@/types/project-area";
 import type { ProjectPublic } from "@/types/project";
@@ -22,20 +27,15 @@ function objectLabel(row: ProjectAreaObjectPublic, quoteObjects: QuoteObjectPubl
   return q?.objectname?.trim() ? q.objectname : `Object #${row.objectid}`;
 }
 
-function includedLineTotal(row: ProjectAreaObjectPublic): number {
-  if (row.included === false) return 0;
-  const t = row.totalprice;
-  return typeof t === "number" && Number.isFinite(t) ? t : 0;
-}
-
-function lineFinalPrice(
+/** Material + labour (pre-margin) for included lines — matches workbench line total base. */
+function includedLineTotal(
   row: ProjectAreaObjectPublic,
-  marginPct: number,
-): number | null {
-  if (row.included === false) return null;
-  const t = row.totalprice;
-  if (t == null || !Number.isFinite(t)) return null;
-  return t * (1 + marginPct / 100);
+  contractLabourRates: DataLabourRatePublic[],
+): number {
+  if (row.included === false) return 0;
+  return (
+    lineExtendedTotalExcGst(row, undefined, undefined, undefined, contractLabourRates) ?? 0
+  );
 }
 
 function safeFileBase(name: string): string {
@@ -66,6 +66,7 @@ const HEADER = [
 
 /**
  * Fetches checklist-related data and downloads a binary .xls workbook (Excel-compatible).
+ * Final price = (material + labour) × margin — same retail formula as checklist Total price.
  */
 export async function downloadProjectChecklistXls(
   projectDocId: string,
@@ -78,6 +79,7 @@ export async function downloadProjectChecklistXls(
     areasRes,
     qoRes,
     settingsRes,
+    labourRatesRes,
   ] = await Promise.all([
     fetch(`/api/projects/${encodeURIComponent(projectDocId)}`),
     fetch(`/api/projectareas?projectDocId=${encodeURIComponent(projectDocId)}`),
@@ -85,6 +87,7 @@ export async function downloadProjectChecklistXls(
     fetch("/api/areas"),
     fetch("/api/quote-objects"),
     fetch("/api/settings"),
+    fetch("/api/labour-rates"),
   ]);
 
   const projectData = await readApiJson<{ project?: ProjectPublic; error?: string }>(projectRes);
@@ -123,6 +126,9 @@ export async function downloadProjectChecklistXls(
   const settings = settingsRes.ok ? (settingsData.settings ?? []) : [];
   const marginPct = marginPercentFromSettings(settings);
 
+  const labourRatesData = await readApiJson<{ items?: DataLabourRatePublic[] }>(labourRatesRes);
+  const contractLabourRates = labourRatesRes.ok ? (labourRatesData.items ?? []) : [];
+
   const areas = areasData.areas ?? [];
   const quoteObjects = qoData.quoteObjects ?? [];
   const projectAreas = [...(paData.projectAreas ?? [])].sort(compareProjectAreasDisplayOrder);
@@ -150,9 +156,19 @@ export async function downloadProjectChecklistXls(
     [...HEADER],
   ];
 
-  const grandTotal = allObjects.reduce((sum, row) => sum + includedLineTotal(row), 0);
+  const grandTotal = allObjects.reduce(
+    (sum, row) => sum + includedLineTotal(row, contractLabourRates),
+    0,
+  );
   const grandFinalTotal = allObjects.reduce((sum, row) => {
-    const f = lineFinalPrice(row, marginPct);
+    const f = lineFinalPrice(
+      row,
+      marginPct,
+      undefined,
+      undefined,
+      undefined,
+      contractLabourRates,
+    );
     return sum + (f != null ? f : 0);
   }, 0);
   const loadGrand = (pick: (r: ProjectAreaObjectPublic) => number | null) =>
@@ -167,9 +183,24 @@ export async function downloadProjectChecklistXls(
   } else {
     for (const pa of projectAreas) {
       const lineRows = objectsByProjectAreaDocId.get(pa.id) ?? [];
-      const areaSubtotal = lineRows.reduce((sum, row) => sum + includedLineTotal(row), 0);
-      const areaFinalSubtotal = areaSubtotal * (1 + marginPct / 100);
-      const hasIncludedMoney = lineRows.some((r) => includedLineTotal(r) > 0);
+      const areaSubtotal = lineRows.reduce(
+        (sum, row) => sum + includedLineTotal(row, contractLabourRates),
+        0,
+      );
+      const areaFinalSubtotal = lineRows.reduce((sum, row) => {
+        const f = lineFinalPrice(
+          row,
+          marginPct,
+          undefined,
+          undefined,
+          undefined,
+          contractLabourRates,
+        );
+        return sum + (f ?? 0);
+      }, 0);
+      const hasIncludedMoney = lineRows.some(
+        (r) => includedLineTotal(r, contractLabourRates) > 0,
+      );
       const areaNotes = [pa.areanotes1, pa.areanotes2].filter(Boolean).join(" · ");
 
       const areaLoadSum = (pick: (r: ProjectAreaObjectPublic) => number | null) =>
@@ -223,7 +254,22 @@ export async function downloadProjectChecklistXls(
         ]);
       } else {
         for (const row of lineRows) {
-          const lf = lineFinalPrice(row, marginPct);
+          const lineTotal =
+            lineExtendedTotalExcGst(
+              row,
+              undefined,
+              undefined,
+              undefined,
+              contractLabourRates,
+            ) ?? row.totalprice ?? "";
+          const lf = lineFinalPrice(
+            row,
+            marginPct,
+            undefined,
+            undefined,
+            undefined,
+            contractLabourRates,
+          );
           const notes = [row.notes1, row.notes2].filter(Boolean).join("\n");
           rows.push([
             row.included !== false,
@@ -233,7 +279,7 @@ export async function downloadProjectChecklistXls(
             row.custommeasure ?? "",
             row.customuom ?? "",
             row.customumprice ?? "",
-            row.totalprice ?? "",
+            lineTotal,
             lf ?? "",
             row.constructionAssistantHours ?? "",
             row.leadContractorHours ?? "",

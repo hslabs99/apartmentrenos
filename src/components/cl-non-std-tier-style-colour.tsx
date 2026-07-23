@@ -138,9 +138,11 @@ export function ClNonStdTierOpenButton({
       }
       aria-label={`Non-standard finishes for ${label}`}
       onClick={onOpen}
-      className={`${clActionBtnClass} ${compact ? "w-full" : ""} ${
-        active ? clActionBtnActiveClass : ""
-      }`}
+      className={
+        active
+          ? `h-8 whitespace-nowrap rounded-md border border-sf-accent bg-sf-accent/80 px-3 text-xs font-semibold text-white transition-colors hover:bg-sf-accent disabled:opacity-50 ${compact ? "w-full" : ""}`
+          : `${clActionBtnClass} ${compact ? "w-full" : ""}`
+      }
     >
       Non Std{active ? " · on" : ""}
     </button>

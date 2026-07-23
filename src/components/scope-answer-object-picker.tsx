@@ -25,6 +25,7 @@ import {
   type QuoteObjectPublic,
 } from "@/types/quote-object";
 import type { InheritMeasureSource, ScopeMetricPublic } from "@/types/scope-metric";
+import type { ScopeShowAllDefaultQty } from "@/types/scope";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import { countSkusMatchingBaseProductKey } from "@/lib/sku/match-data-sku-filters";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
@@ -38,6 +39,8 @@ const SCOPE_OBJECT_OPTION_TOOLTIPS = {
     "When inheriting a scope metric: checked (default) locks the checklist measure to the metric value — users cannot edit it. Uncheck to default from the metric but allow manual overrides on the checklist.",
   showAll:
     "Creates one checklist row per matching catalog SKU (tier, style, colour) instead of a single row with a multi-SKU dropdown.",
+  showAllDefault:
+    "Initial measure on each Show All SKU row. Enter any number (e.g. 0, 1, or 2).",
   noCharge:
     "Imported scope lines use $0 unit price and $0 line total. Useful for included items or placeholders that should not add to the quote total.",
   force:
@@ -229,6 +232,7 @@ type Props = {
   selectedIds: string[];
   objectTools: Partial<Record<string, ScopeToolType>>;
   objectShowAll: Partial<Record<string, boolean>>;
+  objectShowAllDefault: Partial<Record<string, ScopeShowAllDefaultQty>>;
   objectNoCharge: Partial<Record<string, boolean>>;
   objectForce: Partial<Record<string, boolean>>;
   objectInheritM2Source: Partial<Record<string, InheritMeasureSource>>;
@@ -236,6 +240,9 @@ type Props = {
   onChange: (ids: string[]) => void;
   onObjectToolsChange: (tools: Partial<Record<string, ScopeToolType>>) => void;
   onObjectShowAllChange: (showAll: Partial<Record<string, boolean>>) => void;
+  onObjectShowAllDefaultChange: (
+    showAllDefault: Partial<Record<string, ScopeShowAllDefaultQty>>,
+  ) => void;
   onObjectNoChargeChange: (noCharge: Partial<Record<string, boolean>>) => void;
   onObjectForceChange: (force: Partial<Record<string, boolean>>) => void;
   onObjectInheritM2SourceChange: (
@@ -258,6 +265,7 @@ export function ScopeAnswerObjectPicker({
   selectedIds,
   objectTools,
   objectShowAll,
+  objectShowAllDefault,
   objectNoCharge,
   objectForce,
   objectInheritM2Source,
@@ -265,6 +273,7 @@ export function ScopeAnswerObjectPicker({
   onChange,
   onObjectToolsChange,
   onObjectShowAllChange,
+  onObjectShowAllDefaultChange,
   onObjectNoChargeChange,
   onObjectForceChange,
   onObjectInheritM2SourceChange,
@@ -443,6 +452,11 @@ export function ScopeAnswerObjectPicker({
         delete next[id];
         onObjectShowAllChange(next);
       }
+      if (objectShowAllDefault[id] != null) {
+        const next = { ...objectShowAllDefault };
+        delete next[id];
+        onObjectShowAllDefaultChange(next);
+      }
       if (objectNoCharge[id]) {
         const next = { ...objectNoCharge };
         delete next[id];
@@ -477,9 +491,23 @@ export function ScopeAnswerObjectPicker({
   function setObjectShowAll(id: string, checked: boolean) {
     if (disabled) return;
     const next = { ...objectShowAll };
-    if (!checked) delete next[id];
-    else next[id] = true;
+    const nextDefault = { ...objectShowAllDefault };
+    if (!checked) {
+      delete next[id];
+      delete nextDefault[id];
+    } else {
+      next[id] = true;
+      if (nextDefault[id] == null) nextDefault[id] = 1;
+    }
     onObjectShowAllChange(next);
+    onObjectShowAllDefaultChange(nextDefault);
+  }
+
+  function setObjectShowAllDefault(id: string, value: number) {
+    if (disabled || objectShowAll[id] !== true) return;
+    const next = { ...objectShowAllDefault };
+    next[id] = value;
+    onObjectShowAllDefaultChange(next);
   }
 
   function setObjectNoCharge(id: string, checked: boolean) {
@@ -708,6 +736,33 @@ export function ScopeAnswerObjectPicker({
                       />
                       <span className="text-sf-text-weak dark:text-zinc-400">Show All</span>
                     </label>
+                    {objectShowAll[item.id] === true ? (
+                      <div
+                        className="flex shrink-0 items-center gap-1.5 text-xs"
+                        title={SCOPE_OBJECT_OPTION_TOOLTIPS.showAllDefault}
+                      >
+                        <span className="text-sf-text-weak dark:text-zinc-400">Default</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          disabled={disabled}
+                          title={SCOPE_OBJECT_OPTION_TOOLTIPS.showAllDefault}
+                          value={objectShowAllDefault[item.id] ?? 1}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw.trim() === "") {
+                              setObjectShowAllDefault(item.id, 0);
+                              return;
+                            }
+                            const n = Number(raw);
+                            if (!Number.isFinite(n) || n < 0) return;
+                            setObjectShowAllDefault(item.id, n);
+                          }}
+                          className="h-7 w-16 rounded border border-sf-border-strong bg-sf-surface px-1.5 text-xs tabular-nums dark:border-zinc-600 dark:bg-zinc-950"
+                        />
+                      </div>
+                    ) : null}
                     <label
                       className="flex shrink-0 cursor-pointer items-center gap-1 text-xs"
                       title={SCOPE_OBJECT_OPTION_TOOLTIPS.noCharge}

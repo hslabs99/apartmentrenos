@@ -40,5 +40,9 @@ export type ProjectPublic = {
   updatedAt?: string | null;
 };
 
-/** Projects list API includes area counts per project. */
-export type ProjectListItem = ProjectPublic & { areaCount: number };
+/** Projects list API includes area counts and checklist final total per project. */
+export type ProjectListItem = ProjectPublic & {
+  areaCount: number;
+  /** Sum of included line final prices (material + labour × settings margin %). */
+  finalTotal: number;
+};

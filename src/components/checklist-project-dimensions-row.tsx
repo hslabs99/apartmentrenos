@@ -10,16 +10,16 @@ function parseOptionalNumber(raw: string): number | null {
 }
 
 const hdrLabel =
-  "mb-0.5 block text-xs font-semibold uppercase tracking-wide text-sf-text-secondary dark:text-zinc-400";
+  "mb-0.5 block text-[10px] font-semibold uppercase tracking-wider text-sf-text-secondary dark:text-zinc-400";
 const inputClass =
-  "w-[6ch] max-w-full rounded border border-sf-border-strong bg-sf-surface px-1.5 py-1 text-xs tabular-nums text-right outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400/60 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-emerald-500";
+  "h-8 w-24 rounded-lg border border-sf-border bg-sf-page px-2.5 text-sm font-medium tabular-nums text-sf-text outline-none transition-all placeholder:text-sf-text-weak focus:border-sf-accent focus:bg-sf-surface focus:ring-2 focus:ring-sf-accent/40 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-sf-accent";
 
 type DimKey = "projectm2" | "projectm2hard" | "projectm2soft" | "ceilingheightm";
 
 const FIELDS: { key: DimKey; label: string }[] = [
-  { key: "projectm2", label: "m² (total)" },
-  { key: "projectm2hard", label: "M2 (Hard Floor)" },
-  { key: "projectm2soft", label: "M2 (Soft Floor)" },
+  { key: "projectm2", label: "M² (Total)" },
+  { key: "projectm2hard", label: "M² (Hard Floor)" },
+  { key: "projectm2soft", label: "M² (Soft Floor)" },
   { key: "ceilingheightm", label: "Ceiling Height (m)" },
 ];
 
@@ -37,11 +37,11 @@ export function ChecklistProjectDimensionsRow({
   onValidationError,
 }: Props) {
   return (
-    <div className="flex w-full flex-wrap items-end gap-x-3 gap-y-2 border-b border-sf-border pb-2 dark:border-zinc-700">
+    <div className="flex w-full flex-wrap items-end gap-x-4 gap-y-2">
       {FIELDS.map(({ key, label }) => {
         const value = project[key];
         return (
-          <label key={key} className="flex min-w-[7rem] flex-col gap-0.5">
+          <label key={key} className="flex flex-col gap-1">
             <span className={hdrLabel}>{label}</span>
             <input
               key={`${key}-${value ?? "empty"}`}
@@ -49,7 +49,7 @@ export function ChecklistProjectDimensionsRow({
               inputMode="decimal"
               className={inputClass}
               defaultValue={value != null ? String(value) : ""}
-              placeholder="Optional"
+              placeholder={key === "projectm2soft" ? "Optional" : undefined}
               disabled={disabled}
               onKeyDown={(e) => {
                 if (e.key === "Enter") (e.target as HTMLInputElement).blur();

@@ -38,30 +38,35 @@ function formatMoney(n: number): string {
   }).format(n);
 }
 
-const wbLabourMoneyClass =
+const wbLabourHoursClass =
   "text-xs font-normal tabular-nums text-sf-text dark:text-zinc-100";
-const wbLabourMoneyManualClass =
+const wbLabourHoursManualClass =
   "text-xs font-semibold tabular-nums text-red-600 dark:text-red-400";
-const wbLabourInputManualClass =
-  "text-red-600 dark:text-red-400";
+const wbLabourCostClass =
+  "text-[10px] tabular-nums text-sf-text-weak dark:text-zinc-500";
+const wbLabourCostManualClass =
+  "text-[10px] font-semibold tabular-nums text-red-600 dark:text-red-400";
+const wbLabourInputManualClass = "text-red-600 dark:text-red-400";
 
 function hasPositiveLabourHours(hours: number | null): boolean {
   return hours != null && Number.isFinite(hours) && hours > 0;
 }
 
-function labourHoursHoverTitle(hours: number | null): string | undefined {
-  if (!hasPositiveLabourHours(hours)) return undefined;
-  return `${formatLabourHours(hours)} hrs`;
-}
-
 function wbLabourCellTitle(
   hours: number | null,
+  cost: number | null,
   warningTitle: string | undefined,
 ): string | undefined {
   const parts: string[] = [];
   if (warningTitle) parts.push(warningTitle);
-  const hrs = labourHoursHoverTitle(hours);
-  if (hrs) parts.push(hrs);
+  if (hasPositiveLabourHours(hours)) {
+    const hrs = `${formatLabourHours(hours)} hrs`;
+    if (cost != null && Number.isFinite(cost) && cost > 0) {
+      parts.push(`${hrs} · ${formatMoney(cost)}`);
+    } else {
+      parts.push(hrs);
+    }
+  }
   return parts.length ? parts.join("\n\n") : undefined;
 }
 
@@ -69,25 +74,62 @@ type WbLabourSiloValueProps = {
   hours: number | null;
   cost: number | null;
   manualOverride?: boolean;
+  /** When true, hours are edited above — show cost only (or —). */
+  costOnly?: boolean;
+  /** Match project-header summary financial typography ($ primary, hours secondary). */
+  summary?: boolean;
   /** @deprecated Use default money styling; only override for exceptional cases. */
   primaryClassName?: string;
 };
 
-/** Workbench labour cell: cost only; hours on hover when non-zero. */
+/**
+ * Workbench labour display: hours and cost both visible.
+ * Header / readonly cells show hours on top and $ below; editable cells use costOnly
+ * (hours live in the input above).
+ */
 export function WbLabourSiloValue({
   hours,
   cost,
   manualOverride = false,
+  costOnly = false,
+  summary = false,
   primaryClassName,
 }: WbLabourSiloValueProps) {
-  const moneyClass =
-    primaryClassName ??
-    (manualOverride ? wbLabourMoneyManualClass : wbLabourMoneyClass);
   const showCost =
     hasPositiveLabourHours(hours) && cost != null && Number.isFinite(cost) && cost > 0;
+  const hoursClass =
+    primaryClassName ??
+    (manualOverride ? wbLabourHoursManualClass : wbLabourHoursClass);
+  const costClass = manualOverride
+    ? wbLabourCostManualClass
+    : summary
+      ? "text-sm tabular-nums text-sf-text dark:text-zinc-100"
+      : wbLabourCostClass;
+  const hoursSummaryClass = manualOverride
+    ? wbLabourHoursManualClass
+    : "text-xs tabular-nums text-sf-text-weak dark:text-zinc-400";
+
+  if (costOnly) {
+    return <span className={costClass}>{showCost ? formatMoney(cost!) : "—"}</span>;
+  }
+
+  if (summary) {
+    return (
+      <span className="flex flex-col items-end leading-tight">
+        <span className={hoursSummaryClass}>
+          {hasPositiveLabourHours(hours) ? formatLabourHours(hours) : "—"}
+        </span>
+        <span className={costClass}>{showCost ? formatMoney(cost!) : "—"}</span>
+      </span>
+    );
+  }
+
   return (
-    <span className={moneyClass}>
-      {showCost ? formatMoney(cost) : "—"}
+    <span className="flex flex-col items-end leading-tight">
+      <span className={hoursClass}>
+        {hasPositiveLabourHours(hours) ? formatLabourHours(hours) : "—"}
+      </span>
+      <span className={costClass}>{showCost ? formatMoney(cost!) : "—"}</span>
     </span>
   );
 }
@@ -123,6 +165,7 @@ export function WbLabourSiloCell({
   const manualTitle = manualOverride ? "Manually edited labour hours" : undefined;
   const cellTitle = wbLabourCellTitle(
     hours,
+    cost,
     [manualTitle, showBang ? warningTitle : undefined].filter(Boolean).join("\n\n") ||
       undefined,
   );
@@ -160,7 +203,12 @@ export function WbLabourSiloCell({
             }}
           />
         </div>
-        <WbLabourSiloValue hours={hours} cost={cost} manualOverride={manualOverride} />
+        <WbLabourSiloValue
+          hours={hours}
+          cost={cost}
+          manualOverride={manualOverride}
+          costOnly
+        />
       </td>
     );
   }

@@ -9,6 +9,8 @@ import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 
 /**
  * Recompute lookup silo hours from cached object labour rates (client-side preview).
+ * When the rates table has not loaded yet (`objectLabourRates` empty), leave hours unchanged
+ * so a sync race cannot wipe type labour before the table arrives.
  */
 export function applyLookupLabourToProjectLine(
   line: ProjectAreaObjectPublic,
@@ -18,6 +20,9 @@ export function applyLookupLabourToProjectLine(
   lineUom?: string,
 ): ProjectAreaObjectPublic {
   const uom = lineUom ?? line.customuom ?? "";
+  if (objectLabourRates.length === 0) {
+    return { ...line, custommeasure, customuom: uom };
+  }
   const skuProduct = skuProductForObjectLabourLookup(line);
   const { row } = findObjectLabourRateByObjectName(
     objectLabourRates,

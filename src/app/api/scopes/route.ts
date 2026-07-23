@@ -196,6 +196,7 @@ export async function POST(req: NextRequest) {
         sortOrderByAreaDocId: {},
         kind: "question",
         question: parsed.data.question,
+        explanation: (parsed.data.explanation ?? "").trim() || null,
         answers,
         ...(scopeMetrics.length > 0 ? { scopeMetrics } : {}),
         systemScope,

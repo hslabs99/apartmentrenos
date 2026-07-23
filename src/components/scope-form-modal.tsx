@@ -26,6 +26,7 @@ import {
 import type { AreaPublic } from "@/types/area";
 import type { InheritMeasureSource } from "@/types/scope-metric";
 import type { ScopeMetricPublic } from "@/types/scope-metric";
+import type { ScopeShowAllDefaultQty } from "@/types/scope";
 import type { QuoteObjectPublic } from "@/types/quote-object";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { ScopePublic } from "@/types/scope";
@@ -95,6 +96,7 @@ export function ScopeFormModal({
   const [tagAllAreasDraft, setTagAllAreasDraft] = useState(false);
   const [questionAreaPickerKey, setQuestionAreaPickerKey] = useState(0);
   const [question, setQuestion] = useState("");
+  const [explanation, setExplanation] = useState("");
   const [draftAnswers, setDraftAnswers] = useState<ScopeFormDraftAnswer[]>([]);
   const [selectedAnswerId, setSelectedAnswerId] = useState<string | null>(null);
   const [quoteObjects, setQuoteObjects] = useState<QuoteObjectPublic[]>(quoteObjectsProp);
@@ -288,16 +290,19 @@ export function ScopeFormModal({
       setQuestionAreaDocIds([...defaultAreaDocIds]);
       setQuestionAreaPickerKey((k) => k + 1);
       setQuestion("");
+      setExplanation("");
       const first = {
         answerid: crypto.randomUUID(),
         label: "Yes",
         attachedQuoteObjectIds: [] as string[],
         attachedObjectTools: {},
         attachedObjectShowAll: {},
+        attachedObjectShowAllDefault: {},
         attachedObjectNoCharge: {},
         attachedObjectForce: {},
         attachedObjectInheritM2Source: {},
         attachedObjectInheritMeasureLocked: {},
+        includeOnDemolitionReport: false,
       };
       setDraftAnswers([first]);
       setSelectedAnswerId(first.answerid);
@@ -316,6 +321,7 @@ export function ScopeFormModal({
       setTagAllAreasDraft(false);
       setQuestionAreaDocIds([]);
       setQuestion("");
+      setExplanation("");
       setDraftAnswers([]);
       setSelectedAnswerId(null);
       setScopeMetricsDraft([]);
@@ -329,6 +335,7 @@ export function ScopeFormModal({
     setTagAllAreasDraft(false);
     setQuestionAreaDocIds([...activeScope.areaDocIds]);
     setQuestion(activeScope.question);
+    setExplanation(activeScope.explanation?.trim() ?? "");
     setSystemScopeDraft(activeScope.systemScope === true);
     setSystemScopeTypeDraft(activeScope.systemScopeType ?? DEFAULT_SYSTEM_SCOPE_TYPE);
     setExposeToolDraft(activeScope.exposeTool === true);
@@ -395,10 +402,12 @@ export function ScopeFormModal({
         attachedQuoteObjectIds: [],
         attachedObjectTools: {},
         attachedObjectShowAll: {},
+        attachedObjectShowAllDefault: {},
         attachedObjectNoCharge: {},
         attachedObjectForce: {},
         attachedObjectInheritM2Source: {},
         attachedObjectInheritMeasureLocked: {},
+        includeOnDemolitionReport: false,
       },
     ]);
     setSelectedAnswerId(id);
@@ -425,6 +434,17 @@ export function ScopeFormModal({
     );
   }
 
+  function updateAnswerIncludeOnDemolitionReport(
+    answerid: string,
+    includeOnDemolitionReport: boolean,
+  ) {
+    setDraftAnswers((prev) =>
+      prev.map((a) =>
+        a.answerid === answerid ? { ...a, includeOnDemolitionReport } : a,
+      ),
+    );
+  }
+
   function setAnswerQuoteObjectIds(answerid: string, ids: string[]) {
     setDraftAnswers((prev) =>
       prev.map((a) => {
@@ -435,6 +455,7 @@ export function ScopeFormModal({
           if (idSet.has(key)) attachedObjectTools[key] = tool;
         }
         const attachedObjectShowAll: Partial<Record<string, boolean>> = {};
+        const attachedObjectShowAllDefault: Partial<Record<string, ScopeShowAllDefaultQty>> = {};
         const attachedObjectNoCharge: Partial<Record<string, boolean>> = {};
         const attachedObjectForce: Partial<Record<string, boolean>> = {};
         const attachedObjectInheritM2Source: Partial<Record<string, InheritMeasureSource>> =
@@ -442,6 +463,11 @@ export function ScopeFormModal({
         const attachedObjectInheritMeasureLocked: Partial<Record<string, boolean>> = {};
         for (const [key, flag] of Object.entries(a.attachedObjectShowAll)) {
           if (idSet.has(key) && flag) attachedObjectShowAll[key] = true;
+        }
+        for (const [key, qty] of Object.entries(a.attachedObjectShowAllDefault)) {
+          if (idSet.has(key) && attachedObjectShowAll[key] && qty != null) {
+            attachedObjectShowAllDefault[key] = qty;
+          }
         }
         for (const [key, flag] of Object.entries(a.attachedObjectNoCharge)) {
           if (idSet.has(key) && flag) attachedObjectNoCharge[key] = true;
@@ -460,6 +486,7 @@ export function ScopeFormModal({
           attachedQuoteObjectIds: ids,
           attachedObjectTools,
           attachedObjectShowAll,
+          attachedObjectShowAllDefault,
           attachedObjectNoCharge,
           attachedObjectForce,
           attachedObjectInheritM2Source,
@@ -483,7 +510,37 @@ export function ScopeFormModal({
     showAll: Partial<Record<string, boolean>>,
   ) {
     setDraftAnswers((prev) =>
-      prev.map((a) => (a.answerid === answerid ? { ...a, attachedObjectShowAll: showAll } : a)),
+      prev.map((a) => {
+        if (a.answerid !== answerid) return a;
+        const attachedObjectShowAllDefault: Partial<Record<string, ScopeShowAllDefaultQty>> =
+          {};
+        for (const [key, qty] of Object.entries(a.attachedObjectShowAllDefault)) {
+          if (showAll[key] && qty != null) attachedObjectShowAllDefault[key] = qty;
+        }
+        for (const [key, flag] of Object.entries(showAll)) {
+          if (flag && attachedObjectShowAllDefault[key] == null) {
+            attachedObjectShowAllDefault[key] = 1;
+          }
+        }
+        return {
+          ...a,
+          attachedObjectShowAll: showAll,
+          attachedObjectShowAllDefault,
+        };
+      }),
+    );
+  }
+
+  function setAnswerObjectShowAllDefault(
+    answerid: string,
+    showAllDefault: Partial<Record<string, ScopeShowAllDefaultQty>>,
+  ) {
+    setDraftAnswers((prev) =>
+      prev.map((a) =>
+        a.answerid === answerid
+          ? { ...a, attachedObjectShowAllDefault: showAllDefault }
+          : a,
+      ),
     );
   }
 
@@ -613,6 +670,7 @@ export function ScopeFormModal({
       } else {
         const payload: Record<string, unknown> = {
           question,
+          explanation: explanation.trim() || null,
           answers: draftToPayload(draftAnswers, quoteById),
           scopeMetrics: scopeMetricsDraft.map((m) => ({
             metricid: m.metricid,
@@ -946,6 +1004,26 @@ export function ScopeFormModal({
             ) : null}
 
             {!isSectionMarkerForm && activeTab === "details" ? (
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
+                  Explanation (max 500 characters)
+                </span>
+                <textarea
+                  maxLength={500}
+                  rows={3}
+                  value={explanation}
+                  onChange={(e) => setExplanation(e.target.value)}
+                  className={inputClass}
+                  placeholder="e.g. Check whether the client wants a single- or double-drawer dishwasher before selecting"
+                />
+                <span className="mt-1 block text-xs text-sf-text-weak">
+                  Shown under the question on the checklist to guide answer selection.{" "}
+                  {explanation.length}/500
+                </span>
+              </label>
+            ) : null}
+
+            {!isSectionMarkerForm && activeTab === "details" ? (
               <div className="space-y-3 rounded-lg border border-sf-border bg-sf-page/40 p-4 dark:border-zinc-700 dark:bg-zinc-900/40">
                 <label className="flex cursor-pointer items-start gap-2 text-sm text-sf-text dark:text-zinc-200">
                   <input
@@ -1082,6 +1160,27 @@ export function ScopeFormModal({
                               placeholder="Answer label"
                               maxLength={200}
                             />
+                            <label className="mb-2 flex cursor-pointer items-start gap-2 text-xs text-sf-text dark:text-zinc-200">
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 rounded border-sf-border-strong"
+                                checked={a.includeOnDemolitionReport}
+                                onChange={(e) =>
+                                  updateAnswerIncludeOnDemolitionReport(
+                                    a.answerid,
+                                    e.target.checked,
+                                  )
+                                }
+                                onFocus={() => setSelectedAnswerId(a.answerid)}
+                              />
+                              <span>
+                                <span className="font-medium">Demolition report</span>
+                                <span className="mt-0.5 block text-sf-text-weak dark:text-zinc-400">
+                                  Show attached objects on the demolition report as retain / do not
+                                  remove.
+                                </span>
+                              </span>
+                            </label>
                             <button
                               type="button"
                               onClick={() => setAnswerRemoveConfirmId(a.answerid)}
@@ -1101,7 +1200,8 @@ export function ScopeFormModal({
                   <p className="mb-3 text-xs text-sf-text-weak dark:text-zinc-400">
                     Expand each object type (+/−), then multi-select quote objects. Drag selected
                     objects to set checklist order. Use Show All on an object to create one row per
-                    matching SKU instead of a dropdown. Use No Charge to import the line at $0.
+                    matching SKU instead of a dropdown; with Show All on, set Default to the starting
+                    measure for each SKU (any number). Use No Charge to import the line at $0.
                     For each selected object you can attach a
                     calculator (e.g. M² calculator on benchtops or floors). On the checklist, that icon
                     appears on the SKU row and can fill the measure field.
@@ -1129,6 +1229,7 @@ export function ScopeFormModal({
                       selectedIds={selectedAnswer.attachedQuoteObjectIds}
                       objectTools={selectedAnswer.attachedObjectTools}
                       objectShowAll={selectedAnswer.attachedObjectShowAll}
+                      objectShowAllDefault={selectedAnswer.attachedObjectShowAllDefault}
                       objectNoCharge={selectedAnswer.attachedObjectNoCharge}
                       objectForce={selectedAnswer.attachedObjectForce}
                       objectInheritM2Source={selectedAnswer.attachedObjectInheritM2Source}
@@ -1139,6 +1240,9 @@ export function ScopeFormModal({
                       }
                       onObjectShowAllChange={(showAll) =>
                         setAnswerObjectShowAll(selectedAnswer.answerid, showAll)
+                      }
+                      onObjectShowAllDefaultChange={(showAllDefault) =>
+                        setAnswerObjectShowAllDefault(selectedAnswer.answerid, showAllDefault)
                       }
                       onObjectNoChargeChange={(noCharge) =>
                         setAnswerObjectNoCharge(selectedAnswer.answerid, noCharge)

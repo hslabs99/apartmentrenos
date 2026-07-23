@@ -1,7 +1,7 @@
 "use client";
 
 import { IconDotsHorizontal } from "@/components/icons/lightning-icons";
-import { sfRowIconBtn } from "@/lib/sf-row-actions";
+import { clRowIconBtnClass, clRowIconGlyphClass } from "@/components/cl-checklist-layout";
 import { useEffect, useRef, useState } from "react";
 
 type Props = {
@@ -33,10 +33,10 @@ export function ClLineRowMenu({ lineLabel, disabled = false, onClone }: Props) {
         aria-haspopup="menu"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        className={sfRowIconBtn}
+        className={clRowIconBtnClass}
         title="Line actions"
       >
-        <IconDotsHorizontal className="h-4 w-4" />
+        <IconDotsHorizontal className={clRowIconGlyphClass} />
       </button>
       {open ? (
         <div

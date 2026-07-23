@@ -200,7 +200,9 @@ export function ProjectEditorPanel() {
   }
 
   const inputClass =
-    "min-h-12 w-full rounded-lg border border-sf-border-strong bg-sf-surface px-3 py-2.5 text-base dark:border-zinc-600 dark:bg-zinc-950";
+    "h-10 w-full rounded-lg border border-sf-border bg-sf-surface px-3 text-sm text-sf-text outline-none transition-colors placeholder:text-sf-text-weak focus:border-sf-accent focus:ring-2 focus:ring-sf-accent/30 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200";
+  const labelClass =
+    "mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-sf-text-secondary dark:text-zinc-400";
 
   const styleOptions = useMemo(() => {
     const out = distinctLookupValues(lookups, LOOKUP_TYPE_STYLE);
@@ -215,37 +217,51 @@ export function ProjectEditorPanel() {
 
   if (!projectDocId) {
     return (
-      <div className="space-y-6">
-        <div className="space-y-4">
-          <h1 className="text-xl font-normal tracking-tight text-sf-text md:text-2xl dark:text-zinc-50">Project</h1>
-          <ProjectsTabs />
-        </div>
-        <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
+      <div>
+        <ProjectsTabs />
+        <p className="px-6 py-8 text-sm text-sf-text-secondary dark:text-zinc-400">
           New projects are created from the Projects list. Taking you there…
         </p>
       </div>
     );
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="space-y-4">
-        <h1 className="text-xl font-normal tracking-tight text-sf-text md:text-2xl dark:text-zinc-50">Project</h1>
-        <ProjectsTabs />
-      </div>
+  const SectionTitle = ({ children }: { children: React.ReactNode }) => (
+    <div className="flex items-center gap-3 pt-2 pb-1">
+      <span className="text-xs font-semibold uppercase tracking-widest text-sf-brand/50 dark:text-zinc-500">
+        {children}
+      </span>
+      <div className="h-px flex-1 bg-sf-border dark:bg-zinc-700" />
+    </div>
+  );
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-sf-text-secondary dark:text-zinc-400">Editing project details</p>
-        <div className="flex flex-wrap gap-2">
+  return (
+    <div className="min-h-full bg-sf-page dark:bg-zinc-950">
+      <ProjectsTabs />
+
+      {/* Sub-header */}
+      <div className="flex items-center justify-between border-b border-sf-border bg-sf-surface px-6 py-3 dark:border-zinc-700 dark:bg-zinc-900">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="text-xs text-sf-text-secondary">Editing project details</span>
+          {projectname ? (
+            <>
+              <span className="text-sf-border dark:text-zinc-600">·</span>
+              <span className="truncate text-xs font-medium text-sf-brand dark:text-zinc-100">
+                {projectname}
+              </span>
+            </>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
           <Link
             href="/projects"
-            className="min-h-11 rounded-lg border border-sf-border-strong px-4 py-2.5 text-sm font-medium dark:border-zinc-600"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-sf-border bg-sf-surface px-4 py-2 text-sm font-medium text-sf-text transition-colors hover:bg-sf-page dark:border-zinc-600 dark:hover:bg-zinc-800"
           >
             All projects
           </Link>
           <Link
             href={`/projects/project/workbench?id=${encodeURIComponent(projectDocId)}`}
-            className="min-h-11 rounded-lg bg-sf-brand px-4 py-2.5 text-sm font-medium text-white"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-sf-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-sf-brand-hover"
           >
             Workbench
           </Link>
@@ -253,279 +269,282 @@ export function ProjectEditorPanel() {
       </div>
 
       {error ? (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
+        <div className="mx-6 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200">
           {error}
         </div>
       ) : null}
 
-      <div className="rounded-lg border border-sf-border bg-sf-surface p-5 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/50 md:p-6">
-        {loading ? (
-          <p className="text-sf-text-secondary dark:text-zinc-400">Loading…</p>
-        ) : (
-          <form onSubmit={onSave} className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Finish level
-                </span>
-                <PriceLevelSelect
-                  value={projectfinish}
-                  onChange={setProjectfinish}
-                  className={inputClass}
-                  emptyLabel="Select price level"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Style
-                </span>
-                <select
-                  value={defaultstyle}
-                  onChange={(e) => setDefaultstyle(e.target.value)}
-                  className={inputClass}
-                >
-                  <option value="">Not set</option>
-                  {styleOptions.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Colour
-                </span>
-                <input
-                  value={defaultcolour}
-                  onChange={(e) => setDefaultcolour(e.target.value)}
-                  className={inputClass}
-                  placeholder="Not set"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Project ID
-                </span>
-                <input
-                  readOnly
-                  value={numericProjectId != null ? String(numericProjectId) : "—"}
-                  className={`${inputClass} bg-sf-page dark:bg-zinc-900`}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Name
-                </span>
-                <input
-                  required
-                  value={projectname}
-                  onChange={(e) => setProjectname(e.target.value)}
-                  className={inputClass}
-                />
-              </label>
-              <label className="block sm:col-span-2 sm:max-w-xs">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Status
-                </span>
-                <select
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as ProjectStatus)}
-                  className={inputClass}
-                >
-                  {PROJECT_STATUS_OPTIONS.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block sm:col-span-2">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Description
-                </span>
-                <textarea
-                  value={projectdescription}
-                  onChange={(e) => setProjectdescription(e.target.value)}
-                  rows={3}
-                  className={`${inputClass} min-h-[5rem] resize-y`}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  m² (total)
-                </span>
-                <input
-                  value={projectm2Str}
-                  onChange={(e) => setProjectm2Str(e.target.value)}
-                  inputMode="decimal"
-                  placeholder="Optional"
-                  className={inputClass}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  M2 (Hard Floor)
-                </span>
-                <input
-                  value={projectm2HardStr}
-                  onChange={(e) => setProjectm2HardStr(e.target.value)}
-                  inputMode="decimal"
-                  placeholder="Optional"
-                  className={inputClass}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  M2 (Soft Floor)
-                </span>
-                <input
-                  value={projectm2SoftStr}
-                  onChange={(e) => setProjectm2SoftStr(e.target.value)}
-                  inputMode="decimal"
-                  placeholder="Optional"
-                  className={inputClass}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Ceiling Height (m)
-                </span>
-                <input
-                  value={ceilingHeightMStr}
-                  onChange={(e) => setCeilingHeightMStr(e.target.value)}
-                  inputMode="decimal"
-                  placeholder="Optional"
-                  className={inputClass}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Address
-                </span>
-                <input
-                  value={projectaddress}
-                  onChange={(e) => setProjectaddress(e.target.value)}
-                  className={inputClass}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Contact
-                </span>
-                <input
-                  value={projectcontact}
-                  onChange={(e) => setProjectcontact(e.target.value)}
-                  className={inputClass}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Phone
-                </span>
-                <input
-                  value={projecttel}
-                  onChange={(e) => setProjecttel(e.target.value)}
-                  className={inputClass}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Email
-                </span>
-                <input
-                  type="email"
-                  value={projectemail}
-                  onChange={(e) => setProjectemail(e.target.value)}
-                  className={inputClass}
-                />
-              </label>
-              <label className="block sm:col-span-2">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Brief
-                </span>
-                <textarea
-                  value={projectbrief}
-                  onChange={(e) => setProjectbrief(e.target.value)}
-                  rows={2}
-                  className={`${inputClass} min-h-[4rem] resize-y`}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Target start
-                </span>
-                <input
-                  type="date"
-                  value={targetstartdate}
-                  onChange={(e) => setTargetstartdate(e.target.value)}
-                  className={inputClass}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Spec 2
-                </span>
-                <input value={spec2} onChange={(e) => setSpec2(e.target.value)} className={inputClass} />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Spec 3
-                </span>
-                <input value={spec3} onChange={(e) => setSpec3(e.target.value)} className={inputClass} />
-              </label>
-              <label className="block sm:col-span-2">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Notes
-                </span>
-                <textarea
-                  value={projectnotes}
-                  onChange={(e) => setProjectnotes(e.target.value)}
-                  rows={3}
-                  className={`${inputClass} min-h-[5rem] resize-y`}
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Quoted by
-                </span>
-                <select
-                  value={quotedby}
-                  onChange={(e) => setQuotedby(e.target.value)}
-                  className={inputClass}
-                >
-                  <option value="">Select sales staff</option>
-                  {salesStaff.map((s) => (
-                    <option key={s.id} value={s.name}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
-                  Quoted on
-                </span>
-                <input
-                  type="date"
-                  value={quotedon}
-                  onChange={(e) => setQuotedon(e.target.value)}
-                  className={inputClass}
-                />
-              </label>
-            </div>
+      <div className="mx-auto max-w-5xl px-6 py-8">
+        <div className="overflow-hidden rounded-xl border border-sf-border bg-sf-surface shadow-sm dark:border-zinc-700 dark:bg-zinc-900/50">
+          <div className="border-b border-sf-border bg-[#F8FAFC] px-8 py-5 dark:border-zinc-700 dark:bg-zinc-900">
+            <h2 className="text-base font-semibold text-sf-brand dark:text-zinc-50">Project Details</h2>
+            <p className="mt-0.5 text-xs text-sf-text-secondary">
+              Configure project-wide settings, defaults, and contact information.
+            </p>
+          </div>
 
-            <div className="flex justify-end gap-3">
-              <button
-                type="submit"
-                disabled={saving}
-                className="min-h-12 rounded-lg bg-sf-brand px-5 py-3 text-base font-medium text-white disabled:opacity-50"
-              >
-                {saving ? "Saving…" : "Save project"}
-              </button>
-            </div>
-          </form>
-        )}
+          {loading ? (
+            <p className="px-8 py-6 text-sf-text-secondary dark:text-zinc-400">Loading…</p>
+          ) : (
+            <form onSubmit={onSave}>
+              <div className="space-y-6 px-8 py-6">
+                <SectionTitle>Configuration</SectionTitle>
+                <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+                  <label className="block">
+                    <span className={labelClass}>Finish Level</span>
+                    <PriceLevelSelect
+                      value={projectfinish}
+                      onChange={setProjectfinish}
+                      className={inputClass}
+                      emptyLabel="Select price level"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>Style</span>
+                    <select
+                      value={defaultstyle}
+                      onChange={(e) => setDefaultstyle(e.target.value)}
+                      className={inputClass}
+                    >
+                      <option value="">Not set</option>
+                      {styleOptions.map((v) => (
+                        <option key={v} value={v}>
+                          {v}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>Colour</span>
+                    <input
+                      value={defaultcolour}
+                      onChange={(e) => setDefaultcolour(e.target.value)}
+                      className={inputClass}
+                      placeholder="Not set"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>Project ID</span>
+                    <input
+                      readOnly
+                      value={numericProjectId != null ? String(numericProjectId) : "—"}
+                      className={`${inputClass} cursor-default bg-sf-page text-sf-text-weak dark:bg-zinc-950`}
+                    />
+                  </label>
+                </div>
+
+                <SectionTitle>Identity</SectionTitle>
+                <div className="space-y-5">
+                  <label className="block">
+                    <span className={labelClass}>Name</span>
+                    <input
+                      required
+                      value={projectname}
+                      onChange={(e) => setProjectname(e.target.value)}
+                      className={inputClass}
+                    />
+                  </label>
+                  <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
+                    <label className="block">
+                      <span className={labelClass}>Status</span>
+                      <select
+                        value={status}
+                        onChange={(e) => setStatus(e.target.value as ProjectStatus)}
+                        className={inputClass}
+                      >
+                        {PROJECT_STATUS_OPTIONS.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <label className="block">
+                    <span className={labelClass}>Description</span>
+                    <textarea
+                      value={projectdescription}
+                      onChange={(e) => setProjectdescription(e.target.value)}
+                      rows={3}
+                      className={`${inputClass} min-h-[5rem] resize-none leading-relaxed`}
+                    />
+                  </label>
+                </div>
+
+                <SectionTitle>Dimensions</SectionTitle>
+                <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+                  <label className="block">
+                    <span className={labelClass}>m² (Total)</span>
+                    <input
+                      value={projectm2Str}
+                      onChange={(e) => setProjectm2Str(e.target.value)}
+                      inputMode="decimal"
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>M2 (Hard Floor)</span>
+                    <input
+                      value={projectm2HardStr}
+                      onChange={(e) => setProjectm2HardStr(e.target.value)}
+                      inputMode="decimal"
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>M2 (Soft Floor)</span>
+                    <input
+                      value={projectm2SoftStr}
+                      onChange={(e) => setProjectm2SoftStr(e.target.value)}
+                      inputMode="decimal"
+                      placeholder="Optional"
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>Ceiling Height (m)</span>
+                    <input
+                      value={ceilingHeightMStr}
+                      onChange={(e) => setCeilingHeightMStr(e.target.value)}
+                      inputMode="decimal"
+                      className={inputClass}
+                    />
+                  </label>
+                </div>
+
+                <SectionTitle>Contact</SectionTitle>
+                <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+                  <label className="block">
+                    <span className={labelClass}>Address</span>
+                    <input
+                      value={projectaddress}
+                      onChange={(e) => setProjectaddress(e.target.value)}
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>Contact</span>
+                    <input
+                      value={projectcontact}
+                      onChange={(e) => setProjectcontact(e.target.value)}
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>Phone</span>
+                    <input
+                      value={projecttel}
+                      onChange={(e) => setProjecttel(e.target.value)}
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>Email</span>
+                    <input
+                      type="email"
+                      value={projectemail}
+                      onChange={(e) => setProjectemail(e.target.value)}
+                      className={inputClass}
+                    />
+                  </label>
+                </div>
+
+                <SectionTitle>Brief & Specifications</SectionTitle>
+                <div className="space-y-5">
+                  <label className="block">
+                    <span className={labelClass}>Brief</span>
+                    <textarea
+                      value={projectbrief}
+                      onChange={(e) => setProjectbrief(e.target.value)}
+                      rows={3}
+                      className={`${inputClass} min-h-[4rem] resize-none leading-relaxed`}
+                    />
+                  </label>
+                  <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+                    <label className="block">
+                      <span className={labelClass}>Target Start</span>
+                      <input
+                        type="date"
+                        value={targetstartdate}
+                        onChange={(e) => setTargetstartdate(e.target.value)}
+                        className={inputClass}
+                      />
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+                    <label className="block">
+                      <span className={labelClass}>Spec 2</span>
+                      <input
+                        value={spec2}
+                        onChange={(e) => setSpec2(e.target.value)}
+                        placeholder="Optional"
+                        className={inputClass}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={labelClass}>Spec 3</span>
+                      <input
+                        value={spec3}
+                        onChange={(e) => setSpec3(e.target.value)}
+                        placeholder="Optional"
+                        className={inputClass}
+                      />
+                    </label>
+                  </div>
+                  <label className="block">
+                    <span className={labelClass}>Notes</span>
+                    <textarea
+                      value={projectnotes}
+                      onChange={(e) => setProjectnotes(e.target.value)}
+                      rows={2}
+                      placeholder="Internal notes…"
+                      className={`${inputClass} min-h-[4rem] resize-none leading-relaxed`}
+                    />
+                  </label>
+                </div>
+
+                <SectionTitle>Quoting</SectionTitle>
+                <div className="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+                  <label className="block">
+                    <span className={labelClass}>Quoted By</span>
+                    <select
+                      value={quotedby}
+                      onChange={(e) => setQuotedby(e.target.value)}
+                      className={inputClass}
+                    >
+                      <option value="">Select sales staff</option>
+                      {salesStaff.map((s) => (
+                        <option key={s.id} value={s.name}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className={labelClass}>Quoted On</span>
+                    <input
+                      type="date"
+                      value={quotedon}
+                      onChange={(e) => setQuotedon(e.target.value)}
+                      className={inputClass}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between border-t border-sf-border bg-[#F8FAFC] px-8 py-5 dark:border-zinc-700 dark:bg-zinc-900">
+                <p className="text-xs text-sf-text-weak">Save to update this project.</p>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 rounded-lg bg-sf-brand px-6 py-2.5 text-sm font-semibold text-white transition-all hover:bg-sf-brand-hover disabled:opacity-50"
+                >
+                  {saving ? "Saving…" : "Save Project"}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       </div>
     </div>
   );

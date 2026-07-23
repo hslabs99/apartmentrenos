@@ -5,6 +5,21 @@ import type { ScopeMetricPublic } from "@/types/scope-metric";
 
 export type { ScopeToolType, SystemScopeType };
 
+/** Initial measure for each Show All SKU line (any non-negative number). */
+export type ScopeShowAllDefaultQty = number;
+
+/** Parse stored Show All default measure; accepts legacy `"one"` / `"zero"`. */
+export function parseScopeShowAllDefaultQty(raw: unknown): ScopeShowAllDefaultQty | null {
+  if (raw === "one") return 1;
+  if (raw === "zero") return 0;
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) return raw;
+  if (typeof raw === "string" && raw.trim() !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+}
+
 /** One answer option for a scope question; stable answerid for downstream use. */
 export type ScopeAnswerPublic = {
   answerid: string;
@@ -32,6 +47,11 @@ export type ScopeAnswerPublic = {
    * instead of one line with a multi-SKU dropdown.
    */
   attachedObjectShowAll?: Partial<Record<string, boolean>>;
+  /**
+   * When Show All is on: initial measure for each expanded SKU line.
+   * Only meaningful for keys also present in `attachedObjectShowAll`.
+   */
+  attachedObjectShowAllDefault?: Partial<Record<string, ScopeShowAllDefaultQty>>;
   /** When true, scope lines for this quote object import with $0 unit and line price. */
   attachedObjectNoCharge?: Partial<Record<string, boolean>>;
   /**
@@ -49,6 +69,11 @@ export type ScopeAnswerPublic = {
    * Omitted or `true` keeps the measure locked to the scope metric (default).
    */
   attachedObjectInheritMeasureLocked?: Partial<Record<string, boolean>>;
+  /**
+   * When true, selecting this answer includes its attached quote objects on the
+   * demolition trade report (retain / do-not-remove callout).
+   */
+  includeOnDemolitionReport?: boolean;
 };
 
 /** `header` / `footer` = section markers only (no answers); `question` = normal scope with answers. */
@@ -75,6 +100,11 @@ export type ScopePublic = {
   /** All tagged area names for table display (e.g. "Kitchen, Bathroom"). */
   areaNamesDisplay?: string;
   question: string;
+  /**
+   * Optional admin guidance shown under the question on the checklist
+   * (how to choose an answer).
+   */
+  explanation?: string | null;
   answers: ScopeAnswerPublic[];
   /** Up to 4 metrics (e.g. Tiled Area m²) shown on checklist when tagged answers are selected. */
   scopeMetrics?: ScopeMetricPublic[];

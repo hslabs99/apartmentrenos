@@ -28,6 +28,7 @@ import {
 } from "@/lib/server/scope-metric-values";
 import type { InheritMeasureSource } from "@/types/scope-metric";
 import { isInheritMeasureSource } from "@/lib/scope-metrics";
+import { parseScopeShowAllDefaultQty } from "@/types/scope";
 import { scopeMetricValuesMap } from "@/lib/inherit-m2-source";
 import {
   customMeasureForNewProjectLine,
@@ -441,6 +442,7 @@ export async function applyScopeAnswerToProjectArea(
   let answerTierIds: number[] | undefined;
   const scopeInheritByObjectId = new Map<number, InheritMeasureSource>();
   const scopeInheritMeasureLockedByObjectId = new Map<number, boolean>();
+  const showAllDefaultByObjectId = new Map<number, number>();
 
   const skuFilters = async () => {
     const { style, colour } = await resolveEffectiveStyleColour(db, projectAreaDocId, projectid);
@@ -451,6 +453,7 @@ export async function applyScopeAnswerToProjectArea(
   if (catalogQuoteObjectIds.length > 0) {
     const filters = await skuFilters();
     const attachedShowAll = answer.attachedObjectShowAll ?? {};
+    const attachedShowAllDefault = answer.attachedObjectShowAllDefault ?? {};
     const attachedNoCharge = answer.attachedObjectNoCharge ?? {};
     const attachedInheritM2 = answer.attachedObjectInheritM2Source ?? {};
     const attachedInheritMeasureLocked = answer.attachedObjectInheritMeasureLocked ?? {};
@@ -491,6 +494,10 @@ export async function applyScopeAnswerToProjectArea(
       const showAll = attachedShowAll[trimmed] === true;
       const noCharge = attachedNoCharge[trimmed] === true;
       const lineFlags = { scopeNoCharge: noCharge };
+      if (showAll) {
+        const parsed = parseScopeShowAllDefaultQty(attachedShowAllDefault[trimmed]);
+        showAllDefaultByObjectId.set(objectid, parsed ?? 1);
+      }
 
       if (showAll) {
         const skus = await resolveAllSkusForQuoteObject(db, data, filters);
@@ -647,11 +654,16 @@ export async function applyScopeAnswerToProjectArea(
         resolvedSku = hit ? { skuId: hit.skuId, product: hit.product } : null;
       }
       const skuCalcM2 = await loadSkuCalcM2Fields(db, resolvedSku?.skuId);
+      const showAllDefaultQty = pl.scopeShowAllSku
+        ? showAllDefaultByObjectId.get(pl.objectid)
+        : undefined;
+      const explicitShowAllMeasure =
+        showAllDefaultQty != null ? showAllDefaultQty : undefined;
       const custommeasure = customMeasureForNewProjectLine(
         q,
         pricing.measurement,
         measureCtx,
-        undefined,
+        explicitShowAllMeasure,
         scopeInheritMeasureSource,
         metricMap,
         scopeMetrics,

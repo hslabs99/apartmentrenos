@@ -156,7 +156,7 @@ export async function GET() {
         requestedGid,
         debug,
         hint:
-          "Share the spreadsheet with firebase-adminsdk-fbsvc@apartmentrenos-1575e.iam.gserviceaccount.com (or your service account client_email) as Viewer. Ensure Google Sheets API is enabled in GCP.",
+          "Share the spreadsheet as Viewer with firebase-adminsdk-fbsvc@apartmentrenos-1575e.iam.gserviceaccount.com (local key) and/or firebase-app-hosting-compute@apartmentrenos-1575e.iam.gserviceaccount.com (live App Hosting ADC). Ensure Google Sheets API is enabled in GCP. For live, set FIREBASE_SERVICE_ACCOUNT_JSON as an App Hosting secret if ADC is not enough.",
       },
       { status: 500 },
     );

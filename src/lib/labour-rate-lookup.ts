@@ -2,8 +2,10 @@ import {
   LABOUR_RATE_CATEGORY,
   LABOUR_RATE_PRODUCT_TYPE,
   LABOUR_SILO_RATE_PRODUCT,
+  LOOKUP_LABOUR_SILO_KEYS,
   type LabourSiloKey,
 } from "@/lib/labour-silo";
+import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import { isAllLookupOrFilterValue } from "@/lib/lookup-list-values";
 import type { DataObjectLabourRatePublic } from "@/types/data-object-labour-rate-public";
 import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
@@ -46,8 +48,10 @@ export type ObjectLabourLookup = {
 
 /**
  * Resolve object labour hours row for a project line.
- * Matches Product Type to the line object name; when Product is set on the labour row,
- * it must match the line SKU product (skuProduct). Wildcard Product rows apply otherwise.
+ * Rule (product type = object Description / objectname):
+ * 1. Product Type match + Product = line SKU product → use that row
+ * 2. Else Product Type match + blank/All/— Product → use that row
+ * 3. Else any Product Type match (type-level fallback)
  */
 export function findObjectLabourRateByObjectName(
   rows: DataObjectLabourRatePublic[],
@@ -82,7 +86,11 @@ export function findObjectLabourRateByObjectName(
     return { row: wildcards[0]!, duplicateMatch: true };
   }
 
-  return { row: null, duplicateMatch: false };
+  // No SKU-specific or wildcard row — use type-level labour (any Product under this type).
+  if (byType.length === 1) {
+    return { row: byType[0]!, duplicateMatch: false };
+  }
+  return { row: byType[0]!, duplicateMatch: true };
 }
 
 export function contractLabourRateBySiloProduct(
@@ -121,4 +129,23 @@ export function labourSiloCostExcGst(
   if (hours == null || rate == null) return null;
   if (normKey(rate.uom) !== "hour") return null;
   return Math.round(hours * rate.priceExcGst * 100) / 100;
+}
+
+/** Sum of workbench lookup-silo labour costs for one included line (exc GST). */
+export function lineLabourCostExcGst(
+  row: ProjectAreaObjectPublic,
+  contractRates: DataLabourRatePublic[],
+): number {
+  if (row.included === false) return 0;
+  let total = 0;
+  for (const key of LOOKUP_LABOUR_SILO_KEYS) {
+    const hours = row[key];
+    const rate = contractLabourRateBySiloProduct(contractRates, key);
+    const cost = labourSiloCostExcGst(
+      typeof hours === "number" && Number.isFinite(hours) && hours > 0 ? hours : null,
+      rate,
+    );
+    if (cost != null) total += cost;
+  }
+  return Math.round(total * 100) / 100;
 }

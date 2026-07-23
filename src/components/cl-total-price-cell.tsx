@@ -6,7 +6,11 @@ import {
   CL_FIELD_CONTROL_HEIGHT_CLASS,
 } from "@/components/cl-checklist-layout";
 import { formatMoney } from "@/lib/client/format-money";
-import { lineFinalPrice } from "@/lib/client/line-final-price";
+import {
+  lineChecklistTradeHoursTitle,
+  lineFinalPriceBreakdown,
+} from "@/lib/client/line-final-price";
+import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 
 const wbHdrLabel =
@@ -21,29 +25,41 @@ type Props = {
   unitPriceFallback?: number | null;
   /** Scope metric inherit: use effective measure instead of stored custommeasure. */
   preferEffectiveMeasure?: boolean;
+  /** Contract labour rates — labour on the line is included in Total price (retail). */
+  contractLabourRates?: DataLabourRatePublic[];
 };
 
-/** Read-only checklist Total price (incl. margin). */
+/**
+ * Read-only checklist Total price (material + labour, incl. margin).
+ * Trade $ stay in the total; hours-only breakdown is on hover (no SKU / markup).
+ */
 export function ClTotalPriceCell({
   line,
   marginPct,
   effectiveMeasure,
   unitPriceFallback,
   preferEffectiveMeasure,
+  contractLabourRates,
 }: Props) {
-  const total = lineFinalPrice(
+  const breakdown = lineFinalPriceBreakdown(
     line,
     marginPct,
     effectiveMeasure,
     unitPriceFallback,
     preferEffectiveMeasure,
+    contractLabourRates,
   );
+  const total = breakdown?.finalExcGst ?? null;
+  const hoursTitle = lineChecklistTradeHoursTitle(line);
 
   return (
     <div className={`${clTotalPriceFieldClass} ${clScopeTotalPriceColClass}`}>
       <span className={wbHdrLabel}>Total price</span>
       <span
-        className={`${CL_FIELD_CONTROL_HEIGHT_CLASS} flex items-center text-xs font-medium tabular-nums text-sf-text dark:text-zinc-100`}
+        className={`${CL_FIELD_CONTROL_HEIGHT_CLASS} flex cursor-default items-center text-xs font-medium tabular-nums text-sf-text dark:text-zinc-100 ${
+          hoursTitle ? "underline decoration-dotted decoration-sf-border underline-offset-2" : ""
+        }`}
+        title={hoursTitle}
       >
         {total != null ? formatMoney(total) : "—"}
       </span>

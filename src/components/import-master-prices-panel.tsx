@@ -9,9 +9,14 @@ import {
   MASTER_PRICES_PAINTING_TAB_TITLE,
   MASTER_PRICES_LISTS_TAB_TITLE,
   MASTER_PRICES_SKU_TAB_TITLE,
+  MASTER_PRICES_SKU_TAB_GID,
   MASTER_PRICES_INCREMENTAL_LABOUR_PRODUCTS_TAB_TITLE,
   MASTER_PRICES_SUPPLIER_DISCOUNTS_TAB_TITLE,
+  masterPricesSpreadsheetEditUrl,
 } from "@/lib/google/master-prices-spreadsheet";
+
+/** Shown even when Sheets API credentials fail (live without secret). */
+const FALLBACK_SKU_SHEET_URL = masterPricesSpreadsheetEditUrl(MASTER_PRICES_SKU_TAB_GID);
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { clearLookupsCache } from "@/lib/client/use-lookups";
 import { clearLookupsColoursCache } from "@/lib/client/use-lookups-colours";
@@ -407,6 +412,7 @@ export function ImportMasterPricesPanel() {
         incrementalLabourProducts?: ImportTabInfo | null;
         incrementalLabourProductsError?: string | null;
         error?: string;
+        spreadsheet?: { id?: string; url?: string };
       }>(res);
       if (!res.ok || data.error || !data.skuAll) {
         setImportTabError(data.error ?? `Import tab not found (${res.status})`);
@@ -1459,22 +1465,29 @@ export function ImportMasterPricesPanel() {
                   {formatSkuTabImportCounts(importTabInfo) ? (
                     <span> · {formatSkuTabImportCounts(importTabInfo)}</span>
                   ) : null}
-                  {importTabInfo.url ? (
-                    <>
-                      {" "}
-                      ·{" "}
-                      <a
-                        href={importTabInfo.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sf-brand hover:underline dark:text-[#58a9f5]"
-                      >
-                        Open tab
-                      </a>
-                    </>
-                  ) : null}
+                  {" "}
+                  ·{" "}
+                  <a
+                    href={importTabInfo.url || FALLBACK_SKU_SHEET_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                  >
+                    Open tab
+                  </a>
                 </span>
-              ) : null}
+              ) : (
+                <span className="mt-0.5 block text-xs text-sf-text-weak dark:text-zinc-400">
+                  <a
+                    href={FALLBACK_SKU_SHEET_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sf-brand hover:underline dark:text-[#58a9f5]"
+                  >
+                    Open {MASTER_PRICES_SKU_TAB_TITLE}
+                  </a>
+                </span>
+              )}
             </span>
           </label>
 
@@ -2578,16 +2591,14 @@ export function ImportMasterPricesPanel() {
           . Other tabs are listed for reference only.
         </p>
         <div className="flex flex-wrap gap-3">
-          {importTabInfo?.url ? (
-            <a
-              href={importTabInfo.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
-            >
-              Open {MASTER_PRICES_SKU_TAB_TITLE}
-            </a>
-          ) : null}
+          <a
+            href={importTabInfo?.url || FALLBACK_SKU_SHEET_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
+          >
+            Open {MASTER_PRICES_SKU_TAB_TITLE}
+          </a>
           <button
             type="button"
             onClick={() => void runTest()}

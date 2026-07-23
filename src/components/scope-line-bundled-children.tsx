@@ -1,6 +1,11 @@
 "use client";
 
 import { ClTotalPriceCell } from "@/components/cl-total-price-cell";
+import {
+  lineExtendedTotalBreakdownTitle,
+  lineFinalPriceBreakdown,
+  lineFinalPriceBreakdownTitle,
+} from "@/lib/client/line-final-price";
 import { CascadeColourSelect } from "@/components/cascade-style-colour-fields";
 import {
   clFieldsGridClass,
@@ -10,8 +15,12 @@ import {
   clScopeLineStackClass,
   clScopeMeasureColClass,
   clScopeNonStdColClass,
-  clScopeToolColClass,
-  clToolCellClass,
+  clScopeNotesColClass,
+  clScopeCalculatorColClass,
+  clScopeActionsColClass,
+  clNotesCellClass,
+  clCalculatorCellClass,
+  clActionsCellClass,
   clScopeSkuColClass,
   clScopeUomColClass,
   clSkuFieldClass,
@@ -101,6 +110,7 @@ type ChecklistProps = {
   onValidationError: (message: string) => void;
   marginPct: number;
   colourLookupIndex?: ColourLookupIndex | null;
+  contractLabourRates?: DataLabourRatePublic[];
 };
 
 export type WorkbenchBundledContext = {
@@ -116,6 +126,8 @@ export type WorkbenchBundledContext = {
   wbCellLoad: string;
   wbSpacerCell: string;
   areaObjectBand: string;
+  /** When false (Summary view), hide Source / Elevate / Style / Colour cells. */
+  showCascadeDetailColumns: boolean;
   cascades: CascadeRow[];
   baseStyleOptions: { out: string[]; seen: Set<string> };
   marginPct: number;
@@ -206,6 +218,7 @@ function ChecklistBundledLine({
   marginPct,
   supplierDiscountByKey,
   colourLookupIndex = null,
+  contractLabourRates,
 }: {
   parentLine: ProjectAreaObjectPublic;
   child: ProjectAreaObjectPublic;
@@ -227,6 +240,7 @@ function ChecklistBundledLine({
   marginPct: number;
   supplierDiscountByKey?: SupplierDiscountByKey;
   colourLookupIndex?: ColourLookupIndex | null;
+  contractLabourRates?: DataLabourRatePublic[];
 }) {
   const qObj = quoteObjects.find((o) => o.objectid === child.objectid);
   const parentSku = parentLine.skuId
@@ -340,8 +354,13 @@ function ChecklistBundledLine({
           />
         </label>
         <div className={`${clScopeNonStdColClass}`} aria-hidden />
-        <ClTotalPriceCell line={child} marginPct={marginPct} />
-        <div className={`${clToolCellClass} ${clScopeToolColClass}`}>
+        <ClTotalPriceCell
+          line={child}
+          marginPct={marginPct}
+          contractLabourRates={contractLabourRates}
+        />
+        <div className={`${clNotesCellClass} ${clScopeNotesColClass}`} aria-hidden />
+        <div className={`${clCalculatorCellClass} ${clScopeCalculatorColClass}`}>
           <ScopeLineMeasureTool
             line={child}
             quoteObjects={quoteObjects}
@@ -360,6 +379,7 @@ function ChecklistBundledLine({
             }}
           />
         </div>
+        <div className={`${clActionsCellClass} ${clScopeActionsColClass}`} aria-hidden />
       </div>
     </div>
   );
@@ -420,7 +440,15 @@ function WorkbenchBundledLine({
     supplierDiscountByKey,
     colourLookupIndex: wb.colourLookupIndex ?? null,
   });
-  const lf = wb.lineFinalPrice(child, wb.marginPct);
+  const lfBreakdown = lineFinalPriceBreakdown(
+    child,
+    wb.marginPct,
+    undefined,
+    undefined,
+    undefined,
+    wb.contractLabourRates,
+  );
+  const lf = lfBreakdown?.finalExcGst ?? null;
 
   return (
     <tr
@@ -450,6 +478,8 @@ function WorkbenchBundledLine({
           />
         </span>
       </td>
+      {wb.showCascadeDetailColumns ? (
+        <>
       <td className={`${wb.wbCellMid} truncate text-xs`}>{wb.lineSourceLabel(child)}</td>
       <td className={wb.wbCellMid}>
         <CascadeElevateSelect
@@ -507,6 +537,8 @@ function WorkbenchBundledLine({
           onColourChange={(v) => onPatchLine(child.id, { colour: v ? v : null })}
         />
       </td>
+        </>
+      ) : null}
       <td className={wb.wbCellSku}>
         {qObj ? (
           <div className="flex min-w-0 items-center gap-0.5">
@@ -535,6 +567,7 @@ function WorkbenchBundledLine({
               showSupplierPrice
               shortMatchLabels
               inlineRow
+              skuPickerUi="popup"
               autoApplySingleMatch
               autoApplyOnlyWhenEmptySku
               syncUnitPriceFromPick
@@ -642,7 +675,12 @@ function WorkbenchBundledLine({
           }}
         />
       </td>
-      <td className={wb.wbCellNum}>{wb.formatMoney(child.totalprice)}</td>
+      <td
+        className={wb.wbCellNum}
+        title={lfBreakdown ? lineExtendedTotalBreakdownTitle(lfBreakdown) : undefined}
+      >
+        {wb.formatMoney(lfBreakdown?.baseExcGst ?? child.totalprice)}
+      </td>
       <WbLabourSiloRowCells
         row={child}
         quoteObjects={quoteObjects}
@@ -655,7 +693,12 @@ function WorkbenchBundledLine({
         inputKey={wb.inputKey}
         onPatch={onPatchLine}
       />
-      <td className={`${wb.wbCellNum} font-medium text-emerald-800 dark:text-emerald-200`}>
+      <td
+        className={`${wb.wbCellNum} font-medium text-emerald-800 dark:text-emerald-200`}
+        title={
+          lfBreakdown ? lineFinalPriceBreakdownTitle(lfBreakdown) : undefined
+        }
+      >
         {lf != null ? wb.formatMoney(lf) : "—"}
       </td>
       <WbLineSupplierCell
@@ -712,6 +755,7 @@ export function ScopeLineBundledChildren(props: Props) {
             onValidationError={props.onValidationError}
             marginPct={props.marginPct}
             colourLookupIndex={props.colourLookupIndex ?? null}
+            contractLabourRates={props.contractLabourRates}
           />
         ))}
       </div>

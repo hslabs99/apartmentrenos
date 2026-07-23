@@ -103,11 +103,11 @@ export function WorkbenchTradePrintReport({ data }: Props) {
                         </p>
                       ) : null}
 
-                      {obj.keepExistingLabels && obj.keepExistingLabels.length > 0 ? (
+                      {obj.demolitionReportLabels && obj.demolitionReportLabels.length > 0 ? (
                         <div className="mt-2 rounded border border-amber-500 bg-amber-50 p-2 text-sm text-black">
-                          <p className="font-semibold text-amber-950">Keep existing — do not remove</p>
+                          <p className="font-semibold text-amber-950">Retain — do not remove</p>
                           <ul className="mt-1 list-disc pl-5 text-amber-950">
-                            {obj.keepExistingLabels.map((label) => (
+                            {obj.demolitionReportLabels.map((label) => (
                               <li key={label}>{label}</li>
                             ))}
                           </ul>

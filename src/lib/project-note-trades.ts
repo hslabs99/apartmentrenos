@@ -5,6 +5,7 @@ export const PROJECT_NOTE_TRADE_TAGS = [
   "Electrical",
   "Demolition",
   "Cleaning",
+  "Lead Contractor",
 ] as const;
 
 export type ProjectNoteTradeTag = (typeof PROJECT_NOTE_TRADE_TAGS)[number];

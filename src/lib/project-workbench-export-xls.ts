@@ -8,6 +8,10 @@ import {
   buildPaintingElementIndex,
   findPaintingElementForLine,
 } from "@/lib/client/painting-element-index";
+import {
+  lineExtendedTotalExcGst,
+  lineFinalPrice,
+} from "@/lib/client/line-final-price";
 import { loadCatalogSkuData } from "@/lib/client/load-catalog-sku-data";
 import { partitionAreaLines } from "@/lib/client/partition-area-lines";
 import { isBlindsSystemLine } from "@/lib/blinds/blinds-data-utils";
@@ -24,6 +28,7 @@ import { supplierDiscountByKeyFromRows } from "@/lib/client/supplier-discount-pr
 import { WB_WORKBENCH_LABOUR_SILO_HEADERS } from "@/lib/labour-silo";
 import { compareProjectAreasDisplayOrder } from "@/lib/project-area-display-order";
 import { marginPercentFromSettings } from "@/lib/settings-margin";
+import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
 import type { AreaPublic } from "@/types/area";
 import type { DataBuildingElementPublic } from "@/types/data-building-element-public";
 import type { DataPaintingElementPublic } from "@/types/data-painting-element-public";
@@ -119,13 +124,6 @@ function lineSourceLabel(row: ProjectAreaObjectPublic): string {
   if (s === "manual2") return "Manual2";
   if (s === "bundled") return "Bundled";
   return "Default";
-}
-
-function lineFinalPrice(row: ProjectAreaObjectPublic, marginPct: number): number | null {
-  if (row.included === false) return null;
-  const t = row.totalprice;
-  if (t == null || !Number.isFinite(t)) return null;
-  return t * (1 + marginPct / 100);
 }
 
 function areaTemplateName(pa: ProjectAreaPublic, areas: AreaPublic[]): string {
@@ -275,6 +273,7 @@ function primaryExportRow(
   project: ProjectPublic,
   priceLevels: PriceLevelPublic[],
   marginPct: number,
+  contractLabourRates: DataLabourRatePublic[],
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
   options?: { bundled?: boolean },
 ): ExportCell[] {
@@ -303,9 +302,11 @@ function primaryExportRow(
     row.custommeasure ?? "",
     row.customuom ?? "",
     row.customumprice ?? "",
-    row.totalprice ?? "",
+    lineExtendedTotalExcGst(row, undefined, undefined, undefined, contractLabourRates) ??
+      row.totalprice ??
+      "",
     ...labourCells(row),
-    lineFinalPrice(row, marginPct) ?? "",
+    lineFinalPrice(row, marginPct, undefined, undefined, undefined, contractLabourRates) ?? "",
     lineNotes(row),
   ];
 }
@@ -380,6 +381,7 @@ export async function downloadProjectWorkbenchXls(
     buildingElementsRes,
     paintingElementsRes,
     supplierDiscRes,
+    labourRatesRes,
     catalog,
   ] = await Promise.all([
     fetch(`/api/projects/${encodeURIComponent(projectDocId)}`),
@@ -392,6 +394,7 @@ export async function downloadProjectWorkbenchXls(
     fetch("/api/building-elements"),
     fetch("/api/painting-elements"),
     fetch("/api/supplier-discounts"),
+    fetch("/api/labour-rates"),
     loadCatalogSkuData(),
   ]);
 
@@ -458,6 +461,9 @@ export async function downloadProjectWorkbenchXls(
   const supplierDiscountByKey = supplierDiscRes.ok
     ? supplierDiscountByKeyFromRows(supplierDiscData.items ?? [])
     : new Map();
+
+  const labourRatesData = await readApiJson<{ items?: DataLabourRatePublic[] }>(labourRatesRes);
+  const contractLabourRates = labourRatesRes.ok ? (labourRatesData.items ?? []) : [];
 
   const areas = areasData.areas ?? [];
   const quoteObjects = qoData.quoteObjects ?? [];
@@ -538,6 +544,7 @@ export async function downloadProjectWorkbenchXls(
           project,
           priceLevels,
           marginPct,
+          contractLabourRates,
           suppliersBySkuId,
         );
         const primaryDescription = String(primaryCells[6] ?? "");
@@ -656,6 +663,7 @@ export async function downloadProjectWorkbenchXls(
             project,
             priceLevels,
             marginPct,
+            contractLabourRates,
             suppliersBySkuId,
             { bundled: true },
           );

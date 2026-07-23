@@ -8,6 +8,7 @@ import { projectNoteDocToPublic } from "@/lib/server/project-note-doc";
 import { ensureProjectNumericId } from "@/lib/server/resolve-ids";
 import { PROJECT_NOTE_TRADE_TAGS } from "@/lib/project-note-trades";
 import type { ProjectNotePublic } from "@/types/project-note";
+import { uniqueProjectNotes } from "@/lib/project-note-filters";
 
 export const runtime = "nodejs";
 
@@ -40,14 +41,16 @@ export async function GET(req: NextRequest) {
     }
 
     const snap = await db.collection("project_notes").where("projectid", "==", projectid).get();
-    const notes: ProjectNotePublic[] = snap.docs
-      .filter((d) => !isProjectNotesMetaDocument(d.id))
-      .map((d) => projectNoteDocToPublic(d.id, d.data()))
-      .sort((a, b) => {
-        const ta = a.notedatetime ?? a.createdAt ?? "";
-        const tb = b.notedatetime ?? b.createdAt ?? "";
-        return tb.localeCompare(ta);
-      });
+    const notes: ProjectNotePublic[] = uniqueProjectNotes(
+      snap.docs
+        .filter((d) => !isProjectNotesMetaDocument(d.id))
+        .map((d) => projectNoteDocToPublic(d.id, d.data()))
+        .sort((a, b) => {
+          const ta = a.notedatetime ?? a.createdAt ?? "";
+          const tb = b.notedatetime ?? b.createdAt ?? "";
+          return tb.localeCompare(ta);
+        }),
+    );
 
     return NextResponse.json({ projectNotes: notes });
   } catch (e) {

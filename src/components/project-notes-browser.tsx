@@ -9,7 +9,11 @@ import { getCurrentUsername } from "@/lib/client/current-user";
 import { formatProjectNoteDate, noteIndexPreview } from "@/lib/project-note-display";
 import {
   filterNotesForView,
+  projectNoteListKey,
   sortNotesNewestFirst,
+  uniqueNoteAreaOptionsByAreaId,
+  uniqueNoteObjectOptionsByObjectId,
+  uniqueProjectNotes,
   type ProjectNoteTarget,
   type ProjectNoteViewFilter,
 } from "@/lib/project-note-filters";
@@ -17,7 +21,11 @@ import {
   formatProjectNoteTrades,
   PROJECT_NOTE_TRADE_TAGS,
 } from "@/lib/project-note-trades";
-import { DEFAULT_NOTE_TYPE, ESCALATION_NOTE_TYPE } from "@/lib/project-note-types";
+import {
+  DEFAULT_NOTE_TYPE,
+  ESCALATION_NOTE_TYPE,
+  isRetiredNoteType,
+} from "@/lib/project-note-types";
 import type { ProjectNotePublic } from "@/types/project-note";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -25,14 +33,16 @@ export type ProjectNoteAreaOption = { areaid: number; label: string };
 export type ProjectNoteObjectOption = { objectid: number; label: string };
 
 const inputLong =
-  "w-full min-w-0 rounded border border-sf-border-strong bg-sf-surface px-2 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400/60 dark:border-zinc-600 dark:bg-zinc-950";
+  "w-full min-w-0 rounded-lg border border-sf-border bg-sf-surface px-2 py-2 text-sm outline-none focus:border-sf-accent focus:ring-2 focus:ring-sf-accent/30 dark:border-zinc-600 dark:bg-zinc-950";
 const selectBase =
-  "rounded border border-sf-border-strong bg-sf-surface px-1 py-1 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400/60 dark:border-zinc-600 dark:bg-zinc-950";
+  "rounded-lg border border-sf-border bg-sf-surface px-1 py-1 text-sm outline-none focus:border-sf-accent focus:ring-2 focus:ring-sf-accent/30 dark:border-zinc-600 dark:bg-zinc-950";
 
 const tradeTagOffClass =
-  "rounded-full border border-zinc-300 bg-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-500 transition dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-400";
+  "rounded-full border border-sf-border bg-sf-surface px-3 py-1 text-xs font-medium text-sf-text-secondary transition hover:border-sf-brand hover:text-sf-brand dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
 const tradeTagOnClass =
-  "rounded-full border border-emerald-600 bg-emerald-500 px-2.5 py-1 text-xs font-medium text-white shadow-sm transition dark:border-emerald-500 dark:bg-emerald-500";
+  "rounded-full border border-sf-brand bg-sf-brand px-3 py-1 text-xs font-medium text-white shadow-sm transition dark:border-sf-brand dark:bg-sf-brand";
+const tradeTagEditOnClass =
+  "rounded-full border border-sf-accent bg-sf-accent px-3 py-1 text-xs font-medium text-white shadow-sm transition";
 
 function tradesSortedEqual(a: Iterable<string>, b: readonly string[]): boolean {
   const left = [...a].sort();
@@ -127,13 +137,33 @@ export function ProjectNotesBrowser({
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
 
   const typeOptions = useMemo(() => {
-    const base =
+    const raw =
       noteTypeOptions.length > 0
         ? noteTypeOptions
-        : ["General", "Style", "Demolition", "Other", ESCALATION_NOTE_TYPE];
-    if (base.some((t) => t === ESCALATION_NOTE_TYPE)) return base;
-    return [...base, ESCALATION_NOTE_TYPE];
+        : ["General", "Style", "Other", ESCALATION_NOTE_TYPE];
+    const seen = new Set<string>();
+    const base: string[] = [];
+    for (const t of raw) {
+      const trimmed = t.trim();
+      if (!trimmed || isRetiredNoteType(trimmed)) continue;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      base.push(trimmed);
+    }
+    if (!base.some((t) => t === ESCALATION_NOTE_TYPE)) {
+      base.push(ESCALATION_NOTE_TYPE);
+    }
+    return base;
   }, [noteTypeOptions]);
+
+  /** Include a retired type only while editing a legacy note that still has it. */
+  const editTypeOptions = useMemo(() => {
+    const current = editNotetype.trim();
+    if (!current || !isRetiredNoteType(current)) return typeOptions;
+    if (typeOptions.some((t) => t.toLowerCase() === current.toLowerCase())) return typeOptions;
+    return [...typeOptions, current];
+  }, [typeOptions, editNotetype]);
 
   useEffect(() => {
     if (!initialDraftNotetype) return;
@@ -149,20 +179,27 @@ export function ProjectNotesBrowser({
     return () => window.clearTimeout(timer);
   }, [focusDraftOnMount]);
 
+  const uniqueAreaOptions = useMemo(
+    () => uniqueNoteAreaOptionsByAreaId(areaOptions),
+    [areaOptions],
+  );
+
   const objectOptions = useMemo(
-    () => objectOptionsForArea(filterAreaid),
+    () => uniqueNoteObjectOptionsByObjectId(objectOptionsForArea(filterAreaid)),
     [objectOptionsForArea, filterAreaid],
   );
 
   const filteredNotes = useMemo(
     () =>
-      sortNotesNewestFirst(
-        filterNotesForView(allProjectNotes, projectid, {
-          areaid: filterAreaid,
-          objectid: filterObjectid,
-          trades: filterTrades.size > 0 ? [...filterTrades] : undefined,
-          notetypes: filterNotetypes.size > 0 ? [...filterNotetypes] : undefined,
-        }),
+      uniqueProjectNotes(
+        sortNotesNewestFirst(
+          filterNotesForView(allProjectNotes, projectid, {
+            areaid: filterAreaid,
+            objectid: filterObjectid,
+            trades: filterTrades.size > 0 ? [...filterTrades] : undefined,
+            notetypes: filterNotetypes.size > 0 ? [...filterNotetypes] : undefined,
+          }),
+        ),
       ),
     [allProjectNotes, projectid, filterAreaid, filterObjectid, filterTrades, filterNotetypes],
   );
@@ -374,8 +411,8 @@ export function ProjectNotesBrowser({
                 onChange={(e) => onAreaFilterChange(e.target.value)}
               >
                 <option value="">All areas</option>
-                {areaOptions.map((a) => (
-                  <option key={a.areaid} value={String(a.areaid)}>
+                {uniqueAreaOptions.map((a) => (
+                  <option key={`area-${a.areaid}`} value={String(a.areaid)}>
                     {a.label}
                   </option>
                 ))}
@@ -391,7 +428,7 @@ export function ProjectNotesBrowser({
               >
                 <option value="">All objects</option>
                 {objectOptions.map((o) => (
-                  <option key={o.objectid} value={String(o.objectid)}>
+                  <option key={`object-${o.objectid}`} value={String(o.objectid)}>
                     {o.label}
                   </option>
                 ))}
@@ -497,10 +534,10 @@ export function ProjectNotesBrowser({
                   No notes for this filter.
                 </li>
               ) : (
-                filteredNotes.map((n) => {
+                filteredNotes.map((n, index) => {
                   const active = n.id === selectedNoteId;
                   return (
-                    <li key={n.id}>
+                    <li key={projectNoteListKey(n, index)}>
                       <button
                         type="button"
                         onClick={() => setSelectedNoteId(n.id)}
@@ -525,12 +562,12 @@ export function ProjectNotesBrowser({
           </aside>
 
           <div className="flex min-w-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            <div className="min-h-0 flex-1 overflow-y-auto border-l-4 border-sf-brand bg-[#f0f4f8]/80 px-5 py-4 dark:border-sf-accent dark:bg-slate-950/40">
               {selectedNote ? (
                 <div className="space-y-4">
                   <div className="flex items-start justify-between gap-3">
-                    <h3 className="text-sm font-semibold text-sf-text dark:text-zinc-100">
-                      Edit note
+                    <h3 className="text-sm font-semibold text-sf-brand dark:text-zinc-100">
+                      Selected note
                     </h3>
                     <div className="flex shrink-0 items-center gap-2">
                       {onUpdateNote ? (
@@ -543,7 +580,7 @@ export function ProjectNotesBrowser({
                             !editNoteText.trim()
                           }
                           onClick={() => void handleSaveEdit()}
-                          className="inline-flex h-8 items-center rounded-lg bg-sf-brand px-3 text-xs font-medium text-white disabled:opacity-50"
+                          className="inline-flex h-8 items-center rounded-lg bg-sf-accent px-3 text-xs font-semibold text-white hover:bg-sf-accent-hover disabled:opacity-50"
                         >
                           {saving ? "Saving…" : "Save"}
                         </button>
@@ -576,11 +613,11 @@ export function ProjectNotesBrowser({
                     <dd>
                       <select
                         className={selectBase}
-                        value={editNotetype || typeOptions[0]}
+                        value={editNotetype || editTypeOptions[0]}
                         disabled={formDisabled || !onUpdateNote}
                         onChange={(e) => setEditNotetype(e.target.value)}
                       >
-                        {typeOptions.map((t) => (
+                        {editTypeOptions.map((t) => (
                           <option key={t} value={t}>
                             {t}
                           </option>
@@ -599,7 +636,7 @@ export function ProjectNotesBrowser({
                             type="button"
                             disabled={formDisabled || !onUpdateNote}
                             onClick={() => toggleEditTradeTag(tag)}
-                            className={on ? tradeTagOnClass : tradeTagOffClass}
+                            className={on ? tradeTagEditOnClass : tradeTagOffClass}
                             aria-pressed={on}
                           >
                             {tag}
@@ -632,16 +669,17 @@ export function ProjectNotesBrowser({
                 </div>
               ) : (
                 <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
-                  Select a note from the list, or add a new note below.
+                  Select a note from the list to view or edit it here. Create a new note in the
+                  section below.
                 </p>
               )}
             </div>
 
-            <div className="shrink-0 border-t border-sf-border px-5 py-4 dark:border-zinc-700">
-              <h4 className="mb-2 text-sm font-semibold text-sf-text dark:text-zinc-100">
-                Add note
+            <div className="shrink-0 border-t border-amber-300 border-l-4 border-l-amber-500 bg-amber-50 px-5 py-4 dark:border-amber-700 dark:border-l-amber-400 dark:bg-amber-950/45">
+              <h4 className="mb-2 text-sm font-semibold text-amber-950 dark:text-amber-100">
+                Add new note
               </h4>
-              <p className="mb-2 text-xs text-sf-text-weak dark:text-zinc-400">
+              <p className="mb-2 text-xs text-amber-900/75 dark:text-amber-200/75">
                 Saves to: {areaLabelForNote(effectiveCreateTarget.areaid ?? null)}
                 {effectiveCreateTarget.objectid != null
                   ? ` · ${objectLabelForNote(
@@ -678,7 +716,7 @@ export function ProjectNotesBrowser({
                         type="button"
                         disabled={formDisabled}
                         onClick={() => toggleTradeTag(tag)}
-                        className={on ? tradeTagOnClass : tradeTagOffClass}
+                        className={on ? tradeTagEditOnClass : tradeTagOffClass}
                         aria-pressed={on}
                       >
                         {tag}
@@ -702,7 +740,7 @@ export function ProjectNotesBrowser({
               <button
                 type="button"
                 disabled={formDisabled || !draft.trim()}
-                className="mt-2 min-h-10 rounded-lg bg-sf-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                className="mt-2 min-h-10 rounded-lg bg-sf-accent px-4 py-2 text-sm font-semibold text-white hover:bg-sf-accent-hover disabled:opacity-50"
                 onClick={() => void handleAdd()}
               >
                 {saving ? "Saving…" : "Add note"}

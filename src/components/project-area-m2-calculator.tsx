@@ -3,6 +3,7 @@
 import { ModalFrame } from "@/components/modal-frame";
 import {
   clAreaCalculatorIconClass,
+  clAreaHdrCalculatorBtnClass,
   clCalculatorIconBtnClass,
 } from "@/components/cl-checklist-layout";
 import { IconCalculator, RectSectionsM2CalculatorBody } from "@/components/scope-tool-modal";
@@ -15,6 +16,8 @@ type Props = {
   areaLabel: string;
   disabled?: boolean;
   labelClassName: string;
+  /** Use dark-bar chrome when rendered inside checklist area header. */
+  areaHeaderChrome?: boolean;
   onApply: (body: {
     aream2: number;
     aream2calcsections: ScopeToolBenchSection[] | null;
@@ -26,6 +29,7 @@ export function ProjectAreaM2Calculator({
   areaLabel,
   disabled = false,
   labelClassName,
+  areaHeaderChrome = false,
   onApply,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -67,7 +71,7 @@ export function ProjectAreaM2Calculator({
           title="Open area m² calculator"
           aria-label={`Open area m² calculator for ${areaLabel}`}
           onClick={handleOpen}
-          className={clCalculatorIconBtnClass}
+          className={areaHeaderChrome ? clAreaHdrCalculatorBtnClass : clCalculatorIconBtnClass}
         >
           <IconCalculator className={clAreaCalculatorIconClass} />
         </button>

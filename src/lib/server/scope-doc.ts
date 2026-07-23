@@ -1,7 +1,12 @@
 import type { DocumentData, Timestamp } from "firebase-admin/firestore";
 import { isInheritMeasureSource, isScopeMetricInheritSource } from "@/lib/scope-metrics";
 import { parseScopeToolType, type ScopeToolType } from "@/lib/scope-tools";
-import type { ScopeAnswerPublic, ScopePublic } from "@/types/scope";
+import type {
+  ScopeAnswerPublic,
+  ScopePublic,
+  ScopeShowAllDefaultQty,
+} from "@/types/scope";
+import { parseScopeShowAllDefaultQty } from "@/types/scope";
 import type { InheritMeasureSource } from "@/types/scope-metric";
 import type { ScopeMetricPublic } from "@/types/scope-metric";
 import { normalizedScopeAreaState } from "@/lib/scope-areas";
@@ -79,6 +84,23 @@ function normalizeAttachedObjectFlags(
     const id = key.trim();
     if (!id || !allowed.has(id) || value !== true) continue;
     out[id] = true;
+  }
+  return out;
+}
+
+function normalizeAttachedObjectShowAllDefault(
+  raw: unknown,
+  attachedIds: string[],
+  showAll: Partial<Record<string, boolean>>,
+): Partial<Record<string, ScopeShowAllDefaultQty>> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const allowed = new Set(attachedIds);
+  const out: Partial<Record<string, ScopeShowAllDefaultQty>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = key.trim();
+    const parsed = parseScopeShowAllDefaultQty(value);
+    if (!id || !allowed.has(id) || !showAll[id] || parsed == null) continue;
+    out[id] = parsed;
   }
   return out;
 }
@@ -164,6 +186,11 @@ export function firestoreAnswersToPublic(raw: unknown): ScopeAnswerPublic[] {
       rec.attachedObjectShowAll,
       attachedQuoteObjectIds,
     );
+    const showAllDefaultRaw = normalizeAttachedObjectShowAllDefault(
+      rec.attachedObjectShowAllDefault,
+      attachedQuoteObjectIds,
+      showAllRaw,
+    );
     const noChargeRaw = normalizeAttachedObjectFlags(
       rec.attachedObjectNoCharge,
       attachedQuoteObjectIds,
@@ -187,12 +214,15 @@ export function firestoreAnswersToPublic(raw: unknown): ScopeAnswerPublic[] {
       if (tool) attachedObjectTools[id] = tool;
     }
     const attachedObjectShowAll: Partial<Record<string, boolean>> = {};
+    const attachedObjectShowAllDefault: Partial<Record<string, ScopeShowAllDefaultQty>> = {};
     const attachedObjectNoCharge: Partial<Record<string, boolean>> = {};
     const attachedObjectForce: Partial<Record<string, boolean>> = {};
     const attachedObjectInheritM2Source: Partial<Record<string, InheritMeasureSource>> = {};
     const attachedObjectInheritMeasureLocked: Partial<Record<string, boolean>> = {};
     for (const id of attachedQuoteObjectIds) {
       if (showAllRaw[id]) attachedObjectShowAll[id] = true;
+      const showAllDefault = showAllDefaultRaw[id];
+      if (showAllDefault != null) attachedObjectShowAllDefault[id] = showAllDefault;
       if (noChargeRaw[id]) attachedObjectNoCharge[id] = true;
       if (forceRaw[id]) attachedObjectForce[id] = true;
       const inherit = inheritRaw[id];
@@ -209,6 +239,10 @@ export function firestoreAnswersToPublic(raw: unknown): ScopeAnswerPublic[] {
         Object.keys(attachedObjectTools).length > 0 ? attachedObjectTools : undefined,
       attachedObjectShowAll:
         Object.keys(attachedObjectShowAll).length > 0 ? attachedObjectShowAll : undefined,
+      attachedObjectShowAllDefault:
+        Object.keys(attachedObjectShowAllDefault).length > 0
+          ? attachedObjectShowAllDefault
+          : undefined,
       attachedObjectNoCharge:
         Object.keys(attachedObjectNoCharge).length > 0 ? attachedObjectNoCharge : undefined,
       attachedObjectForce:
@@ -221,6 +255,13 @@ export function firestoreAnswersToPublic(raw: unknown): ScopeAnswerPublic[] {
         Object.keys(attachedObjectInheritMeasureLocked).length > 0
           ? attachedObjectInheritMeasureLocked
           : undefined,
+      includeOnDemolitionReport: (() => {
+        if (typeof rec.includeOnDemolitionReport === "boolean") {
+          return rec.includeOnDemolitionReport ? true : undefined;
+        }
+        // Legacy: labels starting with "Keep Existing" before the explicit flag existed
+        return label.trim().toLowerCase().startsWith("keep existing") ? true : undefined;
+      })(),
     });
   }
   return out;
@@ -388,6 +429,12 @@ export function scopeDocToPublic(
     areaname: primaryName,
     areaNamesDisplay: namesForDisplay.length ? namesForDisplay.join(", ") : primaryName,
     question: String(data.question ?? ""),
+    explanation: (() => {
+      const raw = data.explanation;
+      if (typeof raw !== "string") return null;
+      const t = raw.trim();
+      return t || null;
+    })(),
     answers: firestoreAnswersToPublic(data.answers),
     scopeMetrics: (() => {
       const m = firestoreScopeMetricsToPublic(data.scopeMetrics);

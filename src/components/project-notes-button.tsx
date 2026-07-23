@@ -8,14 +8,25 @@ import {
   type ProjectNoteObjectOption,
   type ProjectNotesBrowserProps,
 } from "@/components/project-notes-browser";
+import {
+  clAreaHdrIconBtnClass,
+  clAreaHdrIconGlyphClass,
+  clProjectHdrIconBtnClass,
+  clProjectHdrIconGlyphClass,
+  clRowIconBtnClass,
+  clRowIconGlyphClass,
+} from "@/components/cl-checklist-layout";
 import type { ProjectNoteTarget, ProjectNoteViewFilter } from "@/lib/project-note-filters";
 import type { ProjectNotePublic } from "@/types/project-note";
 import { useState } from "react";
 
 export type { ProjectNoteAreaOption, ProjectNoteObjectOption } from "@/components/project-notes-browser";
 
+/** 70% viewport — works on tablet (sm+) as a centered panel; dvh accounts for browser chrome. */
 const NOTES_MODAL_PANEL =
-  "!h-[70vh] !max-h-[70vh] !w-[70vw] !max-w-[70vw] sm:!max-w-[70vw]";
+  "!h-[70dvh] !max-h-[70dvh] !w-[70vw] !max-w-[70vw] sm:!max-w-[70vw]";
+
+export type ProjectNotesButtonSize = "default" | "compact" | "areaHeader" | "projectHeader";
 
 type Props = {
   label: string;
@@ -31,7 +42,10 @@ type Props = {
   noteTypeOptions: string[];
   authorFallback?: string;
   disabled?: boolean;
+  /** @deprecated Prefer `size="compact"`. */
   compact?: boolean;
+  /** Match paired ⋮ menus: compact (rows), areaHeader, projectHeader. */
+  size?: ProjectNotesButtonSize;
   /** When set, controls modal visibility (e.g. open notes after escalating an area). */
   modalOpen?: boolean;
   onModalOpenChange?: (open: boolean) => void;
@@ -53,6 +67,14 @@ type Props = {
   onDeleteNote?: (noteId: string) => Promise<void>;
 };
 
+function resolveSize(
+  size: ProjectNotesButtonSize | undefined,
+  compact: boolean,
+): ProjectNotesButtonSize {
+  if (size) return size;
+  return compact ? "compact" : "default";
+}
+
 export function ProjectNotesButton({
   label,
   badgeNotes,
@@ -68,6 +90,7 @@ export function ProjectNotesButton({
   authorFallback = "",
   disabled = false,
   compact = false,
+  size,
   modalOpen,
   onModalOpenChange,
   initialDraftNotetype,
@@ -86,13 +109,40 @@ export function ProjectNotesButton({
   };
 
   const [saving, setSaving] = useState(false);
+  const resolved = resolveSize(size, compact);
 
   const badgeCount = badgeNotes.length;
   const hasBadgeNotes = badgeCount > 0;
 
-  const iconColor = hasBadgeNotes
-    ? "text-sf-destructive dark:text-red-400"
-    : "text-zinc-400 dark:text-zinc-500";
+  const iconColor =
+    resolved === "areaHeader"
+      ? hasBadgeNotes
+        ? "text-red-300"
+        : "text-white/70"
+      : hasBadgeNotes
+        ? "text-sf-destructive dark:text-red-400"
+        : "text-zinc-400 dark:text-zinc-500";
+
+  const btnClass =
+    resolved === "compact"
+      ? `${clRowIconBtnClass} relative`
+      : resolved === "areaHeader"
+        ? `${clAreaHdrIconBtnClass} relative`
+        : resolved === "projectHeader"
+          ? `${clProjectHdrIconBtnClass} relative`
+          : "inline-flex shrink-0 items-center gap-0.5 rounded border border-sf-border-strong bg-sf-surface -ml-0.5 py-1 pl-1 pr-1.5 text-xs font-medium shadow-sm transition hover:bg-sf-page disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800";
+
+  const glyphClass =
+    resolved === "compact"
+      ? clRowIconGlyphClass
+      : resolved === "areaHeader"
+        ? clAreaHdrIconGlyphClass
+        : resolved === "projectHeader"
+          ? clProjectHdrIconGlyphClass
+          : "h-4 w-4";
+
+  const showInlineCount = hasBadgeNotes && resolved === "default";
+  const showBadgeDot = hasBadgeNotes && resolved !== "default";
 
   const browserProps: ProjectNotesBrowserProps = {
     projectName: label,
@@ -136,17 +186,18 @@ export function ProjectNotesButton({
         type="button"
         disabled={disabled}
         onClick={() => setOpen(true)}
-        className={
-          compact
-            ? "inline-flex shrink-0 items-center gap-0.5 rounded border border-transparent -ml-1 py-0.5 pl-0 pr-0.5 text-xs transition hover:bg-sf-page disabled:opacity-50 dark:hover:bg-zinc-800"
-            : "inline-flex shrink-0 items-center gap-0.5 rounded border border-sf-border-strong bg-sf-surface -ml-0.5 py-1 pl-1 pr-1.5 text-xs font-medium shadow-sm transition hover:bg-sf-page disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-        }
+        className={btnClass}
         title={hasBadgeNotes ? `${badgeCount} note${badgeCount === 1 ? "" : "s"}` : "Add note"}
         aria-label={`Notes for ${label}`}
       >
-        <IconNotes className={`h-4 w-4 ${iconColor}`} />
-        {hasBadgeNotes ? (
+        <IconNotes className={`${glyphClass} ${iconColor}`} />
+        {showInlineCount ? (
           <span className={`tabular-nums ${iconColor}`}>({badgeCount})</span>
+        ) : null}
+        {showBadgeDot ? (
+          <span className="absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-sf-destructive px-0.5 text-[9px] font-bold leading-none text-white">
+            {badgeCount > 9 ? "9+" : badgeCount}
+          </span>
         ) : null}
       </button>
 

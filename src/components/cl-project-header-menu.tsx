@@ -1,34 +1,28 @@
 "use client";
 
 import {
-  clAreaHdrIconBtnClass,
-  clAreaHdrIconGlyphClass,
+  clProjectHdrIconBtnClass,
+  clProjectHdrIconGlyphClass,
 } from "@/components/cl-checklist-layout";
 import { IconDotsHorizontal } from "@/components/icons/lightning-icons";
 import { useEffect, useRef, useState } from "react";
 
 type Props = {
-  areaLabel: string;
+  projectLabel: string;
   disabled?: boolean;
-  removeDisabled?: boolean;
-  onAddScope: () => void;
-  onAddObject: () => void;
-  onRemoveArea: () => void;
+  addAreaDisabled?: boolean;
+  onAddArea: () => void;
 };
 
 const menuItemClass =
   "block w-full px-3 py-2 text-left text-sm font-medium text-sf-text hover:bg-sf-page disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-200 dark:hover:bg-zinc-800";
 
-const menuItemDangerClass =
-  "block w-full px-3 py-2 text-left text-sm font-medium text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-200 dark:hover:bg-red-950/40";
-
-export function ClAreaHeaderMenu({
-  areaLabel,
+/** Checklist project header ⋮ — Add area (and room for more actions later). */
+export function ClProjectHeaderMenu({
+  projectLabel,
   disabled = false,
-  removeDisabled = false,
-  onAddScope,
-  onAddObject,
-  onRemoveArea,
+  addAreaDisabled = false,
+  onAddArea,
 }: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -47,15 +41,15 @@ export function ClAreaHeaderMenu({
     <div className="relative shrink-0" ref={wrapRef}>
       <button
         type="button"
-        aria-label={`Area actions for ${areaLabel}`}
+        aria-label={`Project actions for ${projectLabel}`}
         aria-expanded={open}
         aria-haspopup="menu"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        className={clAreaHdrIconBtnClass}
-        title="Area actions"
+        className={clProjectHdrIconBtnClass}
+        title="Project actions"
       >
-        <IconDotsHorizontal className={clAreaHdrIconGlyphClass} />
+        <IconDotsHorizontal className={clProjectHdrIconGlyphClass} />
       </button>
       {open ? (
         <div
@@ -65,38 +59,14 @@ export function ClAreaHeaderMenu({
           <button
             type="button"
             role="menuitem"
-            disabled={disabled}
+            disabled={disabled || addAreaDisabled}
             className={menuItemClass}
             onClick={() => {
               setOpen(false);
-              onAddScope();
+              onAddArea();
             }}
           >
-            Add scope…
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={disabled}
-            className={menuItemClass}
-            onClick={() => {
-              setOpen(false);
-              onAddObject();
-            }}
-          >
-            Add object…
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={disabled || removeDisabled}
-            className={menuItemDangerClass}
-            onClick={() => {
-              setOpen(false);
-              onRemoveArea();
-            }}
-          >
-            Remove area
+            Add area…
           </button>
         </div>
       ) : null}

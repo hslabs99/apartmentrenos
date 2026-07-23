@@ -35,25 +35,27 @@ function ProjectsTabsInner() {
   const notesHref = `/projects/project/notes${projectQuerySuffix(searchParams, ["id"])}`;
 
   return (
-    <div
-      className={sfTabStripClass}
-      role="tablist"
-      aria-label="Project sections"
-    >
-      <Link href={projectHref} className={sfUnderlineTabClass(onProjectEditor)} role="tab" aria-selected={onProjectEditor}>
-        Project
-      </Link>
-      <Link href={checklistHref} className={sfUnderlineTabClass(onProjectChecklist)} role="tab" aria-selected={onProjectChecklist}>
-        Check List
-      </Link>
-      {canViewProjectWorkbench ? (
-        <Link href={workbenchHref} className={sfUnderlineTabClass(onProjectWorkbench)} role="tab" aria-selected={onProjectWorkbench}>
-          Workbench
+    <div className="bg-sf-brand shadow-md">
+      <div
+        className={sfTabStripClass}
+        role="tablist"
+        aria-label="Project sections"
+      >
+        <Link href={projectHref} className={sfUnderlineTabClass(onProjectEditor)} role="tab" aria-selected={onProjectEditor}>
+          Project
         </Link>
-      ) : null}
-      <Link href={notesHref} className={sfUnderlineTabClass(onProjectNotes)} role="tab" aria-selected={onProjectNotes}>
-        Project notes
-      </Link>
+        <Link href={checklistHref} className={sfUnderlineTabClass(onProjectChecklist)} role="tab" aria-selected={onProjectChecklist}>
+          Check List
+        </Link>
+        {canViewProjectWorkbench ? (
+          <Link href={workbenchHref} className={sfUnderlineTabClass(onProjectWorkbench)} role="tab" aria-selected={onProjectWorkbench}>
+            Workbench
+          </Link>
+        ) : null}
+        <Link href={notesHref} className={sfUnderlineTabClass(onProjectNotes)} role="tab" aria-selected={onProjectNotes}>
+          Project Notes
+        </Link>
+      </div>
     </div>
   );
 }
@@ -62,11 +64,11 @@ export function ProjectsTabs() {
   return (
     <Suspense
       fallback={
-        <div className="flex flex-wrap justify-start gap-2 border-b border-sf-border pb-px dark:border-zinc-700">
-          <div className="h-10 min-w-[88px] animate-pulse rounded-t bg-sf-border/60 dark:bg-zinc-700 md:h-11" />
-          <div className="h-10 min-w-[100px] animate-pulse rounded-t bg-sf-border/60 dark:bg-zinc-700 md:h-11" />
-          <div className="h-10 min-w-[72px] animate-pulse rounded-t bg-sf-border/60 dark:bg-zinc-700 md:h-11" />
-          <div className="h-10 min-w-[92px] animate-pulse rounded-t bg-sf-border/60 dark:bg-zinc-700 md:h-11" />
+        <div className="flex h-10 items-end gap-1 bg-sf-brand px-5">
+          <div className="h-9 min-w-[88px] animate-pulse bg-white/20" />
+          <div className="h-9 min-w-[100px] animate-pulse bg-white/20" />
+          <div className="h-9 min-w-[72px] animate-pulse bg-white/20" />
+          <div className="h-9 min-w-[92px] animate-pulse bg-white/20" />
         </div>
       }
     >

@@ -262,6 +262,15 @@ export async function GET() {
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to resolve import tab";
-    return NextResponse.json({ error: message }, { status: 404 });
+    return NextResponse.json(
+      {
+        error: message,
+        spreadsheet: {
+          id: MASTER_PRICES_SPREADSHEET_ID,
+          url: `https://docs.google.com/spreadsheets/d/${MASTER_PRICES_SPREADSHEET_ID}/edit`,
+        },
+      },
+      { status: 404 },
+    );
   }
 }

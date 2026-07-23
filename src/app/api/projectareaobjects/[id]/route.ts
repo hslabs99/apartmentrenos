@@ -202,22 +202,15 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       if (d[k] !== undefined) update[k] = normalizeLoadValue(d[k]);
     }
 
-    const lookupHourTouched = LOOKUP_LABOUR_SILO_KEYS.some((k) => d[k] !== undefined);
+    // Manual overrides are set only when the client sends labourLookupManualOverrides
+    // (workbench cell edits). Table sync PATCHes hours without that field and must not
+    // lock silos as "manual" — that previously permanently blocked re-apply from rates.
     if (d.labourLookupManualOverrides !== undefined) {
       const raw = d.labourLookupManualOverrides;
       const hasAny =
         raw != null &&
         LOOKUP_LABOUR_SILO_KEYS.some((k) => raw[k] === true);
       update.labourLookupManualOverrides = hasAny ? raw : FieldValue.delete();
-    } else if (lookupHourTouched) {
-      const merged = {
-        ...readLabourLookupManualOverrides(existing.labourLookupManualOverrides),
-      };
-      for (const k of LOOKUP_LABOUR_SILO_KEYS) {
-        if (d[k] !== undefined) merged[k] = true;
-      }
-      const hasAny = LOOKUP_LABOUR_SILO_KEYS.some((k) => merged[k] === true);
-      update.labourLookupManualOverrides = hasAny ? merged : FieldValue.delete();
     }
 
     if (d.skuId !== undefined) {
@@ -236,7 +229,9 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     if (measureOrUomChanged || skuLabourInputsChanged) {
       const objectid = integerObjectId(existing.objectid);
       const q = objectid !== undefined ? quoteByObjectId.get(objectid) : undefined;
-      const objectName = q ? String(q.objectname ?? "").trim() : "";
+      const objectName =
+        (q ? String(q.objectname ?? "").trim() : "") ||
+        String(existing.objectname ?? "").trim();
       const lineUom =
         d.customuom !== undefined
           ? String(d.customuom)
@@ -257,17 +252,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       const effectiveOverrides =
         d.labourLookupManualOverrides !== undefined
           ? readLabourLookupManualOverrides(d.labourLookupManualOverrides)
-          : lookupHourTouched
-            ? {
-                ...readLabourLookupManualOverrides(existing.labourLookupManualOverrides),
-                ...Object.fromEntries(
-                  LOOKUP_LABOUR_SILO_KEYS.filter((k) => d[k] !== undefined).map((k) => [
-                    k,
-                    true,
-                  ]),
-                ),
-              }
-            : readLabourLookupManualOverrides(existing.labourLookupManualOverrides);
+          : readLabourLookupManualOverrides(existing.labourLookupManualOverrides);
       const { patch: lookupPatch } = recalcLookupLabourHoursOnLine(
         existing,
         objectName,
