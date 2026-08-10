@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "dev:webpack": "next dev",
+    "dev:webpack": "next dev --webpack",
     "dev:turbo": "next dev --turbopack",
     "dev:fresh": "node scripts/clean-next.cjs && next dev",
+    "dev:fresh:webpack": "node scripts/clean-next.cjs && next dev --webpack",
     "dev:clean": "node scripts/clean-next.cjs",
     "build": "next build --webpack",
     "build:turbo": "next build --turbopack",
