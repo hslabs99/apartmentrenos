@@ -66,6 +66,24 @@ function refineSystemScopeFields(
 
 export { normalizeSystemScopeFields };
 
+function refineAtMostOneDefaultToTrue(
+  answers: { defaultToTrue?: boolean }[] | undefined,
+  ctx: z.RefinementCtx,
+) {
+  if (!answers?.length) return;
+  const indexes = answers
+    .map((a, i) => (a.defaultToTrue === true ? i : -1))
+    .filter((i) => i >= 0);
+  if (indexes.length <= 1) return;
+  for (const i of indexes.slice(1)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Only one answer can be Default to true",
+      path: ["answers", i, "defaultToTrue"],
+    });
+  }
+}
+
 export const scopeAnswerSchema = z.object({
   answerid: z.string().uuid(),
   label: z.string().min(1).max(200),
@@ -86,6 +104,8 @@ export const scopeAnswerSchema = z.object({
     .record(z.string().min(1).max(128), z.boolean())
     .optional(),
   includeOnDemolitionReport: z.boolean().optional(),
+  defaultToTrue: z.boolean().optional(),
+  suppressZeroSkuRows: z.boolean().optional(),
 });
 
 export const scopeMetricSchema = z.object({
@@ -123,6 +143,7 @@ export const scopeWriteSchema = z
   .superRefine((data, ctx) => {
     refineSystemScopeFields(data, ctx);
     refineScopeToolFields(data, ctx);
+    refineAtMostOneDefaultToTrue(data.answers, ctx);
     const k = data.kind ?? "question";
     const hasSingle = Boolean(data.areaDocId?.trim());
     const hasMulti = (data.areaDocIds?.length ?? 0) > 0;
@@ -194,6 +215,9 @@ export const scopePatchSchema = z
     scopeToolType: scopeToolTypeSchema,
   })
   .superRefine((data, ctx) => {
+    if (data.answers !== undefined) {
+      refineAtMostOneDefaultToTrue(data.answers, ctx);
+    }
     if (data.systemScope !== undefined || data.systemScopeType !== undefined) {
       refineSystemScopeFields(
         {
@@ -370,7 +394,10 @@ export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
   attachedObjectInheritM2Source: Record<string, InheritMeasureSource>;
   attachedObjectInheritMeasureLocked: Record<string, boolean>;
   includeOnDemolitionReport: boolean;
+  defaultToTrue: boolean;
+  suppressZeroSkuRows: boolean;
 }[] {
+  const defaultTrueId = answers.find((a) => a.defaultToTrue === true)?.answerid ?? null;
   return answers.map((a) => {
     const attachedQuoteObjectIds = normalizeIdList(a.attachedQuoteObjectIds ?? []);
     const attachedObjectTools = normalizeAttachedObjectTools(
@@ -417,6 +444,8 @@ export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
       attachedObjectInheritM2Source,
       attachedObjectInheritMeasureLocked,
       includeOnDemolitionReport: a.includeOnDemolitionReport === true,
+      defaultToTrue: defaultTrueId != null && a.answerid === defaultTrueId,
+      suppressZeroSkuRows: a.suppressZeroSkuRows === true,
     };
   });
 }

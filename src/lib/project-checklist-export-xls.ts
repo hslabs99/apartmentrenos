@@ -4,7 +4,7 @@ import {
   lineExtendedTotalExcGst,
   lineFinalPrice,
 } from "@/lib/client/line-final-price";
-import { marginPercentFromSettings } from "@/lib/settings-margin";
+import { marginPercentFromSettings, projectMarginPercent } from "@/lib/settings-margin";
 import type { AreaPublic } from "@/types/area";
 import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
@@ -124,7 +124,10 @@ export async function downloadProjectChecklistXls(
     settingsRes,
   );
   const settings = settingsRes.ok ? (settingsData.settings ?? []) : [];
-  const marginPct = marginPercentFromSettings(settings);
+  const marginPct = projectMarginPercent(
+    project.marginpct,
+    marginPercentFromSettings(settings),
+  );
 
   const labourRatesData = await readApiJson<{ items?: DataLabourRatePublic[] }>(labourRatesRes);
   const contractLabourRates = labourRatesRes.ok ? (labourRatesData.items ?? []) : [];
@@ -151,7 +154,7 @@ export async function downloadProjectChecklistXls(
 
   const rows: (string | number | boolean | null)[][] = [
     [`Checklist — ${project.projectname || projectDisplayName}`],
-    [`Margin % (from settings): ${marginPct}`],
+    [`Margin %: ${marginPct}`],
     [],
     [...HEADER],
   ];

@@ -54,6 +54,7 @@ function bodyToFirestore(parsed: z.infer<typeof quoteObjectCreateSchema>): Recor
     notes1: parsed.notes1,
     notes2: parsed.notes2,
     tooltip: parsed.tooltip,
+    promptForMulti: parsed.promptForMulti === true,
   };
 }
 

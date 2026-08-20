@@ -479,6 +479,7 @@ export function docToQuoteObjectPublic(id: string, data: DocumentData): QuoteObj
     notes1: String(data.notes1 ?? ""),
     notes2: String(data.notes2 ?? ""),
     tooltip: String(data.tooltip ?? ""),
+    promptForMulti: data.promptForMulti === true,
     systemObject: String(data.systemObject ?? "").trim() || undefined,
     createdAt: tsToIso(data.createdAt as Timestamp | undefined),
     updatedAt: tsToIso(data.updatedAt as Timestamp | undefined),

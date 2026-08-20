@@ -4,7 +4,7 @@ import { isProjectAreaObjectsMetaDocument } from "@/lib/firestore/projectareaobj
 import { isSettingsMetaDocument } from "@/lib/firestore/settings-collection";
 import { docToProjectAreaObjectPublic } from "@/lib/server/project-area-object-doc";
 import { loadAllContractLabourRates } from "@/lib/server/labour-hours";
-import { marginPercentFromSettings } from "@/lib/settings-margin";
+import { marginPercentFromSettings, projectMarginPercent } from "@/lib/settings-margin";
 import type { ProjectPublic } from "@/types/project";
 import type { SettingPublic } from "@/types/setting";
 
@@ -24,7 +24,7 @@ async function loadMarginPercent(db: Firestore): Promise<number> {
 }
 
 /**
- * Checklist-facing project totals (material + labour × settings margin %).
+ * Checklist-facing project totals (material + labour × project or settings margin %).
  * Matches Check List “Total price” / project total — no workbench painting site fee.
  */
 export async function finalTotalsByProjectDocId(
@@ -45,11 +45,16 @@ export async function finalTotalsByProjectDocId(
     projectDocIdByNumericId.set(p.projectid, p.id);
   }
 
-  const [marginPct, contractLabourRates, objSnap] = await Promise.all([
+  const [settingsMarginPct, contractLabourRates, objSnap] = await Promise.all([
     loadMarginPercent(db),
     loadAllContractLabourRates(db),
     db.collection("projectareaobjects").get(),
   ]);
+
+  const marginByNumericId = new Map<number, number>();
+  for (const p of withNumericId) {
+    marginByNumericId.set(p.projectid, projectMarginPercent(p.marginpct, settingsMarginPct));
+  }
 
   const sumByNumericId = new Map<number, number>();
   for (const d of objSnap.docs) {
@@ -58,6 +63,7 @@ export async function finalTotalsByProjectDocId(
     const projectid = Number(data.projectid);
     if (!Number.isInteger(projectid) || !projectDocIdByNumericId.has(projectid)) continue;
     const row = docToProjectAreaObjectPublic(d.id, data);
+    const marginPct = marginByNumericId.get(projectid) ?? settingsMarginPct;
     const f = lineFinalPrice(
       row,
       marginPct,

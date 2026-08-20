@@ -116,6 +116,7 @@ function bodyToFirestore(parsed: z.infer<typeof quoteObjectCreateSchema>): Recor
     notes1: parsed.notes1,
     notes2: parsed.notes2,
     tooltip: parsed.tooltip,
+    // Intentionally omit promptForMulti so re-import does not reset the Setup checkbox.
   };
 }
 

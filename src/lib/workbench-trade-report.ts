@@ -1,4 +1,5 @@
 import { projectLineObjectLabel, quoteObjectForProjectLine } from "@/lib/client/project-line-quote-object";
+import { resolveScopeLineSupplier } from "@/lib/client/scope-line-sku-match";
 import {
   formatLabourHours,
   type LabourSiloKey,
@@ -9,6 +10,7 @@ import { DEFAULT_NOTE_TYPE } from "@/lib/project-note-types";
 import { projectAreaHeading } from "@/lib/project-area-display-name";
 import type { AreaPublic } from "@/types/area";
 import type { DataSkuPublic } from "@/types/data-sku-public";
+import type { DataSkuSupplierPublic } from "@/types/data-sku-supplier-public";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import type { ProjectAreaPublic } from "@/types/project-area";
 import type { ProjectNotePublic } from "@/types/project-note";
@@ -69,40 +71,56 @@ export type WbTradeReportLineMatchSource = "labour" | "category";
 
 export type WbTradeReportLine = {
   id: string;
-  description: string;
+  /** Quote object name (what is being installed). */
+  objectType: string;
   skuProduct: string;
-  measure: string;
+  supplier: string;
+  /** Supplier’s own SKU/code. */
+  supplierSku: string;
+  /** Supplier model / description. */
+  model: string;
+  /** Product URL from the supplier row. */
+  link: string;
+  quantity: number | null;
   uom: string;
   labourSummary: string;
+  /** Workbench line notes — install comments, not trade notes. */
   lineNotes: string;
   bundled: boolean;
   /** Why this line is on the trade report (labour hours and/or trade category). */
   matchSources: WbTradeReportLineMatchSource[];
 };
 
-export type WbTradeReportObject = {
-  objectid: number;
-  label: string;
-  lines: WbTradeReportLine[];
-  notes: ProjectNotePublic[];
-  /** Total trade labour hours across all lines on this object in the area. */
-  tradeLabourSummary?: string;
-  /** Scope answers tagged for the demolition report — do not remove these items. */
-  demolitionReportLabels?: string[];
+export type WbTradeReportNoteItem = {
+  id: string;
+  /** Object name when the note is attached to a quote object; otherwise empty. */
+  objectLabel: string;
+  notetype: string;
+  author: string;
+  notedatetime: string | null;
+  text: string;
+};
+
+export type WbTradeReportRetainItem = {
+  objectLabel: string;
+  labels: string[];
 };
 
 export type WbTradeReportArea = {
   areaid: number;
   label: string;
-  notes: ProjectNotePublic[];
-  objects: WbTradeReportObject[];
+  installs: WbTradeReportLine[];
+  notes: WbTradeReportNoteItem[];
+  retainItems: WbTradeReportRetainItem[];
 };
 
 export type WbTradeReportData = {
   config: WbTradeReportConfig;
   projectName: string;
-  projectNotes: ProjectNotePublic[];
+  projectNotes: WbTradeReportNoteItem[];
   areas: WbTradeReportArea[];
+  installCount: number;
+  noteCount: number;
   printedAt: Date;
 };
 
@@ -158,24 +176,6 @@ function lineMatchSourcesForReport(
   return sources;
 }
 
-function tradeLabourSummaryForObject(
-  rows: ProjectAreaObjectPublic[],
-  keys: readonly LabourSiloKey[],
-): string | undefined {
-  const parts: string[] = [];
-  for (const key of keys) {
-    let keySum = 0;
-    for (const row of rows) {
-      const v = row[key];
-      if (v != null && Number.isFinite(v) && v > 0) keySum += v;
-    }
-    if (keySum <= 0) continue;
-    const header = WB_LABOUR_SILO_HEADERS.find((h) => h.key === key);
-    parts.push(`${header?.label ?? key}: ${formatLabourHours(keySum)}h`);
-  }
-  return parts.length > 0 ? parts.join(" · ") : undefined;
-}
-
 function lineHasReportLabour(row: ProjectAreaObjectPublic, keys: readonly LabourSiloKey[]): boolean {
   return keys.some((k) => {
     const v = row[k];
@@ -226,11 +226,66 @@ function lineNotesText(row: ProjectAreaObjectPublic): string {
   return [row.notes1, row.notes2].map((n) => n?.trim()).filter(Boolean).join("\n");
 }
 
-function measureLabel(row: ProjectAreaObjectPublic): string {
-  if (row.custommeasure == null || !Number.isFinite(row.custommeasure)) return "—";
-  return Number.isInteger(row.custommeasure)
-    ? String(row.custommeasure)
-    : String(row.custommeasure);
+function finiteOrNull(n: number | null | undefined): number | null {
+  return n != null && Number.isFinite(n) ? n : null;
+}
+
+function compareStrings(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+}
+
+function supplierInfo(
+  line: Pick<
+    ProjectAreaObjectPublic,
+    "skuId" | "supplierOption" | "manualSupplier" | "manualSupplierSku"
+  >,
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>,
+): { supplier: string; supplierSku: string; model: string; link: string } {
+  const row = resolveScopeLineSupplier(line, suppliersBySkuId);
+  if (row) {
+    return {
+      supplier: row.supplier.trim(),
+      supplierSku: line.manualSupplierSku?.trim() || row.supplierSku.trim(),
+      model: row.model.trim(),
+      link: row.link.trim(),
+    };
+  }
+  const manual = line.manualSupplier?.trim();
+  if (manual) {
+    return {
+      supplier: manual,
+      supplierSku: line.manualSupplierSku?.trim() ?? "",
+      model: "",
+      link: "",
+    };
+  }
+  return { supplier: "", supplierSku: "", model: "", link: "" };
+}
+
+function toNoteItem(
+  note: ProjectNotePublic,
+  objectLabel = "",
+): WbTradeReportNoteItem {
+  return {
+    id: note.id,
+    objectLabel,
+    notetype: note.notetype || "Note",
+    author: note.author?.trim() ?? "",
+    notedatetime: note.notedatetime,
+    text: note.note.trim(),
+  };
+}
+
+function objectLabelForId(
+  objectid: number,
+  rows: ProjectAreaObjectPublic[],
+  quoteObjects: QuoteObjectPublic[],
+  catalogSkus: DataSkuPublic[],
+): string {
+  const labelRow = rows.find((r) => r.objectid === objectid);
+  if (labelRow) return projectLineObjectLabel(labelRow, quoteObjects, catalogSkus);
+  const q = quoteObjects.find((o) => o.objectid === objectid);
+  return q?.objectname?.trim() || `Object ${objectid}`;
 }
 
 /** Demolition report: trade tag or note type "Demolition". Other trades: trade tag only. */
@@ -342,6 +397,7 @@ export type BuildWorkbenchTradeReportArgs = {
   projectNotes: ProjectNotePublic[];
   quoteObjects: QuoteObjectPublic[];
   catalogSkus: DataSkuPublic[];
+  suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
   scopes: ScopePublic[];
   objectsByProjectAreaDocId: Map<string, ProjectAreaObjectPublic[]>;
 };
@@ -356,29 +412,57 @@ export function buildWorkbenchTradeReport(args: BuildWorkbenchTradeReportArgs): 
     projectNotes,
     quoteObjects,
     catalogSkus,
+    suppliersBySkuId,
     scopes,
     objectsByProjectAreaDocId,
   } = args;
 
-  const projectNotesForTrade = projectLevelTradeNotes(projectNotes, projectid, config);
+  const projectNotesForTrade = projectLevelTradeNotes(projectNotes, projectid, config).map((n) =>
+    toNoteItem(n),
+  );
 
   const reportAreas: WbTradeReportArea[] = [];
 
   for (const pa of projectAreas) {
     const rows = objectsByProjectAreaDocId.get(pa.id) ?? [];
-    const areaNotes = areaLevelTradeNotes(projectNotes, projectid, pa.areaid, config);
+    const areaNotes = areaLevelTradeNotes(projectNotes, projectid, pa.areaid, config).map((n) =>
+      toNoteItem(n),
+    );
     const demolitionByObject =
       config.id === "demolition"
         ? demolitionReportLabelsByObjectId(pa, scopes, quoteObjects)
         : new Map<number, string[]>();
 
-    const linesByObject = new Map<number, ProjectAreaObjectPublic[]>();
-    for (const row of rows) {
-      if (!lineMatchesWorkbenchTradeReport(row, config, quoteObjects, catalogSkus)) continue;
-      const list = linesByObject.get(row.objectid) ?? [];
-      list.push(row);
-      linesByObject.set(row.objectid, list);
-    }
+    const matchingRows = rows.filter((row) =>
+      lineMatchesWorkbenchTradeReport(row, config, quoteObjects, catalogSkus),
+    );
+
+    const installs: WbTradeReportLine[] = matchingRows
+      .map((row) => {
+        const supplier = supplierInfo(row, suppliersBySkuId);
+        return {
+          id: row.id,
+          objectType: projectLineObjectLabel(row, quoteObjects, catalogSkus),
+          skuProduct: skuProductLabel(row, catalogSkus),
+          supplier: supplier.supplier,
+          supplierSku: supplier.supplierSku,
+          model: supplier.model,
+          link: supplier.link,
+          quantity: finiteOrNull(row.custommeasure),
+          uom: row.customuom?.trim() ?? "",
+          labourSummary: labourSummaryForLine(row, config),
+          lineNotes: lineNotesText(row),
+          bundled: row.linesource === "bundled",
+          matchSources: lineMatchSourcesForReport(row, config, quoteObjects, catalogSkus),
+        };
+      })
+      .sort((a, b) => {
+        const objectCmp = compareStrings(a.objectType, b.objectType);
+        if (objectCmp !== 0) return objectCmp;
+        const skuCmp = compareStrings(a.supplierSku, b.supplierSku);
+        if (skuCmp !== 0) return skuCmp;
+        return compareStrings(a.model || a.skuProduct, b.model || b.skuProduct);
+      });
 
     const objectIdsWithNotes = new Set<number>();
     for (const n of projectNotes) {
@@ -386,62 +470,52 @@ export function buildWorkbenchTradeReport(args: BuildWorkbenchTradeReportArgs): 
       if (noteMatchesTradeReport(n, config)) objectIdsWithNotes.add(n.objectid);
     }
 
-    const objectIds = new Set([...linesByObject.keys(), ...objectIdsWithNotes]);
-    for (const objectid of demolitionByObject.keys()) objectIds.add(objectid);
-    const objects: WbTradeReportObject[] = [...objectIds]
-      .sort((a, b) => a - b)
-      .map((objectid) => {
-        const objectRows = rows.filter((r) => r.objectid === objectid);
-        const labelRow = objectRows[0];
-        const label = labelRow
-          ? projectLineObjectLabel(labelRow, quoteObjects, catalogSkus)
-          : `Object ${objectid}`;
-        const matchingLines = (linesByObject.get(objectid) ?? []).sort(
-          (a, b) => a.objectid - b.objectid || a.id.localeCompare(b.id),
-        );
-        const tradeLabourSummary = tradeLabourSummaryForObject(objectRows, config.labourSiloKeys);
-        return {
-          objectid,
-          label,
-          lines: matchingLines.map((row) => ({
-            id: row.id,
-            description: projectLineObjectLabel(row, quoteObjects, catalogSkus),
-            skuProduct: skuProductLabel(row, catalogSkus),
-            measure: measureLabel(row),
-            uom: row.customuom?.trim() || "—",
-            labourSummary: labourSummaryForLine(row, config),
-            lineNotes: lineNotesText(row),
-            bundled: row.linesource === "bundled",
-            matchSources: lineMatchSourcesForReport(row, config, quoteObjects, catalogSkus),
-          })),
-          notes: objectLevelTradeNotes(projectNotes, projectid, pa.areaid, objectid, config),
-          tradeLabourSummary,
-          demolitionReportLabels: demolitionByObject.get(objectid),
-        };
-      })
-      .filter(
-        (o) =>
-          o.lines.length > 0 ||
-          o.notes.length > 0 ||
-          Boolean(o.tradeLabourSummary) ||
-          (o.demolitionReportLabels?.length ?? 0) > 0,
-      );
+    const objectNotes: WbTradeReportNoteItem[] = [];
+    for (const objectid of [...objectIdsWithNotes].sort((a, b) => a - b)) {
+      const label = objectLabelForId(objectid, rows, quoteObjects, catalogSkus);
+      for (const note of objectLevelTradeNotes(
+        projectNotes,
+        projectid,
+        pa.areaid,
+        objectid,
+        config,
+      )) {
+        objectNotes.push(toNoteItem(note, label));
+      }
+    }
 
-    if (areaNotes.length === 0 && objects.length === 0) continue;
+    const notes = [...areaNotes, ...objectNotes];
+
+    const retainItems: WbTradeReportRetainItem[] = [...demolitionByObject.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([objectid, labels]) => ({
+        objectLabel: objectLabelForId(objectid, rows, quoteObjects, catalogSkus),
+        labels,
+      }))
+      .filter((item) => item.labels.length > 0);
+
+    if (installs.length === 0 && notes.length === 0 && retainItems.length === 0) continue;
 
     reportAreas.push({
       areaid: pa.areaid,
       label: projectAreaHeading(pa, areas),
-      notes: areaNotes,
-      objects,
+      installs,
+      notes,
+      retainItems,
     });
   }
+
+  const installCount = reportAreas.reduce((sum, a) => sum + a.installs.length, 0);
+  const noteCount =
+    projectNotesForTrade.length + reportAreas.reduce((sum, a) => sum + a.notes.length, 0);
 
   return {
     config,
     projectName: project.projectname?.trim() || "Project",
     projectNotes: projectNotesForTrade,
     areas: reportAreas,
+    installCount,
+    noteCount,
     printedAt: new Date(),
   };
 }
@@ -449,14 +523,6 @@ export function buildWorkbenchTradeReport(args: BuildWorkbenchTradeReportArgs): 
 export function wbTradeReportHasContent(data: WbTradeReportData): boolean {
   if (data.projectNotes.length > 0) return true;
   return data.areas.some(
-    (a) =>
-      a.notes.length > 0 ||
-      a.objects.some(
-        (o) =>
-          o.lines.length > 0 ||
-          o.notes.length > 0 ||
-          Boolean(o.tradeLabourSummary) ||
-          (o.demolitionReportLabels?.length ?? 0) > 0,
-      ),
+    (a) => a.installs.length > 0 || a.notes.length > 0 || a.retainItems.length > 0,
   );
 }

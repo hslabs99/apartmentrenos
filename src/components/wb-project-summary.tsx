@@ -6,6 +6,7 @@ import {
   LOOKUP_LABOUR_SILO_KEYS,
   WB_WORKBENCH_LABOUR_SILO_HEADERS,
 } from "@/lib/labour-silo";
+import { useViewMode } from "@/lib/view-mode";
 import type { ReactNode } from "react";
 
 function moneyOrBlank(n: number | null | undefined): string {
@@ -104,6 +105,7 @@ function WbFinSummaryBlocks({
   ariaLabel,
   finalTeal = false,
 }: BlocksProps) {
+  const { isAdminMode } = useViewMode();
   const tradeTotal = tradeTotalFrom(labourCostBySilo, showPainting ? paintingExcGst : 0);
 
   const tradeTags: { label: string; value: number | null | undefined }[] = [];
@@ -120,15 +122,19 @@ function WbFinSummaryBlocks({
   const summaryCards = [
     { label: "LINE SUB TOTAL", value: lineSubTotal, accent: false, teal: false },
     { label: "TRADE TOTAL", value: tradeTotal, accent: false, teal: false },
-    { label: "TOTAL", value: netTotal, accent: false, teal: false },
-    { label: "MARGIN", value: marginExcGst, accent: !finalTeal, teal: false },
+    ...(!isAdminMode
+      ? [
+          { label: "TOTAL", value: netTotal, accent: false, teal: false },
+          { label: "MARGIN", value: marginExcGst, accent: !finalTeal, teal: false },
+        ]
+      : []),
     {
       label: grandLabel.toUpperCase(),
       value: grandTotal,
       accent: !finalTeal,
       teal: finalTeal,
     },
-  ] as const;
+  ];
 
   return (
     <div
@@ -203,11 +209,7 @@ export function WbProjectSummary({
       marginControl={
         canAdjustMargin ? (
           <WbMarginPercentControl value={marginPct} onChange={onMarginChange} />
-        ) : (
-          <span className="text-xs tabular-nums text-sf-text-secondary dark:text-zinc-400">
-            {marginPct}%
-          </span>
-        )
+        ) : undefined
       }
     />
   );

@@ -9,6 +9,7 @@ import { getAdminFirestore } from "@/lib/firebase/admin";
 import { ensureProjectsBootstrap } from "@/lib/firestore/collection-bootstrap";
 import { isProjectsMetaDocument } from "@/lib/firestore/projects-collection";
 import { parseProjectStatus } from "@/lib/project-status";
+import { parseMarginPercent } from "@/lib/settings-margin";
 import type { ProjectPublic } from "@/types/project";
 
 export const runtime = "nodejs";
@@ -38,6 +39,7 @@ const updateSchema = z.object({
   defaultpricelevelid: numberOrNull.optional(),
   defaultstyle: z.string().max(255).optional(),
   defaultcolour: z.string().max(255).optional(),
+  marginpct: z.number().min(0).max(999).optional(),
 });
 
 function tsToIso(t: Timestamp | undefined): string | null {
@@ -90,6 +92,7 @@ function docToPublic(id: string, data: DocumentData): ProjectPublic {
     defaultpricelevelid: numOrNull(data.defaultpricelevelid) ?? null,
     defaultstyle: String(data.defaultstyle ?? ""),
     defaultcolour: String(data.defaultcolour ?? ""),
+    marginpct: numOrNull(data.marginpct) ?? null,
     createdAt: tsToIso(data.createdAt as Timestamp | undefined),
     updatedAt: tsToIso(data.updatedAt as Timestamp | undefined),
   };
@@ -175,6 +178,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     }
     if (d.defaultstyle !== undefined) update.defaultstyle = d.defaultstyle;
     if (d.defaultcolour !== undefined) update.defaultcolour = d.defaultcolour;
+    if (d.marginpct !== undefined) update.marginpct = parseMarginPercent(String(d.marginpct));
 
     await ref.update(update);
     const next = await ref.get();

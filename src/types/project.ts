@@ -36,6 +36,8 @@ export type ProjectPublic = {
   defaultstyle?: string;
   /** Default Colour for areas/lines unless overridden per area/line. Empty = not set. */
   defaultcolour?: string;
+  /** Workbench margin % for this project. Null/missing = use the global settings `margin`. */
+  marginpct?: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 };
@@ -43,6 +45,6 @@ export type ProjectPublic = {
 /** Projects list API includes area counts and checklist final total per project. */
 export type ProjectListItem = ProjectPublic & {
   areaCount: number;
-  /** Sum of included line final prices (material + labour × settings margin %). */
+  /** Sum of included line final prices (material + labour × project or settings margin %). */
   finalTotal: number;
 };

@@ -81,6 +81,11 @@ export type QuoteObjectPublic = {
   /** Guidance for measure/UOM on checklist (used when no area-object tool tip applies). */
   tooltip: string;
   /**
+   * Setup flag: when true, consumers may prompt for a multi on this object.
+   * Not written by quote-object import updates, so it persists across re-import.
+   */
+  promptForMulti?: boolean;
+  /**
    * When set (e.g. `"Blinds"`), scope/quote SKU resolution can treat this template as a
    * non-catalog object. Stored as Firestore `systemObject`.
    */

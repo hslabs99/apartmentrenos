@@ -166,8 +166,12 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       update.exposeTool = false;
       update.scopeToolType = null;
       update.scopeMetrics = [];
+      update.defaultToTrue = FieldValue.delete();
+      update.suppressZeroSkuRows = FieldValue.delete();
     } else {
       update.kind = "question";
+      update.defaultToTrue = FieldValue.delete();
+      update.suppressZeroSkuRows = FieldValue.delete();
       if (parsed.data.answers !== undefined) {
         update.answers = normalizeScopeAnswers(parsed.data.answers);
       } else if (prevKind === "header" || prevKind === "footer") {

@@ -11,3 +11,12 @@ export function singleYesAnswerId(scope: ScopePublic): string | null {
   if (!a || a.label.trim().toLowerCase() !== "yes") return null;
   return a.answerid;
 }
+
+/**
+ * Answer marked Default to true in Setup. Only one answer per scope should have this.
+ */
+export function defaultTrueAnswerId(scope: ScopePublic): string | null {
+  if (scope.kind === "header" || scope.kind === "footer") return null;
+  const hit = scope.answers.find((a) => a.defaultToTrue === true);
+  return hit?.answerid ?? null;
+}

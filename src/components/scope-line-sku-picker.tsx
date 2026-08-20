@@ -10,8 +10,8 @@ import {
   encodeScopeLineSkuPickValue,
   matchingSkusForScopeLine,
   scopeLineSkuPickAllModeLabel,
-  scopeLineSkuPickLabel,
-  skuOptionLabel,
+  scopeLineSkuPickDescriptionLabel,
+  scopeLineSkuPickHoverTitle,
   scopeLineMatchesSkuPick,
   skuProductMatchesAppendSpec,
   type ScopeLineSkuPick,
@@ -29,6 +29,7 @@ import type { ColourLookupIndex } from "@/lib/sku/colour-lookup-index";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ScopeLineSkuMatchDiagnosticModal } from "@/components/scope-line-sku-match-diagnostic-modal";
 import { WbScopeLineSkuPickerModal } from "@/components/wb-scope-line-sku-picker-modal";
+import { WbSkuHoverCard } from "@/components/wb-sku-hover-card";
 import { diagnoseScopeLineSkuMatch } from "@/lib/client/scope-line-sku-match-diagnostic";
 import { SCOPE_LINE_SKU_ADD_BLANK_VALUE } from "@/lib/project-area-line-order";
 
@@ -349,18 +350,6 @@ export function ScopeLineSkuPicker({
       <option value={SCOPE_LINE_SKU_ADD_BLANK_VALUE}>Add Manual Row</option>
     ) : null;
 
-  const optionLabel = (pick: ScopeLineSkuPick) => {
-    if (includeAllSupplierOptions) {
-      const price =
-        pick.priceExcGst != null ? formatMoney(pick.priceExcGst) : "—";
-      return scopeLineSkuPickAllModeLabel(pick, price);
-    }
-    const base = scopeLineSkuPickLabel(pick);
-    if (!showSupplierPrice) return base;
-    const priceLabel = scopeLineSkuPickPriceLabel(pick);
-    return priceLabel ? `${base} · ${priceLabel}` : base;
-  };
-
   const selectedPick = value
     ? picks.find(
         (p) => encodeScopeLineSkuPickValue(p.skuId, p.supplierOption) === value,
@@ -371,6 +360,37 @@ export function ScopeLineSkuPicker({
     quoteObject?.objectname?.trim() ||
     line.objectname?.trim() ||
     `Object #${line.objectid}`;
+
+  const hoverObjectTypeForPick = (pick: ScopeLineSkuPick) => {
+    const skuType =
+      catalogMatches.find((m) => m.skuId === pick.skuId)?.productType?.trim() ?? "";
+    const quoteType = quoteObject?.objecttype?.trim() ?? "";
+    const parts: string[] = [];
+    const seen = new Set<string>();
+    for (const part of [objectLabel, skuType, quoteType]) {
+      const key = part.toLowerCase();
+      if (!part || seen.has(key)) continue;
+      seen.add(key);
+      parts.push(part);
+    }
+    return parts.join(" · ");
+  };
+
+  /** Visible option text is description only; catalog `skuId` stays on the pick value. */
+  const optionLabel = (pick: ScopeLineSkuPick) => {
+    if (includeAllSupplierOptions) {
+      const price =
+        pick.priceExcGst != null ? formatMoney(pick.priceExcGst) : "—";
+      return scopeLineSkuPickAllModeLabel(pick, price);
+    }
+    const base = scopeLineSkuPickDescriptionLabel(pick);
+    if (!showSupplierPrice) return base;
+    const priceLabel = scopeLineSkuPickPriceLabel(pick);
+    return priceLabel ? `${base} · ${priceLabel}` : base;
+  };
+
+  const optionTitle = (pick: ScopeLineSkuPick) =>
+    scopeLineSkuPickHoverTitle(pick, hoverObjectTypeForPick(pick));
 
   if (picks.length === 0) {
     const noMatchLabel = shortMatchLabels ? "No matching SKU" : "SKU: No matching SKU";
@@ -419,11 +439,23 @@ export function ScopeLineSkuPicker({
     const lockedClass = inlineRow
       ? `${selectClassName} min-w-0 flex-1 truncate font-normal leading-tight text-sf-text dark:text-zinc-100`
       : `block min-w-0 flex-1 truncate text-xs leading-tight text-sf-text dark:text-zinc-100`;
+    const lockedSpan = (
+      <span
+        className={lockedClass}
+        title={skuPickerUi === "popup" ? undefined : (optionTitle(only) ?? lockedLabel)}
+      >
+        {lockedLabel}
+      </span>
+    );
     return (
       <div className="flex h-full w-full min-w-0 items-center">
-        <span className={lockedClass} title={lockedLabel}>
-          {lockedLabel}
-        </span>
+        {skuPickerUi === "popup" ? (
+          <WbSkuHoverCard pick={only} objectType={hoverObjectTypeForPick(only)}>
+            {lockedSpan}
+          </WbSkuHoverCard>
+        ) : (
+          lockedSpan
+        )}
       </div>
     );
   }
@@ -462,26 +494,32 @@ export function ScopeLineSkuPicker({
       : picks.length === 1
         ? optionLabel(picks[0]!)
         : "Select…";
+    const hoverPick = selectedPick ?? (picks.length === 1 ? picks[0] : undefined);
 
     return (
       <>
         <div className="flex h-full w-full min-w-0 items-center gap-1">
           {matchCountBadge}
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => setPopupOpen(true)}
-            className={`h-full min-w-0 flex-1 truncate text-left ${selectClassName}`}
-            title={triggerLabel}
+          <WbSkuHoverCard
+            pick={hoverPick}
+            objectType={hoverPick ? hoverObjectTypeForPick(hoverPick) : ""}
           >
-            {triggerLabel}
-          </button>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => setPopupOpen(true)}
+              className={`h-full min-w-0 w-full truncate text-left ${selectClassName}`}
+            >
+              {triggerLabel}
+            </button>
+          </WbSkuHoverCard>
         </div>
         <WbScopeLineSkuPickerModal
           open={popupOpen}
           picks={picks}
           selectedValue={value}
           objectLabel={objectLabel}
+          pickTitle={optionTitle}
           showAddBlankLineOption={showAddBlankLineOption}
           showShowAllPrioritiesCheckbox={showIncludeAllSupplierOptions}
           showAllPriorities={includeAllSupplierOptions}
@@ -504,6 +542,7 @@ export function ScopeLineSkuPicker({
           className={`h-full min-w-0 flex-1 ${selectClassName}`}
           disabled={disabled}
           value={value}
+          title={selectedPick ? optionTitle(selectedPick) : objectLabel}
           onChange={(e) => handleSelectChange(e.target.value)}
         >
           {picks.length > 1 ? <option value="">Select…</option> : null}
@@ -511,6 +550,7 @@ export function ScopeLineSkuPicker({
             <option
               key={encodeScopeLineSkuPickValue(pick.skuId, pick.supplierOption)}
               value={encodeScopeLineSkuPickValue(pick.skuId, pick.supplierOption)}
+              title={optionTitle(pick)}
             >
               {optionLabel(pick)}
             </option>
@@ -523,12 +563,15 @@ export function ScopeLineSkuPicker({
 
   if (picks.length === 1 && !includeAllSupplierOptions && !showAddBlankLineOption) {
     const only = picks[0]!;
-    const skuRow = catalogMatches.find((m) => m.skuId === only.skuId) ?? catalogMatches[0]!;
+    const singleLabel = scopeLineSkuPickDescriptionLabel(only);
 
     return (
       <div className="flex h-full w-full min-w-0 items-center">
-        <span className={`block min-w-0 flex-1 truncate ${labelClass}`}>
-          {shortMatchLabels ? skuOptionLabel(skuRow) : `SKU: ${skuOptionLabel(skuRow)}`}
+        <span
+          className={`block min-w-0 flex-1 truncate ${labelClass}`}
+          title={optionTitle(only)}
+        >
+          {singleLabel}
         </span>
         {showSupplierPrice ? <SkuPriceLine pick={only} variant={variant} /> : null}
       </div>
@@ -547,6 +590,7 @@ export function ScopeLineSkuPicker({
         className={selectClassName}
         disabled={disabled}
         value={value}
+        title={selectedPick ? optionTitle(selectedPick) : objectLabel}
         onChange={(e) => handleSelectChange(e.target.value)}
       >
         <option value="">Select SKU…</option>
@@ -554,6 +598,7 @@ export function ScopeLineSkuPicker({
           <option
             key={encodeScopeLineSkuPickValue(pick.skuId, pick.supplierOption)}
             value={encodeScopeLineSkuPickValue(pick.skuId, pick.supplierOption)}
+            title={optionTitle(pick)}
           >
             {optionLabel(pick)}
           </option>

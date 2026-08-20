@@ -68,6 +68,7 @@ function pickFromSkuAndSupplier(
     supplierOption: sup.supplierOption,
     supplier: sup.supplier.trim(),
     model: sup.model.trim(),
+    supplierSku: sup.supplierSku.trim(),
     link: sup.link.trim(),
     priceExcGst,
     discountPctApplied,

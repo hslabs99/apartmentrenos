@@ -2,8 +2,11 @@
  * Checklist (CL) scope/object row layout — single source of truth.
  * Checklist mode only (`ProjectChecklistPanel` with mode !== "workbench").
  *
- * Row 1: scope question + answer (inline, grouped).
+ * Row 1: scope question + answer + collapse (inline, grouped).
  * Row 2: SKU · Measure · UOM · Non Std · Total price · Notes · Calculator · Actions (inline grid).
+ * When the quote object has promptForMulti, "+ Additional {object name}" sits on the SKU
+ * label row, top-right of the SKU cell (aligned with Measure/UOM labels). The SKU picker
+ * stays full width. Measure and later columns stay put.
  */
 
 export const CL_ANSWER_WIDTH = "20ch";
@@ -87,6 +90,16 @@ export const clSkuFieldClass =
 export const clSkuPickerWrapClass =
   `flex w-full min-w-0 max-w-full items-center overflow-hidden ${CL_FIELD_CONTROL_HEIGHT_CLASS}`;
 
+/** SKU label + optional "+ Additional {object}" on the field-label row (promptForMulti). */
+export const clSkuLabelRowClass =
+  "mb-0.5 flex w-full min-w-0 items-baseline justify-between gap-x-2";
+
+export const clSkuFieldLabelClass =
+  "text-xs font-semibold uppercase tracking-wide text-sf-text-secondary dark:text-zinc-400";
+
+export const clAdditionalPromptBtnClass =
+  "shrink-0 truncate text-xs font-semibold leading-none text-sf-brand hover:underline disabled:cursor-not-allowed disabled:opacity-40 dark:text-emerald-400";
+
 /** Width/truncation for SKU select inside clSkuFieldClass (combine with selectBase in panel). */
 export const clSkuSelectExtraClass =
   `box-border block w-full min-w-0 max-w-full truncate text-xs leading-tight py-0 ${CL_FIELD_CONTROL_HEIGHT_CLASS}`;
@@ -107,6 +120,10 @@ export const clRowIconBtnClass =
 
 /** Shared glyph size inside clRowIconBtnClass. */
 export const clRowIconGlyphClass = "h-3.5 w-3.5";
+
+/** Scope row Compress / Show All toggle — same height as row icon buttons, text label. */
+export const clScopeCollapseBtnClass =
+  "inline-flex h-7 shrink-0 items-center gap-0.5 rounded-md border border-sf-border bg-sf-surface px-1.5 text-[10px] font-semibold tracking-wide text-sf-text-weak transition hover:border-sf-border-strong hover:text-sf-text disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800";
 
 /** Calculator trigger — icon only, no nested button chrome. */
 export const clCalculatorIconBtnClass = clRowIconBtnClass;
@@ -192,9 +209,9 @@ export const clCalculatorCellClass =
 export const clActionsCellClass =
   `flex w-full min-w-0 shrink-0 items-end justify-center gap-0 self-end ${CL_FIELD_CONTROL_HEIGHT_CLASS}`;
 
-/** Fixed scroll-context rail (area + project totals) — viewport-left, works on tablet. */
+/** Fixed scroll-context rail (area + project totals). Default bottom-left; position set inline when dragged. */
 export const clScrollContextRailClass =
-  "pointer-events-none fixed bottom-5 left-5 z-50 min-w-[10.5rem] overflow-hidden rounded-xl border border-sf-border bg-sf-surface/90 shadow-lg shadow-black/10 backdrop-blur-sm dark:border-zinc-600 dark:bg-zinc-900/95";
+  "fixed bottom-5 left-5 z-50 min-w-[10.5rem] select-none rounded-xl border border-sf-border bg-sf-surface/90 shadow-lg shadow-black/10 backdrop-blur-sm dark:border-zinc-600 dark:bg-zinc-900/95";
 
 export const clScrollContextRailSectionClass = "min-w-0 space-y-0.5 px-4";
 
@@ -213,4 +230,7 @@ export const clScrollContextRailMoneyClass =
 export const clScrollContextRailDividerClass =
   "my-0 h-px w-full bg-sf-border/70 dark:bg-zinc-700";
 
-export const clScrollContextRailAccentBarClass = "h-0.5 bg-sf-accent";
+export const clScrollContextRailAccentBarClass = "h-0.5 rounded-b-xl bg-sf-accent";
+
+export const clScrollContextRailJumpSelectClass =
+  "mt-0.5 block w-full max-w-full cursor-pointer truncate rounded border border-sf-border bg-sf-surface px-1.5 py-1 text-xs font-medium text-sf-brand outline-none focus:border-sf-accent focus:ring-1 focus:ring-sf-accent/40 dark:border-zinc-600 dark:bg-zinc-950 dark:text-emerald-300";

@@ -4,6 +4,7 @@ import { ModalFrame } from "@/components/modal-frame";
 import { formatMoney } from "@/lib/client/format-money";
 import {
   encodeScopeLineSkuPickValue,
+  scopeLineSkuPickDescriptionLabel,
   type ScopeLineSkuPick,
 } from "@/lib/client/scope-line-sku-match";
 
@@ -12,6 +13,7 @@ type Props = {
   picks: ScopeLineSkuPick[];
   selectedValue: string;
   objectLabel: string;
+  pickTitle?: (pick: ScopeLineSkuPick) => string;
   showAddBlankLineOption?: boolean;
   /** When set, show the “Show all priorities” control in the modal. */
   showAllPriorities?: boolean;
@@ -36,6 +38,7 @@ export function WbScopeLineSkuPickerModal({
   picks,
   selectedValue,
   objectLabel,
+  pickTitle,
   showAddBlankLineOption = false,
   showAllPriorities = false,
   onShowAllPrioritiesChange,
@@ -107,13 +110,16 @@ export function WbScopeLineSkuPickerModal({
         {picks.map((pick) => {
           const value = encodeScopeLineSkuPickValue(pick.skuId, pick.supplierOption);
           const selected = value === selectedValue;
-          const skuPart = pick.product ? `${pick.skuId} · ${pick.product}` : pick.skuId;
+          const description = scopeLineSkuPickDescriptionLabel(pick);
           const supplierName = pick.supplier.trim() || "—";
+          const supplierSku = pick.supplierSku.trim();
+          const model = pick.model.trim();
           return (
             <li key={value}>
               <div
                 role="button"
                 tabIndex={0}
+                title={pickTitle?.(pick)}
                 onClick={() => {
                   onPick(pick);
                   onClose();
@@ -143,10 +149,15 @@ export function WbScopeLineSkuPickerModal({
                   </span>
                 </div>
                 <p className="text-sm text-sf-text dark:text-zinc-200">
-                  {pick.model.trim() || "—"}
+                  {model || "—"}
                 </p>
+                {supplierSku ? (
+                  <p className="text-xs text-sf-text-secondary dark:text-zinc-400">
+                    Supplier SKU: {supplierSku}
+                  </p>
+                ) : null}
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-sf-text-secondary dark:text-zinc-400">
-                  <span className="min-w-0 truncate">{skuPart}</span>
+                  <span className="min-w-0 truncate">{description}</span>
                   {pick.link ? (
                     <a
                       href={pick.link}

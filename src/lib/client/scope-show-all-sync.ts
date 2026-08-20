@@ -23,10 +23,9 @@ export function scopeAnswerNeedsShowAllLineSync(
     const lines = scopeLines.filter((l) => l.objectid === qObj.objectid);
     if (lines.length === 0) continue;
 
-    const expanded = lines.filter((l) => l.scopeShowAllSku === true);
-    const fullyExpanded =
-      lines.length > 1 && expanded.length === lines.length && expanded.length > 0;
-    if (!fullyExpanded) return true;
+    // One locked Show All row is a valid expansion (catalog may match a single SKU).
+    // A leftover dropdown row (`scopeShowAllSku` not set) still needs a re-apply.
+    if (lines.some((l) => l.scopeShowAllSku !== true)) return true;
   }
 
   return false;

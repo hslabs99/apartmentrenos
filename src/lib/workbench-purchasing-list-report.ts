@@ -7,6 +7,7 @@ import {
   findPaintingElementForLine,
 } from "@/lib/client/painting-element-index";
 import { partitionAreaLines } from "@/lib/client/partition-area-lines";
+import { projectLineObjectLabel } from "@/lib/client/project-line-quote-object";
 import {
   preferredSupplierForSku,
   resolveScopeLineSupplier,
@@ -21,6 +22,7 @@ import type { DataSkuSupplierPublic } from "@/types/data-sku-supplier-public";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import type { ProjectAreaPublic } from "@/types/project-area";
 import type { ProjectPublic } from "@/types/project";
+import type { QuoteObjectPublic } from "@/types/quote-object";
 
 export const WB_PURCHASING_LIST_REPORT_WINDOW_LABEL = "Purchasing List Report";
 
@@ -28,8 +30,10 @@ export type WbPurchasingListLine = {
   supplier: string;
   /** Supplier’s own SKU/code. */
   supplierSku: string;
-  /** Catalog product description. */
+  /** Catalog product description (fallback when model is empty). */
   description: string;
+  /** Quote object name — shown as the item title. */
+  objectType: string;
   /** Supplier model / description from the price book. */
   model: string;
   /** Catalog SKU id. */
@@ -37,13 +41,19 @@ export type WbPurchasingListLine = {
   /** Product URL from the supplier row. */
   link: string;
   /** Unit price ex GST. */
-  price: number | null;
+  unitPrice: number | null;
+  /** Quantity to order. */
+  quantity: number | null;
+  /** Unit of measure for quantity (LM, m², Ltr, ea, …). */
+  uom: string;
+  /** quantity × unit price ex GST. */
+  subtotalExcGst: number | null;
 };
 
 export type WbPurchasingListSupplierGroup = {
   supplier: string;
   lines: WbPurchasingListLine[];
-  /** Sum of line unit prices ex GST (null prices treated as 0). */
+  /** Sum of line subtotals ex GST (null subtotals treated as 0). */
   totalExcGst: number;
   itemCount: number;
 };
@@ -63,6 +73,24 @@ function compareStrings(a: string, b: string): number {
 
 function isIncluded(row: ProjectAreaObjectPublic): boolean {
   return row.included !== false;
+}
+
+function roundMoney(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function finiteOrNull(n: number | null | undefined): number | null {
+  return n != null && Number.isFinite(n) ? n : null;
+}
+
+function subtotalFrom(quantity: number | null, unitPrice: number | null): number | null {
+  if (quantity == null || unitPrice == null) return null;
+  return roundMoney(quantity * unitPrice);
+}
+
+function unitPriceFromTotal(total: number | null, quantity: number): number | null {
+  if (total == null || !(quantity > 0)) return null;
+  return roundMoney(total / quantity);
 }
 
 function lineSkuProduct(row: ProjectAreaObjectPublic, catalogSkus: DataSkuPublic[]): string {
@@ -147,24 +175,52 @@ function pickSupplierCells(
   };
 }
 
-function pushLine(
-  lines: WbPurchasingListLine[],
-  entry: WbPurchasingListLine,
-): void {
-  if (!entry.supplier && !entry.supplierSku && !entry.description && entry.price == null) {
+function paintPurchaseQty(part: {
+  litrePerM2: number | null;
+  extendedLitres: number | null;
+  extendedM2: number;
+  lineUom: string;
+}): { quantity: number; uom: string } {
+  const litrePriced =
+    part.litrePerM2 != null &&
+    Number.isFinite(part.litrePerM2) &&
+    part.extendedLitres != null &&
+    Number.isFinite(part.extendedLitres);
+  if (litrePriced && part.extendedLitres != null) {
+    const raw = part.lineUom.trim();
+    const upper = raw.toUpperCase();
+    const litreUom =
+      upper === "LTR" || upper === "L" || upper === "LITRE" || upper === "LITRES"
+        ? raw
+        : "Ltr";
+    return { quantity: part.extendedLitres, uom: litreUom || "Ltr" };
+  }
+  return { quantity: part.extendedM2, uom: part.lineUom.trim() || "M2" };
+}
+
+function pushLine(lines: WbPurchasingListLine[], entry: WbPurchasingListLine): void {
+  if (
+    !entry.supplier &&
+    !entry.supplierSku &&
+    !entry.description &&
+    !entry.objectType &&
+    entry.unitPrice == null &&
+    entry.quantity == null
+  ) {
     return;
   }
   lines.push(entry);
 }
 
 /**
- * Compact shopping-list report: supplier, supplier SKU, product description, unit price.
+ * Compact shopping-list report: supplier product (SKU + model), unit price, quantity, subtotal.
  * Same product universe as Export by supplier (primary, bundled, building/paint parts).
  */
 export function buildWorkbenchPurchasingListReport(args: {
   project: ProjectPublic;
   projectAreas: ProjectAreaPublic[];
   catalogSkus: DataSkuPublic[];
+  quoteObjects: QuoteObjectPublic[];
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
   supplierDiscountByKey: SupplierDiscountByKey;
   buildingElementBySkuName: Map<string, DataBuildingElementPublic>;
@@ -175,6 +231,7 @@ export function buildWorkbenchPurchasingListReport(args: {
     project,
     projectAreas,
     catalogSkus,
+    quoteObjects,
     suppliersBySkuId,
     supplierDiscountByKey,
     buildingElementBySkuName,
@@ -192,15 +249,22 @@ export function buildWorkbenchPurchasingListReport(args: {
     for (const row of topLevel) {
       if (!isIncluded(row)) continue;
 
+      const objectType = projectLineObjectLabel(row, quoteObjects, catalogSkus);
       const cells = supplierCells(row, suppliersBySkuId);
+      const quantity = finiteOrNull(row.custommeasure);
+      const unitPrice = finiteOrNull(row.customumprice);
       pushLine(lines, {
         supplier: cells.supplier,
         supplierSku: cells.supplierSku,
         description: lineSkuProduct(row, catalogSkus),
+        objectType,
         model: cells.model,
         catalogSkuId: cells.catalogSkuId,
         link: cells.link,
-        price: row.customumprice ?? null,
+        unitPrice,
+        quantity,
+        uom: row.customuom?.trim() ?? "",
+        subtotalExcGst: subtotalFrom(quantity, unitPrice),
       });
 
       const element = findBuildingElementForLine(row, catalogSkus, buildingElementBySkuName);
@@ -213,18 +277,26 @@ export function buildWorkbenchPurchasingListReport(args: {
           supplierDiscountByKey,
         )) {
           const partCells = pickSupplierCells(part.skuPick, suppliersBySkuId);
-          const discountedUnit =
-            part.lineTotalExcGst != null && part.extendedQty > 0
-              ? Math.round((part.lineTotalExcGst / part.extendedQty) * 100) / 100
-              : part.skuPick?.priceExcGst ?? part.retailPriceExcGst ?? null;
+          const quantity = finiteOrNull(part.extendedQty);
+          const unitPrice =
+            unitPriceFromTotal(part.lineTotalExcGst, part.extendedQty) ??
+            finiteOrNull(part.skuPick?.priceExcGst) ??
+            finiteOrNull(part.retailPriceExcGst);
+          const partTotal = finiteOrNull(part.lineTotalExcGst);
+          const subtotalExcGst =
+            partTotal != null ? roundMoney(partTotal) : subtotalFrom(quantity, unitPrice);
           pushLine(lines, {
             supplier: partCells.supplier,
             supplierSku: partCells.supplierSku,
             description: part.skuProduct,
+            objectType,
             model: partCells.model,
             catalogSkuId: partCells.catalogSkuId,
             link: partCells.link,
-            price: discountedUnit,
+            unitPrice,
+            quantity,
+            uom: part.lineUom.trim(),
+            subtotalExcGst,
           });
         }
       }
@@ -243,18 +315,27 @@ export function buildWorkbenchPurchasingListReport(args: {
           supplierDiscountByKey,
         )) {
           const partCells = pickSupplierCells(part.skuPick, suppliersBySkuId);
-          const discountedUnit =
-            part.lineTotalExcGst != null && part.extendedM2 > 0
-              ? Math.round((part.lineTotalExcGst / part.extendedM2) * 100) / 100
-              : part.skuPick?.priceExcGst ?? part.retailPriceExcGst ?? null;
+          const { quantity: paintQty, uom } = paintPurchaseQty(part);
+          const quantity = finiteOrNull(paintQty);
+          const unitPrice =
+            unitPriceFromTotal(part.lineTotalExcGst, paintQty) ??
+            finiteOrNull(part.skuPick?.priceExcGst) ??
+            finiteOrNull(part.retailPriceExcGst);
+          const paintTotal = finiteOrNull(part.lineTotalExcGst);
+          const subtotalExcGst =
+            paintTotal != null ? roundMoney(paintTotal) : subtotalFrom(quantity, unitPrice);
           pushLine(lines, {
             supplier: partCells.supplier,
             supplierSku: partCells.supplierSku,
             description: part.skuProduct,
+            objectType,
             model: partCells.model,
             catalogSkuId: partCells.catalogSkuId,
             link: partCells.link,
-            price: discountedUnit,
+            unitPrice,
+            quantity,
+            uom,
+            subtotalExcGst,
           });
         }
       }
@@ -262,14 +343,20 @@ export function buildWorkbenchPurchasingListReport(args: {
       for (const child of bundledByParentId.get(row.id) ?? []) {
         if (!isIncluded(child)) continue;
         const childCells = supplierCells(child, suppliersBySkuId);
+        const quantity = finiteOrNull(child.custommeasure);
+        const unitPrice = finiteOrNull(child.customumprice);
         pushLine(lines, {
           supplier: childCells.supplier,
           supplierSku: childCells.supplierSku,
           description: lineSkuProduct(child, catalogSkus),
+          objectType: projectLineObjectLabel(child, quoteObjects, catalogSkus),
           model: childCells.model,
           catalogSkuId: childCells.catalogSkuId,
           link: childCells.link,
-          price: child.customumprice ?? null,
+          unitPrice,
+          quantity,
+          uom: child.customuom?.trim() ?? "",
+          subtotalExcGst: subtotalFrom(quantity, unitPrice),
         });
       }
     }
@@ -280,9 +367,11 @@ export function buildWorkbenchPurchasingListReport(args: {
     const supplierB = b.supplier.trim() || "\uffff";
     const supplierCmp = compareStrings(supplierA, supplierB);
     if (supplierCmp !== 0) return supplierCmp;
+    const objectCmp = compareStrings(a.objectType, b.objectType);
+    if (objectCmp !== 0) return objectCmp;
     const skuCmp = compareStrings(a.supplierSku, b.supplierSku);
     if (skuCmp !== 0) return skuCmp;
-    return compareStrings(a.description, b.description);
+    return compareStrings(a.model || a.description, b.model || b.description);
   });
 
   const groupMap = new Map<string, WbPurchasingListLine[]>();
@@ -302,7 +391,7 @@ export function buildWorkbenchPurchasingListReport(args: {
     .map(([supplier, groupLines]) => {
       const totalExcGst =
         Math.round(
-          groupLines.reduce((sum, line) => sum + (line.price ?? 0), 0) * 100,
+          groupLines.reduce((sum, line) => sum + (line.subtotalExcGst ?? 0), 0) * 100,
         ) / 100;
       return {
         supplier,

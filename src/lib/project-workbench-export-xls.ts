@@ -27,7 +27,7 @@ import {
 import { supplierDiscountByKeyFromRows } from "@/lib/client/supplier-discount-price";
 import { WB_WORKBENCH_LABOUR_SILO_HEADERS } from "@/lib/labour-silo";
 import { compareProjectAreasDisplayOrder } from "@/lib/project-area-display-order";
-import { marginPercentFromSettings } from "@/lib/settings-margin";
+import { marginPercentFromSettings, projectMarginPercent } from "@/lib/settings-margin";
 import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
 import type { AreaPublic } from "@/types/area";
 import type { DataBuildingElementPublic } from "@/types/data-building-element-public";
@@ -432,7 +432,10 @@ export async function downloadProjectWorkbenchXls(
     settingsRes,
   );
   const settings = settingsRes.ok ? (settingsData.settings ?? []) : [];
-  const marginPct = marginPercentFromSettings(settings);
+  const marginPct = projectMarginPercent(
+    project.marginpct,
+    marginPercentFromSettings(settings),
+  );
 
   const priceLevelsData = await readApiJson<{ priceLevels?: PriceLevelPublic[]; error?: string }>(
     priceLevelsRes,
@@ -492,7 +495,7 @@ export async function downloadProjectWorkbenchXls(
 
   const rows: ExportCell[][] = [
     [`Workbench — ${project.projectname || projectDisplayName}`],
-    [`Margin % (from settings): ${marginPct}`],
+    [`Margin %: ${marginPct}`],
     [`Sort: ${sortModeLabel}`],
     [],
     exportHeader,

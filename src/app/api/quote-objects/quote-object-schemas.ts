@@ -42,6 +42,7 @@ export const quoteObjectCreateSchema = z.object({
   notes1: z.string().optional().default(""),
   notes2: z.string().optional().default(""),
   tooltip: z.string().optional().default(""),
+  promptForMulti: z.boolean().optional().default(false),
 });
 
 export const quoteObjectUpdateSchema = z.object({
@@ -71,6 +72,7 @@ export const quoteObjectUpdateSchema = z.object({
   notes1: z.string().optional(),
   notes2: z.string().optional(),
   tooltip: z.string().optional(),
+  promptForMulti: z.boolean().optional(),
   /** Legacy single-tier fields; ignored when `priceLevelRows` is sent. */
   uomprice: numberOrNull.optional(),
   totalprice: numberOrNull.optional(),

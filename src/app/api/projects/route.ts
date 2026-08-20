@@ -103,6 +103,7 @@ function docToPublic(id: string, data: DocumentData): ProjectPublic {
     defaultpricelevelid: numOrNull(data.defaultpricelevelid) ?? null,
     defaultstyle: String(data.defaultstyle ?? ""),
     defaultcolour: String(data.defaultcolour ?? ""),
+    marginpct: numOrNull(data.marginpct) ?? null,
     createdAt: tsToIso(data.createdAt as Timestamp | undefined),
     updatedAt: tsToIso(data.updatedAt as Timestamp | undefined),
   };

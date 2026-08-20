@@ -45,7 +45,10 @@ import {
   loadAllContractLabourRates,
   loadAllObjectLabourRates,
 } from "@/lib/server/labour-hours";
-import { labourLineCatalogFields } from "@/lib/server/labour-checklist-line";
+import {
+  isLabourQuoteObjectData,
+  labourLineCatalogFields,
+} from "@/lib/server/labour-checklist-line";
 import { emptyLabourHours } from "@/lib/labour-silo";
 import {
   BLINDS_DEFAULT_MEASURE,
@@ -256,6 +259,7 @@ export type ScopeAnswerNoLinesReason =
   | "no_objects_in_categories"
   | "no_objects_for_names"
   | "no_objects_for_ids"
+  | "zero_sku_rows_suppressed"
   | "no_answer_row_for_effective_tier"
   | "no_resolvable_line_picks";
 
@@ -425,6 +429,7 @@ export async function applyScopeAnswerToProjectArea(
   const catalogQuoteObjectIds = attachedQuoteObjectIds.filter(
     (id) => !isSystemScopeObjectId(id),
   );
+  const suppressZeroSkuRows = answer.suppressZeroSkuRows === true;
 
   type ScopeLineCreateSpec = {
     objectid: number;
@@ -494,6 +499,8 @@ export async function applyScopeAnswerToProjectArea(
       const showAll = attachedShowAll[trimmed] === true;
       const noCharge = attachedNoCharge[trimmed] === true;
       const lineFlags = { scopeNoCharge: noCharge };
+      const skipZeroSku =
+        suppressZeroSkuRows && !isLabourQuoteObjectData(data);
       if (showAll) {
         const parsed = parseScopeShowAllDefaultQty(attachedShowAllDefault[trimmed]);
         showAllDefaultByObjectId.set(objectid, parsed ?? 1);
@@ -502,6 +509,7 @@ export async function applyScopeAnswerToProjectArea(
       if (showAll) {
         const skus = await resolveAllSkusForQuoteObject(db, data, filters);
         if (skus.length === 0) {
+          if (skipZeroSku) continue;
           lineSpecs.push({ ...seed, sku: null, scopeShowAllSku: false, ...lineFlags });
         } else {
           for (const sku of skus) {
@@ -515,6 +523,7 @@ export async function applyScopeAnswerToProjectArea(
         }
       } else {
         const resolved = await resolveSkuForQuoteObject(db, data, filters);
+        if (!resolved && skipZeroSku) continue;
         lineSpecs.push({
           ...seed,
           sku: resolved ? { skuId: resolved.skuId, product: resolved.product } : null,
@@ -525,7 +534,7 @@ export async function applyScopeAnswerToProjectArea(
     }
 
     if (lineSpecs.length === 0 && !hasBlindsSystem) {
-      noLinesReason = "no_objects_for_ids";
+      noLinesReason = suppressZeroSkuRows ? "zero_sku_rows_suppressed" : "no_objects_for_ids";
     }
   } else if (!hasBlindsSystem && attachedObjectNames.length > 0) {
     const linePayloads = await resolveQuoteObjectLinesForObjectNames(

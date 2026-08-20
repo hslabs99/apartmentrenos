@@ -27,6 +27,8 @@ export type ScopeFormDraftAnswer = {
   attachedObjectInheritM2Source: Partial<Record<string, InheritMeasureSource>>;
   attachedObjectInheritMeasureLocked: Partial<Record<string, boolean>>;
   includeOnDemolitionReport: boolean;
+  defaultToTrue: boolean;
+  suppressZeroSkuRows: boolean;
 };
 function normalizeDraftTools(
   raw: Partial<Record<string, ScopeToolType>> | undefined,
@@ -166,6 +168,8 @@ export function publicAnswersToDraft(
         quoteById,
       ),
       includeOnDemolitionReport: a.includeOnDemolitionReport === true,
+      defaultToTrue: a.defaultToTrue === true,
+      suppressZeroSkuRows: a.suppressZeroSkuRows === true,
     };
   });
 }
@@ -186,7 +190,10 @@ export function draftToPayload(
   attachedObjectInheritM2Source: Record<string, InheritMeasureSource>;
   attachedObjectInheritMeasureLocked: Record<string, boolean>;
   includeOnDemolitionReport: boolean;
+  defaultToTrue: boolean;
+  suppressZeroSkuRows: boolean;
 }[] {
+  const defaultTrueId = answers.find((a) => a.defaultToTrue)?.answerid ?? null;
   return answers.map((a) => {    const ids = [...new Set(a.attachedQuoteObjectIds.map((id) => id.trim()).filter(Boolean))];
     const attachedObjectTools = normalizeDraftTools(a.attachedObjectTools, ids) as Record<
       string,
@@ -251,6 +258,8 @@ export function draftToPayload(
       attachedObjectInheritM2Source,
       attachedObjectInheritMeasureLocked,
       includeOnDemolitionReport: a.includeOnDemolitionReport === true,
+      defaultToTrue: defaultTrueId != null && a.answerid === defaultTrueId,
+      suppressZeroSkuRows: a.suppressZeroSkuRows === true,
     };
   });
 }

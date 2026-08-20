@@ -74,6 +74,16 @@ export type ScopeAnswerPublic = {
    * demolition trade report (retain / do-not-remove callout).
    */
   includeOnDemolitionReport?: boolean;
+  /**
+   * When true, the checklist auto-selects this answer so the scope can resolve
+   * without the user choosing. At most one answer per scope may have this set.
+   */
+  defaultToTrue?: boolean;
+  /**
+   * When true, attached quote objects with no matching SKUs at the current
+   * tier/style/colour are not added as checklist rows for this answer.
+   */
+  suppressZeroSkuRows?: boolean;
 };
 
 /** `header` / `footer` = section markers only (no answers); `question` = normal scope with answers. */

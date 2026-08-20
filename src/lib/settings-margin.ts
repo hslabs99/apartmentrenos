@@ -21,3 +21,14 @@ export function marginPercentFromSettings(settings: SettingPublic[]): number {
   const row = settings.find((s) => isMarginSettingKey(s.settingname));
   return parseMarginPercent(row?.settingvalue);
 }
+
+/**
+ * Project-stored workbench margin, or `fallback` (typically settings) when unset.
+ */
+export function projectMarginPercent(
+  stored: number | null | undefined,
+  fallback: number,
+): number {
+  if (stored == null || !Number.isFinite(stored)) return fallback;
+  return parseMarginPercent(String(stored));
+}

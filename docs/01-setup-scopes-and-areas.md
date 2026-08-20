@@ -124,6 +124,12 @@ Click **Scope Answers** tab when area tags and question are set.
 3. Edit the **Answer label** — this is what users see on the Check List.
 4. You need **at least one answer** before you can save.
 
+Per-answer options (left list):
+
+- **Default to true** — the Check List auto-selects this answer so the scope can populate without anyone choosing. Only **one** answer on the scope can have this checked.
+- **Suppress 0 SKU Rows** — attached catalog objects with **no matching SKUs** at the project’s tier, style, and colour are **not** added as Check List rows for this answer. If two objects both have SKUs, both still appear. Any answer can have this on (one, two, or all of them).
+- **Demolition report** — include attached objects on the demolition trade report.
+
 Removing an answer later can affect projects that already used it — the app will warn you before delete.
 
 ### 4. Attach catalog lines to an answer

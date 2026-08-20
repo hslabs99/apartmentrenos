@@ -262,6 +262,8 @@ export function firestoreAnswersToPublic(raw: unknown): ScopeAnswerPublic[] {
         // Legacy: labels starting with "Keep Existing" before the explicit flag existed
         return label.trim().toLowerCase().startsWith("keep existing") ? true : undefined;
       })(),
+      defaultToTrue: rec.defaultToTrue === true ? true : undefined,
+      suppressZeroSkuRows: rec.suppressZeroSkuRows === true ? true : undefined,
     });
   }
   return out;

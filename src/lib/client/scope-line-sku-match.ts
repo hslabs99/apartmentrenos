@@ -270,6 +270,9 @@ export type ScopeLineSkuPick = {
   /** Supplier model / description (Data_SKU supplier col). */
   model: string;
 
+  /** Supplier’s own SKU/code (sheet “SKU” column) — not `skuId`. */
+  supplierSku: string;
+
   /** Supplier product URL (Data_SKU supplier col). */
   link: string;
 
@@ -367,14 +370,70 @@ export function scopeLineSkuPickLabel(
 
 
 
+/** Checklist SKU dropdown text — product description only (`skuId` remains on the pick value). */
+
+export function scopeLineSkuPickDescriptionLabel(
+
+  pick: Pick<ScopeLineSkuPick, "skuId" | "product">,
+
+): string {
+
+  const desc = pick.product.trim();
+
+  return desc || pick.skuId;
+
+}
+
+
+
+/** Hover text: object type, description, supplier details, then supplier SKU (not catalog skuId). */
+
+export function scopeLineSkuPickHoverTitle(
+
+  pick: Pick<ScopeLineSkuPick, "product" | "supplier" | "model" | "supplierSku">,
+
+  objectType: string,
+
+): string {
+
+  const lines: string[] = [];
+
+  const type = objectType.trim();
+
+  if (type) lines.push(`Object type: ${type}`);
+
+  const desc = pick.product.trim();
+
+  if (desc) lines.push(`Description: ${desc}`);
+
+  const supplier = pick.supplier.trim();
+
+  const model = pick.model.trim();
+
+  if (supplier && model) lines.push(`Supplier: ${supplier} — ${model}`);
+
+  else if (model) lines.push(`Supplier: ${model}`);
+
+  else if (supplier) lines.push(`Supplier: ${supplier}`);
+
+  const supplierSku = pick.supplierSku.trim();
+
+  if (supplierSku) lines.push(`Supplier SKU: ${supplierSku}`);
+
+  return lines.join("\n");
+
+}
+
+
+
 /** Workbench “All” mode: supplier, SKU description, and price for admin comparison. */
 export function scopeLineSkuPickAllModeLabel(
   pick: ScopeLineSkuPick,
   formattedPrice: string,
 ): string {
   const supplierPart = pick.supplier.trim() || "—";
-  const skuPart = pick.product ? `${pick.skuId} · ${pick.product}` : pick.skuId;
-  return `[P${pick.supplierOption}] ${supplierPart} · ${skuPart} · ${formattedPrice}`;
+  const desc = pick.product.trim() || "—";
+  return `[P${pick.supplierOption}] ${supplierPart} · ${desc} · ${formattedPrice}`;
 }
 
 
@@ -496,6 +555,7 @@ function pickFromSupplier(
     supplierOption: sup.supplierOption,
     supplier: sup.supplier.trim(),
     model: sup.model.trim(),
+    supplierSku: sup.supplierSku.trim(),
     link: sup.link.trim(),
     priceExcGst,
     discountPctApplied,
@@ -559,6 +619,7 @@ export function preferredSkuPickForProductName(
       supplierOption: 1,
       supplier: "",
       model: "",
+      supplierSku: "",
       link: "",
       priceExcGst: null,
       discountPctApplied: null,
@@ -616,6 +677,7 @@ export function buildScopeLineSkuPicks(
           supplierOption: PREFERRED_SUPPLIER_OPTION,
           supplier: "",
           model: "",
+          supplierSku: "",
           link: "",
           priceExcGst: null,
           discountPctApplied: null,

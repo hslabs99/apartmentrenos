@@ -435,6 +435,9 @@ export function QuoteObjectsPanel() {
   const [mode, setMode] = useState<Mode>("idle");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [promptForMultiSavingIds, setPromptForMultiSavingIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
 
@@ -821,6 +824,45 @@ export function QuoteObjectsPanel() {
       return next;
     });
   };
+
+  async function setPromptForMulti(r: QuoteObjectPublic, promptForMulti: boolean) {
+    const prev = r.promptForMulti === true;
+    setError(null);
+    setPromptForMultiSavingIds((s) => new Set(s).add(r.id));
+    setRows((list) =>
+      list.map((x) => (x.id === r.id ? { ...x, promptForMulti } : x)),
+    );
+    try {
+      const res = await fetch(`/api/quote-objects/${r.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ promptForMulti }),
+      });
+      const data = await readApiJson<{ error?: string; quoteObject?: QuoteObjectPublic }>(
+        res,
+      );
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to update prompt for multi");
+      }
+      if (data.quoteObject) {
+        const saved = data.quoteObject.promptForMulti === true;
+        setRows((list) =>
+          list.map((x) => (x.id === r.id ? { ...x, promptForMulti: saved } : x)),
+        );
+      }
+    } catch (e) {
+      setRows((list) =>
+        list.map((x) => (x.id === r.id ? { ...x, promptForMulti: prev } : x)),
+      );
+      setError(e instanceof Error ? e.message : "Failed to update prompt for multi");
+    } finally {
+      setPromptForMultiSavingIds((s) => {
+        const next = new Set(s);
+        next.delete(r.id);
+        return next;
+      });
+    }
+  }
 
   const setSelectAllVisible = (checked: boolean) => {
     if (!checked) {
@@ -1222,6 +1264,7 @@ export function QuoteObjectsPanel() {
         notes1: r.notes1,
         notes2: r.notes2,
         tooltip: r.tooltip,
+        promptForMulti: r.promptForMulti === true,
       };
       const res = await fetch("/api/quote-objects", {
         method: "POST",
@@ -1617,6 +1660,9 @@ export function QuoteObjectsPanel() {
                     <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Object ID</th>
                     <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Area tags</th>
                     <th className="px-4 py-3 font-semibold md:px-5 md:py-4">Scopes</th>
+                    <th className="px-4 py-3 text-center font-semibold md:px-5 md:py-4">
+                      Prompt for multi
+                    </th>
                     <th className="px-4 py-3 text-right font-semibold md:px-5 md:py-4">
                       Actions
                     </th>
@@ -1673,6 +1719,7 @@ export function QuoteObjectsPanel() {
                       </label>
                     </th>
                     <th scope="col" className="px-4 pb-3 pt-0 md:px-5" aria-hidden />
+                    <th scope="col" className="px-4 pb-3 pt-0 md:px-5" aria-hidden />
                     <th
                       scope="col"
                       className="px-4 pb-3 pt-0 text-right align-top md:px-5"
@@ -1684,7 +1731,7 @@ export function QuoteObjectsPanel() {
                   {displayRows.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={9}
+                        colSpan={10}
                         className="px-4 py-8 text-center text-sf-text-secondary dark:text-zinc-400 md:px-5"
                       >
                         No objects match your filters. Clear the search or column filters.
@@ -1754,6 +1801,16 @@ export function QuoteObjectsPanel() {
                               ))}
                             </ul>
                           )}
+                        </td>
+                        <td className="px-4 py-3 text-center md:px-5 md:py-3.5">
+                          <input
+                            type="checkbox"
+                            checked={r.promptForMulti === true}
+                            disabled={promptForMultiSavingIds.has(r.id)}
+                            onChange={(e) => void setPromptForMulti(r, e.target.checked)}
+                            aria-label={`Prompt for multi on ${r.objectname}`}
+                            className="size-4 rounded border-sf-border"
+                          />
                         </td>
                         <td className="px-4 py-3 text-right md:px-5 md:py-3.5">
                           <div className="flex flex-wrap justify-end gap-1.5">

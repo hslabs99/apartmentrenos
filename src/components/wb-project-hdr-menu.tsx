@@ -107,6 +107,7 @@ export function WbProjectHdrMenu({
               key={report.id}
               type="button"
               role="menuitem"
+              title={`${report.label} report — open on screen, then Print / Save PDF`}
               className={menuItemClass}
               onClick={() => {
                 setOpen(false);

@@ -303,6 +303,8 @@ export function ScopeFormModal({
         attachedObjectInheritM2Source: {},
         attachedObjectInheritMeasureLocked: {},
         includeOnDemolitionReport: false,
+        defaultToTrue: false,
+        suppressZeroSkuRows: false,
       };
       setDraftAnswers([first]);
       setSelectedAnswerId(first.answerid);
@@ -408,6 +410,8 @@ export function ScopeFormModal({
         attachedObjectInheritM2Source: {},
         attachedObjectInheritMeasureLocked: {},
         includeOnDemolitionReport: false,
+        defaultToTrue: false,
+        suppressZeroSkuRows: false,
       },
     ]);
     setSelectedAnswerId(id);
@@ -441,6 +445,23 @@ export function ScopeFormModal({
     setDraftAnswers((prev) =>
       prev.map((a) =>
         a.answerid === answerid ? { ...a, includeOnDemolitionReport } : a,
+      ),
+    );
+  }
+
+  function updateAnswerDefaultToTrue(answerid: string, defaultToTrue: boolean) {
+    setDraftAnswers((prev) =>
+      prev.map((a) => ({
+        ...a,
+        defaultToTrue: defaultToTrue && a.answerid === answerid,
+      })),
+    );
+  }
+
+  function updateAnswerSuppressZeroSkuRows(answerid: string, suppressZeroSkuRows: boolean) {
+    setDraftAnswers((prev) =>
+      prev.map((a) =>
+        a.answerid === answerid ? { ...a, suppressZeroSkuRows } : a,
       ),
     );
   }
@@ -1160,6 +1181,43 @@ export function ScopeFormModal({
                               placeholder="Answer label"
                               maxLength={200}
                             />
+                            <label className="mb-2 flex cursor-pointer items-start gap-2 text-xs text-sf-text dark:text-zinc-200">
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 rounded border-sf-border-strong"
+                                checked={a.defaultToTrue}
+                                onChange={(e) =>
+                                  updateAnswerDefaultToTrue(a.answerid, e.target.checked)
+                                }
+                                onFocus={() => setSelectedAnswerId(a.answerid)}
+                              />
+                              <span>
+                                <span className="font-medium">Default to true</span>
+                                <span className="mt-0.5 block text-sf-text-weak dark:text-zinc-400">
+                                  Auto-select this answer on the checklist so the scope can resolve
+                                  without the user choosing. Only one answer can be the default.
+                                </span>
+                              </span>
+                            </label>
+                            <label className="mb-2 flex cursor-pointer items-start gap-2 text-xs text-sf-text dark:text-zinc-200">
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 rounded border-sf-border-strong"
+                                checked={a.suppressZeroSkuRows}
+                                onChange={(e) =>
+                                  updateAnswerSuppressZeroSkuRows(a.answerid, e.target.checked)
+                                }
+                                onFocus={() => setSelectedAnswerId(a.answerid)}
+                              />
+                              <span>
+                                <span className="font-medium">Suppress 0 SKU Rows</span>
+                                <span className="mt-0.5 block text-sf-text-weak dark:text-zinc-400">
+                                  If an attached quote object has no matching SKUs at the project
+                                  tier, style, and colour, do not add that row. Objects that do have
+                                  SKUs still appear.
+                                </span>
+                              </span>
+                            </label>
                             <label className="mb-2 flex cursor-pointer items-start gap-2 text-xs text-sf-text dark:text-zinc-200">
                               <input
                                 type="checkbox"

@@ -113,6 +113,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       "notes1",
       "notes2",
       "tooltip",
+      "promptForMulti",
     ] as const;
     for (const k of scalarKeys) {
       if (d[k] === undefined) continue;
