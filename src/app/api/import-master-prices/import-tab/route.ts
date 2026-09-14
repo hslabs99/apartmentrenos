@@ -1,9 +1,4 @@
 import { NextResponse } from "next/server";
-import { fetchSkuTabImportCounts } from "@/lib/google/fetch-sku-rows-from-sheet";
-import {
-  PARTIAL_SKU_TAB_PARSE_OPTIONS,
-  SKU_ALL_PARSE_OPTIONS,
-} from "@/lib/google/fetch-master-prices-sku-rows";
 import {
   MASTER_PRICES_BUILDING_TAB_TITLE,
   MASTER_PRICES_CASCADES_TAB_TITLE,
@@ -19,16 +14,8 @@ import {
   masterPricesSpreadsheetEditUrl,
 } from "@/lib/google/master-prices-spreadsheet";
 import {
-  resolveBuildingImportSheetTab,
-  resolveCascadingRestrictionsSheetTab,
-  resolveLabourImportSheetTab,
-  resolveBuildingElementsSheetTab,
-  resolvePaintingElementsSheetTab,
-  resolvePaintingImportSheetTab,
-  resolveSkuImportSheetTab,
-  resolveListsSheetTab,
-  resolveIncrementalLabourProductsSheetTab,
-  resolveSupplierDiscountsSheetTab,
+  findWorkbookTab,
+  listWorkbookTabs,
   type ResolvedSheetTab,
 } from "@/lib/google/resolve-sheet-tab";
 
@@ -45,35 +32,8 @@ type ImportTabPayload = {
   url: string;
 };
 
-function tabPayloadFromCounts(
-  counts: {
-    tabTitle: string;
-    gid: number;
-    gridRowCount: number | null;
-    importProductCount: number;
-    importSupplierCount: number;
-    importNonBlankRows: number;
-  },
-  requiredTabTitle: string,
-): ImportTabPayload {
-  return {
-    tabTitle: counts.tabTitle,
-    requiredTabTitle,
-    gid: counts.gid,
-    gridRowCount: counts.gridRowCount,
-    importProductCount: counts.importProductCount,
-    importSupplierCount: counts.importSupplierCount,
-    importNonBlankRows: counts.importNonBlankRows,
-    url: masterPricesSpreadsheetEditUrl(counts.gid),
-  };
-}
-
 function tabPayloadFromResolve(
-  tab: {
-    tabTitle: string;
-    gid: number;
-    gridRowCount: number | null;
-  },
+  tab: ResolvedSheetTab,
   requiredTabTitle: string,
 ): ImportTabPayload {
   return {
@@ -88,177 +48,70 @@ function tabPayloadFromResolve(
   };
 }
 
-async function skuImportTabPayload(
-  resolveTab: (spreadsheetId: string) => Promise<ResolvedSheetTab>,
+function optionalTab(
+  tabs: ResolvedSheetTab[],
   requiredTabTitle: string,
-  parseOptions?: Parameters<typeof fetchSkuTabImportCounts>[2],
-  columnRange?: Parameters<typeof fetchSkuTabImportCounts>[3],
-): Promise<ImportTabPayload> {
-  const counts = await fetchSkuTabImportCounts(
-    resolveTab,
-    MASTER_PRICES_SPREADSHEET_ID,
-    parseOptions,
-    columnRange,
-  );
-  return tabPayloadFromCounts(counts, requiredTabTitle);
+): { tab: ImportTabPayload | null; error: string | null } {
+  const found = findWorkbookTab(tabs, requiredTabTitle);
+  if (found) return { tab: tabPayloadFromResolve(found, requiredTabTitle), error: null };
+  return {
+    tab: null,
+    error: `Worksheet "${requiredTabTitle}" was not found in this workbook.`,
+  };
 }
 
-/** GET — resolve import tabs (SKU counts + supporting-data tab links). */
+/** GET — resolve import tabs from workbook metadata (no SKU value download). */
 export async function GET() {
   try {
-    const skuAll = await skuImportTabPayload(
-      resolveSkuImportSheetTab,
-      MASTER_PRICES_SKU_TAB_TITLE,
-      SKU_ALL_PARSE_OPTIONS,
+    const tabs = await listWorkbookTabs(MASTER_PRICES_SPREADSHEET_ID);
+    const skuTab = findWorkbookTab(tabs, MASTER_PRICES_SKU_TAB_TITLE);
+    if (!skuTab) {
+      const tabNames = tabs.map((t) => t.tabTitle.trim()).filter(Boolean);
+      return NextResponse.json(
+        {
+          error: `Worksheet "${MASTER_PRICES_SKU_TAB_TITLE}" was not found in this workbook (match is case-insensitive). Available tabs: ${tabNames.join(", ") || "(none)"}.`,
+          spreadsheet: {
+            id: MASTER_PRICES_SPREADSHEET_ID,
+            url: `https://docs.google.com/spreadsheets/d/${MASTER_PRICES_SPREADSHEET_ID}/edit`,
+          },
+        },
+        { status: 404 },
+      );
+    }
+
+    const building = optionalTab(tabs, MASTER_PRICES_BUILDING_TAB_TITLE);
+    const labour = optionalTab(tabs, MASTER_PRICES_LABOUR_TAB_TITLE);
+    const painting = optionalTab(tabs, MASTER_PRICES_PAINTING_TAB_TITLE);
+    const cascades = optionalTab(tabs, MASTER_PRICES_CASCADES_TAB_TITLE);
+    const supplierDiscounts = optionalTab(tabs, MASTER_PRICES_SUPPLIER_DISCOUNTS_TAB_TITLE);
+    const lists = optionalTab(tabs, MASTER_PRICES_LISTS_TAB_TITLE);
+    const incrementalLabourProducts = optionalTab(
+      tabs,
+      MASTER_PRICES_INCREMENTAL_LABOUR_PRODUCTS_TAB_TITLE,
     );
-
-    const [buildingSettled, labourSettled, paintingSettled] = await Promise.allSettled([
-      skuImportTabPayload(
-        resolveBuildingImportSheetTab,
-        MASTER_PRICES_BUILDING_TAB_TITLE,
-        PARTIAL_SKU_TAB_PARSE_OPTIONS,
-      ),
-      (async () => {
-        const tab = await resolveLabourImportSheetTab(MASTER_PRICES_SPREADSHEET_ID);
-        return tabPayloadFromResolve(tab, MASTER_PRICES_LABOUR_TAB_TITLE);
-      })(),
-      skuImportTabPayload(
-        resolvePaintingImportSheetTab,
-        MASTER_PRICES_PAINTING_TAB_TITLE,
-        PARTIAL_SKU_TAB_PARSE_OPTIONS,
-      ),
-    ]);
-    let building: ImportTabPayload | null = null;
-    let buildingError: string | null = null;
-    if (buildingSettled.status === "fulfilled") {
-      building = buildingSettled.value;
-    } else {
-      buildingError =
-        buildingSettled.reason instanceof Error
-          ? buildingSettled.reason.message
-          : "Failed to resolve building tab";
-    }
-
-    let labour: ImportTabPayload | null = null;
-    let labourError: string | null = null;
-    if (labourSettled.status === "fulfilled") {
-      labour = labourSettled.value;
-    } else {
-      labourError =
-        labourSettled.reason instanceof Error
-          ? labourSettled.reason.message
-          : "Failed to resolve labour tab";
-    }
-
-    let painting: ImportTabPayload | null = null;
-    let paintingError: string | null = null;
-    if (paintingSettled.status === "fulfilled") {
-      painting = paintingSettled.value;
-    } else {
-      paintingError =
-        paintingSettled.reason instanceof Error
-          ? paintingSettled.reason.message
-          : "Failed to resolve painting tab";
-    }
-
-    let cascades: ImportTabPayload | null = null;
-    let cascadesError: string | null = null;
-    try {
-      const cascadesTab = await resolveCascadingRestrictionsSheetTab(MASTER_PRICES_SPREADSHEET_ID);
-      cascades = tabPayloadFromResolve(cascadesTab, MASTER_PRICES_CASCADES_TAB_TITLE);
-    } catch (e) {
-      cascadesError = e instanceof Error ? e.message : "Failed to resolve cascades tab";
-    }
-
-    let supplierDiscounts: ImportTabPayload | null = null;
-    let supplierDiscountsError: string | null = null;
-    try {
-      const supplierDiscountsTab = await resolveSupplierDiscountsSheetTab(
-        MASTER_PRICES_SPREADSHEET_ID,
-      );
-      supplierDiscounts = tabPayloadFromResolve(
-        supplierDiscountsTab,
-        MASTER_PRICES_SUPPLIER_DISCOUNTS_TAB_TITLE,
-      );
-    } catch (e) {
-      supplierDiscountsError =
-        e instanceof Error ? e.message : "Failed to resolve supplier discounts tab";
-    }
-
-    let lists: ImportTabPayload | null = null;
-    let listsError: string | null = null;
-    try {
-      const listsTab = await resolveListsSheetTab(MASTER_PRICES_SPREADSHEET_ID);
-      lists = tabPayloadFromResolve(listsTab, MASTER_PRICES_LISTS_TAB_TITLE);
-    } catch (e) {
-      listsError = e instanceof Error ? e.message : "Failed to resolve lists tab";
-    }
-
-    let incrementalLabourProducts: ImportTabPayload | null = null;
-    let incrementalLabourProductsError: string | null = null;
-    try {
-      const incrementalTab = await resolveIncrementalLabourProductsSheetTab(
-        MASTER_PRICES_SPREADSHEET_ID,
-      );
-      incrementalLabourProducts = tabPayloadFromResolve(
-        incrementalTab,
-        MASTER_PRICES_INCREMENTAL_LABOUR_PRODUCTS_TAB_TITLE,
-      );
-    } catch (e) {
-      incrementalLabourProductsError =
-        e instanceof Error ? e.message : "Failed to resolve incremental labour products tab";
-    }
-
-    let buildingElements: ImportTabPayload | null = null;
-    let buildingElementsError: string | null = null;
-    try {
-      const buildingElementsTab = await resolveBuildingElementsSheetTab(
-        MASTER_PRICES_SPREADSHEET_ID,
-      );
-      buildingElements = tabPayloadFromResolve(
-        buildingElementsTab,
-        MASTER_PRICES_BUILDING_ELEMENTS_TAB_TITLE,
-      );
-    } catch (e) {
-      buildingElementsError =
-        e instanceof Error ? e.message : "Failed to resolve building elements tab";
-    }
-
-    let paintingElements: ImportTabPayload | null = null;
-    let paintingElementsError: string | null = null;
-    try {
-      const paintingElementsTab = await resolvePaintingElementsSheetTab(
-        MASTER_PRICES_SPREADSHEET_ID,
-      );
-      paintingElements = tabPayloadFromResolve(
-        paintingElementsTab,
-        MASTER_PRICES_PAINTING_ELEMENTS_TAB_TITLE,
-      );
-    } catch (e) {
-      paintingElementsError =
-        e instanceof Error ? e.message : "Failed to resolve painting elements tab";
-    }
+    const buildingElements = optionalTab(tabs, MASTER_PRICES_BUILDING_ELEMENTS_TAB_TITLE);
+    const paintingElements = optionalTab(tabs, MASTER_PRICES_PAINTING_ELEMENTS_TAB_TITLE);
 
     return NextResponse.json({
-      skuAll,
-      building,
-      buildingError,
-      labour,
-      labourError,
-      painting,
-      paintingError,
-      cascades,
-      cascadesError,
-      supplierDiscounts,
-      supplierDiscountsError,
-      lists,
-      listsError,
-      incrementalLabourProducts,
-      incrementalLabourProductsError,
-      buildingElements,
-      buildingElementsError,
-      paintingElements,
-      paintingElementsError,
+      skuAll: tabPayloadFromResolve(skuTab, MASTER_PRICES_SKU_TAB_TITLE),
+      building: building.tab,
+      buildingError: building.error,
+      labour: labour.tab,
+      labourError: labour.error,
+      painting: painting.tab,
+      paintingError: painting.error,
+      cascades: cascades.tab,
+      cascadesError: cascades.error,
+      supplierDiscounts: supplierDiscounts.tab,
+      supplierDiscountsError: supplierDiscounts.error,
+      lists: lists.tab,
+      listsError: lists.error,
+      incrementalLabourProducts: incrementalLabourProducts.tab,
+      incrementalLabourProductsError: incrementalLabourProducts.error,
+      buildingElements: buildingElements.tab,
+      buildingElementsError: buildingElements.error,
+      paintingElements: paintingElements.tab,
+      paintingElementsError: paintingElements.error,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to resolve import tab";

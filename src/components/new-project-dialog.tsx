@@ -5,8 +5,9 @@ import { ProjectDefaultTierFields } from "@/components/project-default-tier-fiel
 import { usePriceLevels } from "@/lib/client/use-price-levels";
 import { projectfinishForPriceLevelId } from "@/lib/cascades/cascade-level-from-price-level";
 import { useCascades } from "@/lib/client/use-cascades";
+import type { ProjectListItem } from "@/types/project";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 async function readApiResponse<T>(res: Response): Promise<T> {
   const contentType = res.headers.get("content-type") ?? "";
@@ -30,6 +31,9 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
   const [projectname, setProjectname] = useState("");
   const [projectdescription, setProjectdescription] = useState("");
   const [projectm2Str, setProjectm2Str] = useState("");
+  const [templateDocId, setTemplateDocId] = useState("");
+  const [templates, setTemplates] = useState<ProjectListItem[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
   const [defaultPriceLevelId, setDefaultPriceLevelId] = useState<number | null>(null);
   const [defaultProjectFinish, setDefaultProjectFinish] = useState("");
   const [defaultStyle, setDefaultStyle] = useState("");
@@ -41,12 +45,35 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
     setProjectname("");
     setProjectdescription("");
     setProjectm2Str("");
+    setTemplateDocId("");
     setDefaultPriceLevelId(null);
     setDefaultProjectFinish("");
     setDefaultStyle("");
     setDefaultColour("");
     setError(null);
   }
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setTemplatesLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch("/api/projects?template=true");
+        const data = await readApiResponse<{ projects?: ProjectListItem[]; error?: string }>(res);
+        if (cancelled) return;
+        if (!res.ok) throw new Error(data.error ?? "Failed to load templates");
+        setTemplates(data.projects ?? []);
+      } catch {
+        if (!cancelled) setTemplates([]);
+      } finally {
+        if (!cancelled) setTemplatesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   function handleClose() {
     if (!saving) {
@@ -79,21 +106,36 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
         if (!Number.isFinite(n)) throw new Error("m² must be a valid number");
         projectm2 = n;
       }
-      const res = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectname: projectname.trim(),
-          projectdescription: projectdescription.trim(),
-          projectm2,
-          defaultpricelevelid: defaultPriceLevelId,
-          projectfinish:
-            defaultProjectFinish.trim() ||
-            projectfinishForPriceLevelId(priceLevels, defaultPriceLevelId, cascades),
-          defaultstyle: defaultStyle.trim(),
-          defaultcolour: defaultColour.trim(),
-        }),
-      });
+      const finish =
+        defaultProjectFinish.trim() ||
+        projectfinishForPriceLevelId(priceLevels, defaultPriceLevelId, cascades);
+      const overlay = {
+        projectdescription: projectdescription.trim(),
+        projectm2,
+        defaultpricelevelid: defaultPriceLevelId,
+        projectfinish: finish,
+        defaultstyle: defaultStyle.trim(),
+        defaultcolour: defaultColour.trim(),
+      };
+
+      const res = templateDocId
+        ? await fetch(`/api/projects/${encodeURIComponent(templateDocId)}/clone`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectname: projectname.trim(),
+              template: false,
+              overlay,
+            }),
+          })
+        : await fetch("/api/projects", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectname: projectname.trim(),
+              ...overlay,
+            }),
+          });
       const data = await readApiResponse<{
         id?: string;
         error?: string;
@@ -118,7 +160,7 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
   return (
     <ModalFrame
       title="New project"
-      description="Name, default price tier, style, colour, description, and total m². Other fields can be edited on the project screen."
+      description="Name, default price tier, style, colour, description, and total m². Optionally seed from a template (full copy). Other fields can be edited on the project screen."
       onClose={handleClose}
       footer={
         <>
@@ -150,6 +192,27 @@ export function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogP
             {error}
           </div>
         ) : null}
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
+            Seed from template
+          </span>
+          <select
+            value={templateDocId}
+            onChange={(e) => setTemplateDocId(e.target.value)}
+            disabled={saving || templatesLoading}
+            className={inputClass}
+          >
+            <option value="">None — blank project</option>
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.projectname}
+              </option>
+            ))}
+          </select>
+          {templatesLoading ? (
+            <span className="mt-1 block text-xs text-sf-text-weak">Loading templates…</span>
+          ) : null}
+        </label>
         <label className="block">
           <span className="mb-1.5 block text-sm font-medium text-sf-text-secondary dark:text-zinc-300">
             Project name

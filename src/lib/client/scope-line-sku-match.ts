@@ -21,8 +21,13 @@ import {
 
 } from "@/lib/sku/supplier-option";
 
-import type { DataSkuPublic } from "@/types/data-sku-public";
+import {
+  appendSlotsFromDataSku,
+  skuAppendFieldsFromSource,
+  type DataSkuAppendSlotRef,
+} from "@/lib/sku/data-sku-append-slots";
 
+import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { DataSkuSupplierPublic } from "@/types/data-sku-supplier-public";
 
 import type { PriceLevelPublic } from "@/types/price-level";
@@ -34,6 +39,7 @@ import type { ProjectAreaPublic } from "@/types/project-area";
 import type { ProjectPublic } from "@/types/project";
 
 import type { QuoteObjectPublic } from "@/types/quote-object";
+import { mapSkuUomToQuoteUom } from "@/lib/map-sku-uom-to-quote-uom";
 
 
 
@@ -243,7 +249,59 @@ export function matchingSkusForScopeLine(
 
 }
 
+export const SCOPE_LINE_SKU_SPEC_ALL = "";
 
+/** Distinct catalog product names (sheet specification) among matching SKUs. */
+export function distinctCatalogSkuProducts(skus: DataSkuPublic[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const sku of skus) {
+    const name = sku.product.trim();
+    if (!name) continue;
+    const key = normalizeSkuPart(name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  return out;
+}
+
+export function filterCatalogSkusByProductSpec(
+  skus: DataSkuPublic[],
+  spec: string,
+): DataSkuPublic[] {
+  const t = spec.trim();
+  if (!t) return skus;
+  return skus.filter((s) => skuProductMatchesAppendSpec(s, t));
+}
+
+/** Default spec filter: line’s current catalog product, else All. */
+export function defaultScopeLineSkuSpecFilter(
+  line: Pick<ProjectAreaObjectPublic, "skuId" | "skuProduct">,
+  catalogMatches: DataSkuPublic[],
+): string {
+  const products = distinctCatalogSkuProducts(catalogMatches);
+  if (products.length === 0) return SCOPE_LINE_SKU_SPEC_ALL;
+
+  const fromLine = line.skuProduct?.trim() ?? "";
+  if (fromLine) {
+    const hit = products.find((p) => normalizeSkuPart(p) === normalizeSkuPart(fromLine));
+    if (hit) return hit;
+  }
+
+  const skuId = line.skuId?.trim();
+  if (skuId) {
+    const sku = catalogMatches.find((m) => m.skuId === skuId);
+    const name = sku?.product?.trim() ?? "";
+    if (name) {
+      const hit = products.find((p) => normalizeSkuPart(p) === normalizeSkuPart(name));
+      if (hit) return hit;
+    }
+  }
+
+  return SCOPE_LINE_SKU_SPEC_ALL;
+}
 
 export function skuOptionLabel(sku: DataSkuPublic): string {
 
@@ -263,6 +321,9 @@ export type ScopeLineSkuPick = {
 
   product: string;
 
+  /** Catalog SKU UOM (sheet / data_skus). */
+  uom: string;
+
   supplierOption: number;
 
   supplier: string;
@@ -281,19 +342,31 @@ export type ScopeLineSkuPick = {
   /** Default supplier discount % applied to retail SKU price (when &gt; 0). */
   discountPctApplied: number | null;
 
+  /** Append partners on this supplier priority (sheet Append Type / Spec). */
+  appendSlots: DataSkuAppendSlotRef[];
+
 };
 
 /** True when the line already reflects this SKU pick (avoids auto-apply loops). */
 export function scopeLineMatchesSkuPick(
-  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption" | "customumprice" | "totalprice">,
+  line: Pick<
+    ProjectAreaObjectPublic,
+    "skuId" | "supplierOption" | "customumprice" | "totalprice" | "customuom"
+  >,
   pick: ScopeLineSkuPick,
 ): boolean {
   if ((line.skuId ?? "").trim() !== pick.skuId) return false;
   if (line.supplierOption !== pick.supplierOption) return false;
   if (line.totalprice == null) return false;
-  if (pick.priceExcGst == null) return true;
-  if (line.customumprice == null) return false;
-  if (Math.abs(line.customumprice - pick.priceExcGst) >= 1e-6) return false;
+  if (pick.priceExcGst != null) {
+    if (line.customumprice == null) return false;
+    if (Math.abs(line.customumprice - pick.priceExcGst) >= 1e-6) return false;
+  }
+  const pickUom = String(pick.uom ?? "").trim();
+  if (pickUom) {
+    const expected = mapSkuUomToQuoteUom(pickUom);
+    if (String(line.customuom ?? "").trim() !== expected) return false;
+  }
   return true;
 }
 
@@ -552,6 +625,7 @@ function pickFromSupplier(
   return {
     skuId: sku.skuId,
     product: sku.product?.trim() ?? "",
+    uom: sku.uom?.trim() ?? "",
     supplierOption: sup.supplierOption,
     supplier: sup.supplier.trim(),
     model: sup.model.trim(),
@@ -559,6 +633,7 @@ function pickFromSupplier(
     link: sup.link.trim(),
     priceExcGst,
     discountPctApplied,
+    appendSlots: appendSlotsFromDataSku(skuAppendFieldsFromSource(sup)),
   };
 }
 
@@ -616,6 +691,7 @@ export function preferredSkuPickForProductName(
     return {
       skuId: sku.skuId,
       product: sku.product?.trim() ?? "",
+      uom: sku.uom?.trim() ?? "",
       supplierOption: 1,
       supplier: "",
       model: "",
@@ -623,6 +699,7 @@ export function preferredSkuPickForProductName(
       link: "",
       priceExcGst: null,
       discountPctApplied: null,
+      appendSlots: [],
     };
   }
   return pickFromSupplier(sku, sup, supplierDiscountByKey);
@@ -674,6 +751,7 @@ export function buildScopeLineSkuPicks(
         picks.push({
           skuId: sku.skuId,
           product: sku.product?.trim() ?? "",
+          uom: sku.uom?.trim() ?? "",
           supplierOption: PREFERRED_SUPPLIER_OPTION,
           supplier: "",
           model: "",
@@ -681,6 +759,7 @@ export function buildScopeLineSkuPicks(
           link: "",
           priceExcGst: null,
           discountPctApplied: null,
+          appendSlots: [],
         });
       }
     }

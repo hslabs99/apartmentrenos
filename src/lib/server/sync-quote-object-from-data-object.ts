@@ -4,7 +4,10 @@ import { quoteObjectSkuPipelineKey } from "@/lib/server/quote-object-sku-pipelin
 import { mapSkuUomToQuoteUom } from "@/lib/map-sku-uom-to-quote-uom";
 import { isQuoteObjectsMetaDocument } from "@/lib/firestore/quote-objects-collection";
 import { allocateNextSequence } from "@/lib/firestore/sequences";
-import { ensureObjectCategoryLookup } from "@/lib/server/ensure-object-category-lookup";
+import {
+  ensureObjectCategoryLookup,
+  loadObjectCategoryLookupCache,
+} from "@/lib/server/ensure-object-category-lookup";
 import {
   canonicalDataObjectFields,
   dataObjectDocToPublic,
@@ -14,7 +17,7 @@ import {
   LM_RUNS_UOM,
   priceRowsAndLegacyTopLevel,
 } from "@/lib/server/quote-object-doc";
-import { compareTemplateDocs, renumberAllAndNextIndex } from "@/lib/server/template-sort-order";
+import { nextAppendSortOrder } from "@/lib/server/template-sort-order";
 import type { DataObjectPublic } from "@/types/data-object-public";
 import type { QuoteObjectPublic } from "@/types/quote-object";
 
@@ -26,6 +29,14 @@ export type SyncQuoteObjectFromDataObjectResult = {
   action: "created" | "updated";
   dataObject: DataObjectPublic;
   quoteObject: QuoteObjectPublic;
+};
+
+export type PrepareQuoteObjectAction = "created" | "skipped";
+
+export type PrepareQuoteObjectCache = {
+  qoDocs: { id: string; data: DocumentData }[];
+  nextSortOrder: number;
+  categoryByNorm: Map<string, string>;
 };
 
 function quoteObjectMatchKey(data: DocumentData): string {
@@ -45,6 +56,131 @@ function findMatchingQuoteObjectDoc(
     return a.id.localeCompare(b.id);
   });
   return matches[0] ?? null;
+}
+
+function quoteObjectPayloadFromDataObject(
+  objectname: string,
+  categoryForLookup: string,
+  uom: string,
+  objectid: number,
+  sortOrder: number,
+) {
+  const measurement =
+    uom === LM_RUNS_UOM ? null : DEFAULT_MEASUREMENT_FROM_DATA_OBJECT;
+  const { firestorePatch } = priceRowsAndLegacyTopLevel(measurement, []);
+  const now = FieldValue.serverTimestamp();
+  return {
+    objectname,
+    product: "",
+    objecttype: DEFAULT_OBJECT_TYPE,
+    category: categoryForLookup,
+    areaTagIds: [],
+    uom,
+    inheritM2Source: "none",
+    inheritAreaM2: false,
+    runWidth: null,
+    defaultAreaM2: null,
+    measurement,
+    ...firestorePatch,
+    generalHours: null,
+    projectManagerHours: null,
+    paintingHours: null,
+    plasteringHours: null,
+    notes1: "",
+    notes2: "",
+    tooltip: "",
+    objectid,
+    sortOrder,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export async function loadPrepareQuoteObjectCache(
+  db: Firestore,
+): Promise<PrepareQuoteObjectCache> {
+  const qoSnap = await db.collection("quote_objects").get();
+  const qoDocs = qoSnap.docs
+    .filter((d) => !isQuoteObjectsMetaDocument(d.id))
+    .map((d) => ({ id: d.id, data: d.data() }));
+  let maxSort = -1;
+  for (const doc of qoDocs) {
+    const so = doc.data.sortOrder;
+    if (typeof so === "number" && Number.isFinite(so) && so > maxSort) maxSort = so;
+  }
+  const categoryByNorm = await loadObjectCategoryLookupCache(db);
+  return {
+    qoDocs,
+    nextSortOrder: maxSort + 1,
+    categoryByNorm,
+  };
+}
+
+/**
+ * Prepare pass: match in memory. Existing quote objects are left untouched.
+ * Only missing quote objects are appended. Data-object link is written when absent.
+ */
+export async function prepareQuoteObjectForDataObject(
+  db: Firestore,
+  dataObjectDocId: string,
+  dataObjectData: DocumentData,
+  cache: PrepareQuoteObjectCache,
+): Promise<PrepareQuoteObjectAction> {
+  const dataObject = dataObjectDocToPublic(dataObjectDocId, dataObjectData);
+  const fields: DataObjectKeyFields = canonicalDataObjectFields({
+    category: dataObject.category,
+    productType: dataObject.productType,
+    product: dataObject.product,
+  });
+  const objectKey = buildDataObjectKey(fields);
+  const existing = findMatchingQuoteObjectDoc(cache.qoDocs, objectKey);
+  const doRef = db.collection("data_objects").doc(dataObjectDocId);
+
+  if (existing) {
+    const objectid =
+      typeof existing.data.objectid === "number" && Number.isFinite(existing.data.objectid)
+        ? existing.data.objectid
+        : null;
+    const alreadyLinked =
+      dataObject.quoteObjectDocId === existing.id &&
+      dataObject.objectid === objectid;
+    if (!alreadyLinked) {
+      await doRef.update({
+        quoteObjectDocId: existing.id,
+        objectid,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+    return "skipped";
+  }
+
+  const objectname = fields.product?.trim() ? fields.product : fields.productType;
+  const uom = mapSkuUomToQuoteUom(dataObject.uom);
+  const categoryForLookup = await ensureObjectCategoryLookup(
+    db,
+    fields.category,
+    cache.categoryByNorm,
+  );
+  const objectid = await allocateNextSequence(db, "objectid");
+  const sortOrder = cache.nextSortOrder;
+  cache.nextSortOrder += 1;
+  const payload = quoteObjectPayloadFromDataObject(
+    objectname,
+    categoryForLookup,
+    uom,
+    objectid,
+    sortOrder,
+  );
+  const ref = db.collection("quote_objects").doc();
+  await ref.set(payload);
+  cache.qoDocs.push({ id: ref.id, data: payload as DocumentData });
+  await doRef.update({
+    quoteObjectDocId: ref.id,
+    objectid,
+    uom,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  return "created";
 }
 
 export async function syncQuoteObjectFromDataObject(
@@ -99,41 +235,20 @@ export async function syncQuoteObjectFromDataObject(
   }
 
   const objectid = await allocateNextSequence(db, "objectid");
-  const sortOrder = await renumberAllAndNextIndex(
+  const sortOrder = await nextAppendSortOrder(
     db,
     "quote_objects",
     isQuoteObjectsMetaDocument,
-    (data) => String(data.objectname ?? ""),
   );
-  const measurement =
-    uom === LM_RUNS_UOM ? null : DEFAULT_MEASUREMENT_FROM_DATA_OBJECT;
-  const { firestorePatch } = priceRowsAndLegacyTopLevel(measurement, []);
-  const ref = db.collection("quote_objects").doc();
-  await ref.set({
+  const payload = quoteObjectPayloadFromDataObject(
     objectname,
-    product: "",
-    objecttype: DEFAULT_OBJECT_TYPE,
-    category: categoryForLookup,
-    areaTagIds: [],
+    categoryForLookup,
     uom,
-    inheritM2Source: "none",
-    inheritAreaM2: false,
-    runWidth: null,
-    defaultAreaM2: null,
-    measurement,
-    ...firestorePatch,
-    generalHours: null,
-    projectManagerHours: null,
-    paintingHours: null,
-    plasteringHours: null,
-    notes1: "",
-    notes2: "",
-    tooltip: "",
     objectid,
     sortOrder,
-    createdAt: now,
-    updatedAt: now,
-  });
+  );
+  const ref = db.collection("quote_objects").doc();
+  await ref.set(payload);
 
   const qoSnap2 = await ref.get();
   const quoteObject = docToQuoteObjectPublic(ref.id, qoSnap2.data()!);

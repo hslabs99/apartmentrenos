@@ -10,7 +10,7 @@ import {
   normalizeLoadValue,
   priceRowsAndLegacyTopLevel,
 } from "@/lib/server/quote-object-doc";
-import { compareTemplateDocs, renumberAllAndNextIndex } from "@/lib/server/template-sort-order";
+import { compareTemplateDocs, nextAppendSortOrder } from "@/lib/server/template-sort-order";
 import type { QuoteObjectPublic } from "@/types/quote-object";
 import {
   normalizeQuoteObjectBody,
@@ -88,11 +88,10 @@ export async function POST(req: NextRequest) {
     }
     const db = getAdminFirestore();
     const objectid = await allocateNextSequence(db, "objectid");
-    const sortOrder = await renumberAllAndNextIndex(
+    const sortOrder = await nextAppendSortOrder(
       db,
       "quote_objects",
       isQuoteObjectsMetaDocument,
-      (data) => String(data.objectname ?? ""),
     );
     const ref = db.collection("quote_objects").doc();
     await ref.set({

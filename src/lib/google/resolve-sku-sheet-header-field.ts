@@ -29,10 +29,15 @@ const DIRECT_ALIASES: Record<string, SkuSheetFieldKey> = {
   "price exc gst": "priceExcGst",
   "price (exc gst)": "priceExcGst",
   uom: "uom",
+  appendtype: "append1Type",
+  "append type": "append1Type",
+  appendspec: "append1Spec",
+  "append spec": "append1Spec",
   apend1type: "append1Type",
   append1type: "append1Type",
   "apend1 type": "append1Type",
   "append1 type": "append1Type",
+  "append 1type": "append1Type",
   apend1spec: "append1Spec",
   append1spec: "append1Spec",
   "apend1 spec": "append1Spec",
@@ -100,6 +105,16 @@ export function resolveSkuSheetHeaderField(normalizedLabel: string): SkuSheetFie
   }
 
   return undefined;
+}
+
+/** Higher rank wins when several headers map to the same field (e.g. Append Type vs Append1Type). */
+export function skuSheetHeaderFieldRank(
+  normalizedLabel: string,
+  field: SkuSheetFieldKey,
+): number {
+  if (!field.startsWith("append")) return 0;
+  if (/\d/.test(normalizedLabel)) return 2;
+  return 1;
 }
 
 export const SKU_APPEND_FIELD_KEYS: SkuSheetFieldKey[] = [

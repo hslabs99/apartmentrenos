@@ -20,13 +20,17 @@ export function parseScopeShowAllDefaultQty(raw: unknown): ScopeShowAllDefaultQt
   return null;
 }
 
-/** One answer option for a scope question; stable answerid for downstream use. */
+/**
+ * One answer option for a scope question; stable answerid for downstream use.
+ * Array order on the parent scope is the Check List answer order.
+ */
 export type ScopeAnswerPublic = {
   answerid: string;
   label: string;
   /**
    * Firestore `quote_objects` document ids — preferred; each selected row is attached explicitly.
    * Synthetic system objects use ids like `System:Blinds` (see system-scope-types).
+   * Array order is the Check List / workbench line order when this answer is applied.
    */
   attachedQuoteObjectIds: string[];
   /**

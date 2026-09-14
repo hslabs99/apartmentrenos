@@ -30,6 +30,27 @@ export function sortProjectAreaLines<T extends LineOrderFields>(lines: T[]): T[]
   return [...lines].sort(compareProjectAreaLineOrder);
 }
 
+/**
+ * Once an objectid appears, keep the rest of its lines immediately after it.
+ * Stops Show All SKUs with mixed/null `lineSortOrder` from rendering as a second heading.
+ */
+export function groupProjectAreaLinesByObjectId<T extends LineOrderFields>(lines: T[]): T[] {
+  const remaining = sortProjectAreaLines(lines);
+  const out: T[] = [];
+  while (remaining.length > 0) {
+    const head = remaining.shift()!;
+    out.push(head);
+    for (let i = 0; i < remaining.length; ) {
+      if (remaining[i]!.objectid === head.objectid) {
+        out.push(remaining.splice(i, 1)[0]!);
+      } else {
+        i += 1;
+      }
+    }
+  }
+  return out;
+}
+
 type LineWithInsertAnchor = LineOrderFields & {
   insertedAfterLineId?: string | null;
 };

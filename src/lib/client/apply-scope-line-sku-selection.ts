@@ -1,9 +1,12 @@
-import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
+import { patchBodyForScopeLineSku, customUomFromSkuPick } from "@/lib/client/scope-line-sku-patch";
 import {
   resolveAppendChildSkuPicks,
   type ResolvedAppendChild,
 } from "@/lib/client/resolve-append-child-sku-picks";
-import type { ScopeLineSkuPick } from "@/lib/client/scope-line-sku-match";
+import {
+  scopeLineMatchesSkuPick,
+  type ScopeLineSkuPick,
+} from "@/lib/client/scope-line-sku-match";
 import { quoteObjectCategory } from "@/lib/client/quote-object-category";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { DataSkuSupplierPublic } from "@/types/data-sku-supplier-public";
@@ -15,7 +18,6 @@ import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
 import type { SupplierDiscountByKey } from "@/lib/client/supplier-discount-price";
 import type { ColourLookupIndex } from "@/lib/sku/colour-lookup-index";
 import type { QuoteObjectPublic } from "@/types/quote-object";
-import { isSkuYnUom, SKU_YN_UOM } from "@/lib/sku/sku-yn-uom";
 
 async function readApiResponse<T>(res: Response): Promise<T> {
   const contentType = res.headers.get("content-type") ?? "";
@@ -43,9 +45,8 @@ function patchBodyForBundledChild(
 ): Record<string, unknown> {
   const body = patchBodyForScopeLineSku(parentLine, pick, measureForPricing);
   const sku = catalogSkus.find((s) => s.skuId === pick.skuId);
-  if (sku && isSkuYnUom(sku.uom)) {
-    body.customuom = SKU_YN_UOM;
-  }
+  const customuom = customUomFromSkuPick(pick.uom || sku?.uom);
+  if (customuom) body.customuom = customuom;
   return body;
 }
 
@@ -92,6 +93,8 @@ function createBundledLineBody(
       body.custommeasure = parentLine.custommeasure ?? measure;
       body.totalprice = (parentLine.custommeasure ?? measure) * pick.priceExcGst;
     }
+    const customuom = customUomFromSkuPick(pick.uom);
+    if (customuom) body.customuom = customuom;
   }
   return body;
 }
@@ -137,37 +140,51 @@ export async function applyScopeLineSkuWithBundledChildren(args: {
           preferredSupplierOption: args.pick.supplierOption,
           supplierDiscountByKey: args.supplierDiscountByKey,
           colourLookupIndex: args.colourLookupIndex ?? null,
+          pickAppendSlots: args.pick.appendSlots,
         })
       : [];
+
+  const existingChildren = bundledChildrenForParent(args.allObjects, args.parentLine.id);
+  const slotsNeeded = new Set(
+    resolved.filter((r) => r.quoteObjectDocId).map((r) => r.slot),
+  );
+  const existingSlots = new Set(
+    existingChildren
+      .map((c) => c.bundledAppendSlot)
+      .filter((s): s is 1 | 2 | 3 => s === 1 || s === 2 || s === 3),
+  );
+  const slotsAlreadyMatch =
+    existingSlots.size === slotsNeeded.size &&
+    [...slotsNeeded].every((s) => existingSlots.has(s));
 
   const parentPatch = patchBodyForScopeLineSku(
     args.parentLine,
     args.pick,
     args.measureForPricing,
   );
-  if (parentSku && isSkuYnUom(parentSku.uom)) {
-    parentPatch.customuom = SKU_YN_UOM;
+  const catalogUom = customUomFromSkuPick(parentSku?.uom);
+  if (catalogUom) parentPatch.customuom = catalogUom;
+  const skipParentPatch = scopeLineMatchesSkuPick(args.parentLine, args.pick);
+  if (skipParentPatch && slotsAlreadyMatch) {
+    return;
   }
-  const parentRes = await fetch(`/api/projectareaobjects/${args.parentLine.id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(parentPatch),
-  });
-  const parentData = await readApiResponse<{
-    projectAreaObject?: ProjectAreaObjectPublic;
-    error?: string;
-  }>(parentRes);
-  if (!parentRes.ok) throw new Error(parentData.error ?? "Save failed");
-  if (parentData.projectAreaObject) {
-    args.onObjectsChange((prev) =>
-      prev.map((o) => (o.id === args.parentLine.id ? parentData.projectAreaObject! : o)),
-    );
+  if (!skipParentPatch) {
+    const parentRes = await fetch(`/api/projectareaobjects/${args.parentLine.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(parentPatch),
+    });
+    const parentData = await readApiResponse<{
+      projectAreaObject?: ProjectAreaObjectPublic;
+      error?: string;
+    }>(parentRes);
+    if (!parentRes.ok) throw new Error(parentData.error ?? "Save failed");
+    if (parentData.projectAreaObject) {
+      args.onObjectsChange((prev) =>
+        prev.map((o) => (o.id === args.parentLine.id ? parentData.projectAreaObject! : o)),
+      );
+    }
   }
-
-  const existingChildren = bundledChildrenForParent(args.allObjects, args.parentLine.id);
-  const slotsNeeded = new Set(
-    resolved.filter((r) => r.quoteObjectDocId).map((r) => r.slot),
-  );
 
   for (const child of existingChildren) {
     const slot = child.bundledAppendSlot;

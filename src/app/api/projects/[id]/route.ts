@@ -8,9 +8,13 @@ import { z } from "zod";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { ensureProjectsBootstrap } from "@/lib/firestore/collection-bootstrap";
 import { isProjectsMetaDocument } from "@/lib/firestore/projects-collection";
-import { parseProjectStatus } from "@/lib/project-status";
+import {
+  isProjectArchivedFlag,
+  projectHardDeletePrefixMatches,
+} from "@/lib/project-archived";
+import { hardDeleteArchivedProject } from "@/lib/server/delete-project-owned-data";
 import { parseMarginPercent } from "@/lib/settings-margin";
-import type { ProjectPublic } from "@/types/project";
+import { projectDocToPublic } from "@/lib/server/project-doc";
 
 export const runtime = "nodejs";
 
@@ -40,12 +44,12 @@ const updateSchema = z.object({
   defaultstyle: z.string().max(255).optional(),
   defaultcolour: z.string().max(255).optional(),
   marginpct: z.number().min(0).max(999).optional(),
+  archived: z.boolean().optional(),
 });
 
-function tsToIso(t: Timestamp | undefined): string | null {
-  if (!t) return null;
-  return t.toDate().toISOString();
-}
+const hardDeleteSchema = z.object({
+  confirmNamePrefix: z.string().min(1),
+});
 
 function parseDateTime(value: unknown): Timestamp | null {
   if (value === null || value === undefined || value === "") return null;
@@ -53,49 +57,6 @@ function parseDateTime(value: unknown): Timestamp | null {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return null;
   return Timestamp.fromDate(d);
-}
-
-function numOrNull(v: unknown): number | null | undefined {
-  if (v === null) return null;
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  return undefined;
-}
-
-function docToPublic(id: string, data: DocumentData): ProjectPublic {
-  const tid = data.targetstartdate as Timestamp | undefined;
-  const qd = data.quotedon as Timestamp | undefined;
-  let projectid: number | null | undefined =
-    typeof data.projectid === "number" ? data.projectid : undefined;
-  if (data.projectid === null) projectid = null;
-  return {
-    id,
-    projectid,
-    status: parseProjectStatus(data.status),
-    projectname: String(data.projectname ?? ""),
-    projectdescription: String(data.projectdescription ?? ""),
-    projectm2: numOrNull(data.projectm2),
-    projectm2hard: numOrNull(data.projectm2hard),
-    projectm2soft: numOrNull(data.projectm2soft),
-    ceilingheightm: numOrNull(data.ceilingheightm),
-    projectaddress: String(data.projectaddress ?? ""),
-    projectcontact: String(data.projectcontact ?? ""),
-    projecttel: String(data.projecttel ?? ""),
-    projectemail: String(data.projectemail ?? ""),
-    projectbrief: String(data.projectbrief ?? ""),
-    projectfinish: String(data.projectfinish ?? ""),
-    spec2: String(data.spec2 ?? ""),
-    spec3: String(data.spec3 ?? ""),
-    targetstartdate: tsToIso(tid),
-    projectnotes: String(data.projectnotes ?? ""),
-    quotedby: String(data.quotedby ?? ""),
-    quotedon: tsToIso(qd),
-    defaultpricelevelid: numOrNull(data.defaultpricelevelid) ?? null,
-    defaultstyle: String(data.defaultstyle ?? ""),
-    defaultcolour: String(data.defaultcolour ?? ""),
-    marginpct: numOrNull(data.marginpct) ?? null,
-    createdAt: tsToIso(data.createdAt as Timestamp | undefined),
-    updatedAt: tsToIso(data.updatedAt as Timestamp | undefined),
-  };
 }
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -113,7 +74,7 @@ export async function GET(_req: NextRequest, context: RouteContext) {
     if (!snap.exists) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-    return NextResponse.json({ project: docToPublic(id, snap.data()!) });
+    return NextResponse.json({ project: projectDocToPublic(id, snap.data()!) });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to load project";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -145,10 +106,22 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    const current = snap.data() as DocumentData;
+    const currentlyArchived = isProjectArchivedFlag(current.archived);
+    const d = parsed.data;
+    const keys = Object.keys(d) as Array<keyof typeof d>;
+    const onlyArchivedFlag =
+      keys.length === 1 && d.archived !== undefined;
+    if (currentlyArchived && !onlyArchivedFlag) {
+      return NextResponse.json(
+        { error: "Restore this project from Archives before editing it" },
+        { status: 409 },
+      );
+    }
+
     const update: Record<string, unknown> = {
       updatedAt: FieldValue.serverTimestamp(),
     };
-    const d = parsed.data;
     if (d.projectname !== undefined) update.projectname = d.projectname;
     if (d.status !== undefined) update.status = d.status;
     if (d.projectdescription !== undefined)
@@ -179,23 +152,32 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     if (d.defaultstyle !== undefined) update.defaultstyle = d.defaultstyle;
     if (d.defaultcolour !== undefined) update.defaultcolour = d.defaultcolour;
     if (d.marginpct !== undefined) update.marginpct = parseMarginPercent(String(d.marginpct));
+    if (d.archived !== undefined) update.archived = d.archived;
 
     await ref.update(update);
     const next = await ref.get();
-    return NextResponse.json({ project: docToPublic(id, next.data()!) });
+    return NextResponse.json({ project: projectDocToPublic(id, next.data()!) });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to update project";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
-export async function DELETE(_req: NextRequest, context: RouteContext) {
+export async function DELETE(req: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
     if (isProjectsMetaDocument(id)) {
       return NextResponse.json(
         { error: "Cannot delete collection metadata" },
         { status: 403 },
+      );
+    }
+    const raw = await req.json().catch(() => null);
+    const parsed = hardDeleteSchema.safeParse(raw);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Type the first characters of the project name to confirm permanent delete" },
+        { status: 400 },
       );
     }
     const db = getAdminFirestore();
@@ -205,31 +187,32 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const data = snap.data() as DocumentData;
-    const projectid =
-      typeof data.projectid === "number" && Number.isInteger(data.projectid)
-        ? data.projectid
-        : null;
-    if (projectid != null) {
-      const pa = await db.collection("projectareas").where("projectid", "==", projectid).get();
-      if (!pa.empty) {
-        const batch = db.batch();
-        pa.docs.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
-      }
-      const pao = await db
-        .collection("projectareaobjects")
-        .where("projectid", "==", projectid)
-        .get();
-      if (!pao.empty) {
-        const batch = db.batch();
-        pao.docs.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
-      }
+    if (!isProjectArchivedFlag(data.archived)) {
+      return NextResponse.json(
+        { error: "Archive this project first before permanently deleting it" },
+        { status: 409 },
+      );
     }
-    await ref.delete();
+    const projectname = String(data.projectname ?? "");
+    if (!projectHardDeletePrefixMatches(projectname, parsed.data.confirmNamePrefix)) {
+      return NextResponse.json(
+        { error: "Name confirmation does not match this project" },
+        { status: 400 },
+      );
+    }
+    await hardDeleteArchivedProject(db, id);
     return NextResponse.json({ ok: true });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to delete project";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status =
+      message === "Project not found"
+        ? 404
+        : message === "Cannot delete collection metadata"
+          ? 403
+          : message === "Archive this project first before permanently deleting it" ||
+              message === "Project was restored during delete; aborting"
+            ? 409
+            : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

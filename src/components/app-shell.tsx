@@ -1,6 +1,9 @@
 "use client";
 
 import {
+  IconActivity,
+  IconArchive,
+  IconCopy,
   IconFolder,
   IconGrid,
   IconMenu,
@@ -31,7 +34,10 @@ const NAV: readonly {
   Icon: ComponentType<{ className?: string }>;
 }[] = [
   { href: "/projects", label: "Projects", Icon: IconFolder },
+  { href: "/templates", label: "Templates", Icon: IconCopy },
+  { href: "/archives", label: "Archives", Icon: IconArchive },
   { href: "/setup", label: "Projects Setup", Icon: IconSettings },
+  { href: "/health-check", label: "Health Check", Icon: IconActivity },
   { href: "/system", label: "System", Icon: IconGrid },
   { href: "/import-master-prices", label: "Import Master Prices", Icon: IconUpload },
   { href: "/users", label: "Users", Icon: IconUsers },
@@ -64,20 +70,37 @@ function AppShellSearchParamRedirects({
   pathname,
   canViewAdminPages,
   canViewProjectWorkbench,
+  canManageProjectTemplates,
+  canViewHealthCheck,
 }: {
   pathname: string;
   canViewAdminPages: boolean;
   canViewProjectWorkbench: boolean;
+  canManageProjectTemplates: boolean;
+  canViewHealthCheck: boolean;
 }) {
   const searchParams = useSearchParams();
   const router = useRouter();
 
   useEffect(() => {
+    if (!canManageProjectTemplates && (pathname === "/templates" || pathname.startsWith("/templates/"))) {
+      router.replace("/projects");
+      return;
+    }
+
+    const onHealthCheck = pathname === "/health-check" || pathname.startsWith("/health-check/");
+    if (onHealthCheck && !canViewHealthCheck) {
+      router.replace("/projects");
+      return;
+    }
+
     if (canViewAdminPages) return;
 
+    const onSetup = pathname === "/setup" || pathname.startsWith("/setup/");
+    if (onSetup && canViewHealthCheck) return;
+
     const isAdminTopLevel =
-      pathname === "/setup" ||
-      pathname.startsWith("/setup/") ||
+      onSetup ||
       pathname === "/system" ||
       pathname.startsWith("/system/") ||
       pathname === "/users" ||
@@ -111,10 +134,12 @@ function AppShellSearchParamRedirects({
     }
   }, [
     canViewAdminPages,
+    canManageProjectTemplates,
     pathname,
     router,
     searchParams,
     canViewProjectWorkbench,
+    canViewHealthCheck,
   ]);
 
   return null;
@@ -123,7 +148,12 @@ function AppShellSearchParamRedirects({
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { canViewAdminPages, canViewProjectWorkbench } = useViewMode();
+  const {
+    canViewAdminPages,
+    canViewProjectWorkbench,
+    canManageProjectTemplates,
+    canViewHealthCheck,
+  } = useViewMode();
   const onProjectWorkspace = isProjectWorkspacePath(pathname);
 
   /** Project pages: sidebar hidden by default; user can show/hide. */
@@ -149,12 +179,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     pathname === "/setup" ||
     pathname.startsWith("/setup/") ||
     pathname === "/system" ||
-    pathname.startsWith("/system/");
+    pathname.startsWith("/system/") ||
+    pathname === "/health-check" ||
+    pathname.startsWith("/health-check/");
 
   const visibleNav = useMemo(() => {
-    if (canViewAdminPages) return NAV;
-    return NAV.filter((x) => x.href === "/projects");
-  }, [canViewAdminPages]);
+    return NAV.filter((x) => {
+      if (x.href === "/projects") return true;
+      if (x.href === "/archives") return true;
+      if (x.href === "/templates") return canManageProjectTemplates;
+      if (x.href === "/health-check") return canViewHealthCheck;
+      return canViewAdminPages;
+    });
+  }, [canViewAdminPages, canManageProjectTemplates, canViewHealthCheck]);
 
   const sidebarCollapsed = onProjectWorkspace && !sidebarOnProject;
   const signedInAs = getAuthSession()?.username ?? "";
@@ -166,6 +203,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           pathname={pathname}
           canViewAdminPages={canViewAdminPages}
           canViewProjectWorkbench={canViewProjectWorkbench}
+          canManageProjectTemplates={canManageProjectTemplates}
+          canViewHealthCheck={canViewHealthCheck}
         />
       </Suspense>
 

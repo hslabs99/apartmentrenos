@@ -33,6 +33,10 @@ type ViewModeContextValue = {
   canAdjustWorkbenchMargin: boolean;
   /** Include-all-suppliers SKU option — management preview only. */
   canViewAdminWorkbenchFeatures: boolean;
+  /** Templates sidebar, save-as-template, and editing template projects — admin + management. */
+  canManageProjectTemplates: boolean;
+  /** Health Check nav and report — admin + management preview. */
+  canViewHealthCheck: boolean;
 };
 
 const ViewModeContext = createContext<ViewModeContextValue | null>(null);
@@ -53,6 +57,8 @@ function permissionsForType(viewMode: ViewMode): Omit<
     canViewProjectWorkbench: isAdminMode || isManagementMode,
     canAdjustWorkbenchMargin: isManagementMode,
     canViewAdminWorkbenchFeatures: isManagementMode,
+    canManageProjectTemplates: isAdminMode || isManagementMode,
+    canViewHealthCheck: isAdminMode || isManagementMode,
   };
 }
 

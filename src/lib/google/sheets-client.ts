@@ -43,14 +43,24 @@ function applicationDefaultLoaded(): LoadedServiceAccount {
  * On App Hosting / Cloud Run (no explicit key), falls back to Application Default
  * Credentials — share the spreadsheet with the App Hosting compute SA as Viewer.
  */
-export function getSheetsApiClient() {
+type SheetsApiClient = {
+  sheets: ReturnType<typeof google.sheets>;
+  loaded: LoadedServiceAccount;
+};
+
+let sheetsApiClientCache: SheetsApiClient | null = null;
+
+export function getSheetsApiClient(): SheetsApiClient {
+  if (sheetsApiClientCache) return sheetsApiClientCache;
+
   try {
     const loaded = loadServiceAccountCredentials();
     const auth = new google.auth.GoogleAuth({
       credentials: loaded.credentials,
       scopes: [SHEETS_READONLY_SCOPE],
     });
-    return { sheets: google.sheets({ version: "v4", auth }), loaded };
+    sheetsApiClientCache = { sheets: google.sheets({ version: "v4", auth }), loaded };
+    return sheetsApiClientCache;
   } catch (err) {
     if (!isMissingExplicitCredentialsError(err) || !isCloudRuntime()) {
       throw err;
@@ -60,6 +70,7 @@ export function getSheetsApiClient() {
     const auth = new google.auth.GoogleAuth({
       scopes: [SHEETS_READONLY_SCOPE],
     });
-    return { sheets: google.sheets({ version: "v4", auth }), loaded };
+    sheetsApiClientCache = { sheets: google.sheets({ version: "v4", auth }), loaded };
+    return sheetsApiClientCache;
   }
 }

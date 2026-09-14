@@ -71,8 +71,6 @@ body {
   #project-notes-print-report *,
   #wb-trade-print-report,
   #wb-trade-print-report *,
-  #wb-paint-litres-print-report,
-  #wb-paint-litres-print-report *,
   #wb-purchasing-list-report-window,
   #wb-purchasing-list-report-window * {
     visibility: visible;
@@ -80,7 +78,6 @@ body {
 
   #project-notes-print-report,
   #wb-trade-print-report,
-  #wb-paint-litres-print-report,
   #wb-purchasing-list-report-window {
     position: absolute;
     left: 0;

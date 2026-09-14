@@ -5,10 +5,14 @@ import {
   activeScopeLineSkuPickValue,
   buildScopeLineSkuPicks,
   decodeScopeLineSkuPickValue,
+  defaultScopeLineSkuSpecFilter,
+  distinctCatalogSkuProducts,
   effectiveElevateLevelForLine,
   effectiveStyleColourForLine,
   encodeScopeLineSkuPickValue,
+  filterCatalogSkusByProductSpec,
   matchingSkusForScopeLine,
+  SCOPE_LINE_SKU_SPEC_ALL,
   scopeLineSkuPickAllModeLabel,
   scopeLineSkuPickDescriptionLabel,
   scopeLineSkuPickHoverTitle,
@@ -26,6 +30,7 @@ import type { QuoteObjectPublic } from "@/types/quote-object";
 import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
 import type { SupplierDiscountByKey } from "@/lib/client/supplier-discount-price";
 import type { ColourLookupIndex } from "@/lib/sku/colour-lookup-index";
+import { PREFERRED_SUPPLIER_OPTION } from "@/lib/sku/supplier-option";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ScopeLineSkuMatchDiagnosticModal } from "@/components/scope-line-sku-match-diagnostic-modal";
 import { WbScopeLineSkuPickerModal } from "@/components/wb-scope-line-sku-picker-modal";
@@ -53,8 +58,7 @@ type Props = {
   /** Persist SKU (and parent applies unit price) when exactly one pick. */
   autoApplySingleMatch?: boolean;
   /**
-   * With autoApplySingleMatch: do not switch to a different SKU when the line already has one,
-   * but still apply when the same SKU is missing unit price.
+   * With autoApplySingleMatch: do not change the line’s SKU when it already has one.
    */
   autoApplyOnlyWhenEmptySku?: boolean;
   /** When the line’s SKU matches the active pick but unit price is unset, persist price (workbench). */
@@ -193,9 +197,99 @@ export function ScopeLineSkuPicker({
     [catalogMatches, suppliersBySkuId, includeAllSupplierOptions, line, supplierDiscountByKey],
   );
 
+  const allPriorityPicks = useMemo(
+    () =>
+      buildScopeLineSkuPicks(
+        catalogMatches,
+        suppliersBySkuId,
+        true,
+        line,
+        supplierDiscountByKey,
+      ),
+    [catalogMatches, suppliersBySkuId, line, supplierDiscountByKey],
+  );
+
+  const specOptions = useMemo(
+    () => distinctCatalogSkuProducts(catalogMatches),
+    [catalogMatches],
+  );
+
+  const [popupOpen, setPopupOpen] = useState(false);
+  const [popupSpec, setPopupSpec] = useState(SCOPE_LINE_SKU_SPEC_ALL);
+  const [popupAllPriorities, setPopupAllPriorities] = useState(false);
+  const [liveSuppliersBySkuId, setLiveSuppliersBySkuId] = useState<
+    Record<string, DataSkuSupplierPublic[]> | null
+  >(null);
+  const popupInitRef = useRef({
+    line,
+    catalogMatches,
+    includeAllSupplierOptions,
+  });
+  popupInitRef.current = { line, catalogMatches, includeAllSupplierOptions };
+
+  useEffect(() => {
+    if (!popupOpen) return;
+    const init = popupInitRef.current;
+    const def = defaultScopeLineSkuSpecFilter(init.line, init.catalogMatches);
+    setPopupSpec(def);
+    setPopupAllPriorities(
+      def !== SCOPE_LINE_SKU_SPEC_ALL ? true : init.includeAllSupplierOptions,
+    );
+  }, [popupOpen]);
+
+  useEffect(() => {
+    if (!popupOpen) {
+      setLiveSuppliersBySkuId(null);
+      return;
+    }
+    const skuIds = [
+      ...new Set(catalogMatches.map((m) => m.skuId.trim()).filter(Boolean)),
+    ];
+    if (skuIds.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const next: Record<string, DataSkuSupplierPublic[]> = { ...suppliersBySkuId };
+      await Promise.all(
+        skuIds.map(async (skuId) => {
+          const res = await fetch(
+            `/api/data-sku-suppliers?skuId=${encodeURIComponent(skuId)}`,
+          );
+          const data = (await res.json()) as {
+            items?: DataSkuSupplierPublic[];
+          };
+          if (!res.ok) return;
+          next[skuId] = data.items ?? [];
+        }),
+      );
+      if (!cancelled) setLiveSuppliersBySkuId(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [popupOpen, catalogMatches, suppliersBySkuId]);
+
+  const popupSupplierRows = liveSuppliersBySkuId ?? suppliersBySkuId;
+
+  const popupPicks = useMemo(() => {
+    const filtered = filterCatalogSkusByProductSpec(catalogMatches, popupSpec);
+    return buildScopeLineSkuPicks(
+      filtered,
+      popupSupplierRows,
+      popupAllPriorities,
+      line,
+      supplierDiscountByKey,
+    );
+  }, [
+    catalogMatches,
+    popupSpec,
+    popupSupplierRows,
+    popupAllPriorities,
+    line,
+    supplierDiscountByKey,
+  ]);
+
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [selectEpoch, setSelectEpoch] = useState(0);
-  const [popupOpen, setPopupOpen] = useState(false);
 
   const skuDiagnostic = useMemo(
     () =>
@@ -228,7 +322,10 @@ export function ScopeLineSkuPicker({
     ],
   );
 
-  const value = activeScopeLineSkuPickValue(line, picks);
+  const value = activeScopeLineSkuPickValue(
+    line,
+    skuPickerUi === "popup" ? allPriorityPicks : picks,
+  );
 
   const autoApplyPick = useMemo(() => {
     const appendSpec = appendProductSpec.trim();
@@ -272,8 +369,7 @@ export function ScopeLineSkuPicker({
     if (scopeLineMatchesSkuPick(line, autoApplyPick)) return;
 
     if (autoApplyOnlyWhenEmptySku) {
-      const existingSku = (line.skuId ?? "").trim();
-      if (existingSku && existingSku !== autoApplyPick.skuId) return;
+      if ((line.skuId ?? "").trim()) return;
     }
 
     const attemptKey = `${line.id}|${autoApplyPickKey}`;
@@ -295,16 +391,52 @@ export function ScopeLineSkuPicker({
     effectiveAutoApplySingleMatch,
   ]);
 
+  const bundleSyncAttemptRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!syncUnitPriceFromPick || disabled || picks.length === 0) return;
-    const encoded = activeScopeLineSkuPickValue(line, picks);
+    bundleSyncAttemptRef.current = null;
+  }, [line.id, line.skuId, line.supplierOption]);
+
+  /** Re-sync bundled children for the line’s current SKU + priority (never fall back to P1). */
+  useEffect(() => {
+    if (!effectiveAutoApplySingleMatch || disabled) return;
+    const skuId = line.skuId?.trim();
+    if (!skuId) return;
+    const opt = line.supplierOption ?? PREFERRED_SUPPLIER_OPTION;
+    const pick = allPriorityPicks.find(
+      (p) => p.skuId === skuId && p.supplierOption === opt,
+    );
+    if (!pick) return;
+    const key = `${line.id}|bundle|${pick.skuId}|${pick.supplierOption}`;
+    if (bundleSyncAttemptRef.current === key) return;
+    bundleSyncAttemptRef.current = key;
+    onSelectSkuRef.current(pick);
+  }, [
+    effectiveAutoApplySingleMatch,
+    disabled,
+    line.id,
+    line.skuId,
+    line.supplierOption,
+    allPriorityPicks,
+  ]);
+
+  useEffect(() => {
+    if (!syncUnitPriceFromPick || disabled || allPriorityPicks.length === 0) return;
+    const encoded = activeScopeLineSkuPickValue(line, allPriorityPicks);
     if (!encoded) return;
     const decoded = decodeScopeLineSkuPickValue(encoded);
     if (!decoded) return;
-    const hit = picks.find(
+    const hit = allPriorityPicks.find(
       (p) => p.skuId === decoded.skuId && p.supplierOption === decoded.supplierOption,
     );
     if (!hit || scopeLineMatchesSkuPick(line, hit)) return;
+    const lineSku = line.skuId?.trim();
+    if (
+      lineSku &&
+      line.supplierOption != null &&
+      (hit.skuId !== lineSku || hit.supplierOption !== line.supplierOption)
+    ) {
+      return;
+    }
 
     const attemptKey = `${line.id}|sync|${encoded}|${hit.priceExcGst ?? ""}`;
     if (syncPriceAttemptRef.current === attemptKey) return;
@@ -319,7 +451,7 @@ export function ScopeLineSkuPicker({
     line.supplierOption,
     line.customumprice,
     line.totalprice,
-    picks,
+    allPriorityPicks,
   ]);
 
   const labelClass =
@@ -339,7 +471,7 @@ export function ScopeLineSkuPicker({
     }
     const decoded = decodeScopeLineSkuPickValue(raw);
     if (!decoded) return;
-    const hit = picks.find(
+    const hit = (skuPickerUi === "popup" ? allPriorityPicks : picks).find(
       (p) => p.skuId === decoded.skuId && p.supplierOption === decoded.supplierOption,
     );
     if (hit) onSelectSku(hit);
@@ -351,7 +483,7 @@ export function ScopeLineSkuPicker({
     ) : null;
 
   const selectedPick = value
-    ? picks.find(
+    ? (skuPickerUi === "popup" ? allPriorityPicks : picks).find(
         (p) => encodeScopeLineSkuPickValue(p.skuId, p.supplierOption) === value,
       )
     : undefined;
@@ -516,14 +648,23 @@ export function ScopeLineSkuPicker({
         </div>
         <WbScopeLineSkuPickerModal
           open={popupOpen}
-          picks={picks}
+          picks={popupPicks}
           selectedValue={value}
           objectLabel={objectLabel}
+          objectCategory={quoteObject?.category?.trim() ?? ""}
+          specOptions={specOptions}
+          specFilter={popupSpec}
+          onSpecFilterChange={(spec) => {
+            setPopupSpec(spec);
+            if (spec.trim() !== SCOPE_LINE_SKU_SPEC_ALL) {
+              setPopupAllPriorities(true);
+            }
+          }}
           pickTitle={optionTitle}
           showAddBlankLineOption={showAddBlankLineOption}
           showShowAllPrioritiesCheckbox={showIncludeAllSupplierOptions}
-          showAllPriorities={includeAllSupplierOptions}
-          onShowAllPrioritiesChange={onIncludeAllSupplierOptionsChange}
+          showAllPriorities={popupAllPriorities}
+          onShowAllPrioritiesChange={setPopupAllPriorities}
           onClose={() => setPopupOpen(false)}
           onPick={onSelectSku}
           onAddBlankLine={onAddBlankLine}

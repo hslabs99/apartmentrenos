@@ -2,8 +2,10 @@
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
+  IconArchive,
   IconChevronDown,
   IconChevronRight,
+  IconCopy,
   IconDotsHorizontal,
   IconDownload,
   IconFileText,
@@ -12,12 +14,20 @@ import {
   IconPlus,
   IconTrash,
 } from "@/components/icons/lightning-icons";
+import { CloneProjectDialog } from "@/components/clone-project-dialog";
 import { NewProjectDialog } from "@/components/new-project-dialog";
 import { formatMoney } from "@/lib/client/format-money";
 import { downloadProjectChecklistXls } from "@/lib/project-checklist-export-xls";
 import { downloadProjectWorkbenchXls } from "@/lib/project-workbench-export-xls";
+import {
+  projectHardDeleteNamePrefix,
+  projectHardDeletePrefixMatches,
+} from "@/lib/project-archived";
+import { isProjectTemplateFlag } from "@/lib/project-template";
+import { useViewMode } from "@/lib/view-mode";
 import type { ProjectListItem } from "@/types/project";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type ApiResponse<T> = {
@@ -59,13 +69,23 @@ async function fetchWithTimeout(
 function ProjectTileOverflowMenu({
   projectDocId,
   projectName,
-  onDelete,
+  isArchives,
+  onArchive,
+  onRestore,
+  onHardDelete,
+  onClone,
+  onSaveAsTemplate,
   onExportError,
   disabled,
 }: {
   projectDocId: string;
   projectName: string;
-  onDelete: () => void;
+  isArchives?: boolean;
+  onArchive?: () => void;
+  onRestore?: () => void;
+  onHardDelete?: () => void;
+  onClone?: () => void;
+  onSaveAsTemplate?: () => void;
   onExportError: (message: string) => void;
   disabled?: boolean;
 }) {
@@ -179,26 +199,95 @@ function ProjectTileOverflowMenu({
               </div>
             ) : null}
           </div>
-          <button
-            type="button"
-            role="menuitem"
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-normal text-sf-destructive hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
-            onClick={() => {
-              setOpen(false);
-              setExportSubOpen(false);
-              onDelete();
-            }}
-          >
-            <IconTrash className="h-5 w-5 shrink-0" />
-            <span className="sr-only">Delete</span>
-          </button>
+          {isArchives ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-normal text-sf-text hover:bg-sf-page dark:text-zinc-200 dark:hover:bg-zinc-800"
+                onClick={() => {
+                  setOpen(false);
+                  setExportSubOpen(false);
+                  onRestore?.();
+                }}
+              >
+                <IconArchive className="h-4 w-4 shrink-0 text-sf-text-weak dark:text-zinc-400" />
+                Restore
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-normal text-sf-destructive hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                onClick={() => {
+                  setOpen(false);
+                  setExportSubOpen(false);
+                  onHardDelete?.();
+                }}
+              >
+                <IconTrash className="h-5 w-5 shrink-0" />
+                Delete permanently
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-normal text-sf-text hover:bg-sf-page dark:text-zinc-200 dark:hover:bg-zinc-800"
+                onClick={() => {
+                  setOpen(false);
+                  setExportSubOpen(false);
+                  onClone?.();
+                }}
+              >
+                <IconCopy className="h-4 w-4 shrink-0 text-sf-text-weak dark:text-zinc-400" />
+                Clone
+              </button>
+              {onSaveAsTemplate ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-normal text-sf-text hover:bg-sf-page dark:text-zinc-200 dark:hover:bg-zinc-800"
+                  onClick={() => {
+                    setOpen(false);
+                    setExportSubOpen(false);
+                    onSaveAsTemplate();
+                  }}
+                >
+                  <IconCopy className="h-4 w-4 shrink-0 text-sf-text-weak dark:text-zinc-400" />
+                  Save as template
+                </button>
+              ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-normal text-sf-destructive hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                onClick={() => {
+                  setOpen(false);
+                  setExportSubOpen(false);
+                  onArchive?.();
+                }}
+              >
+                <IconArchive className="h-4 w-4 shrink-0" />
+                Archive
+              </button>
+            </>
+          )}
         </div>
       ) : null}
     </div>
   );
 }
 
-export function ProjectsListPanel() {
+export function ProjectsListPanel({
+  listKind = "projects",
+}: {
+  listKind?: "projects" | "templates" | "archives";
+}) {
+  const router = useRouter();
+  const { canManageProjectTemplates } = useViewMode();
+  const isTemplates = listKind === "templates";
+  const isArchives = listKind === "archives";
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -211,15 +300,32 @@ export function ProjectsListPanel() {
     online: boolean;
   } | null>(null);
   const debugLastRef = useRef<typeof debugLast>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [archiveConfirmId, setArchiveConfirmId] = useState<string | null>(null);
+  const [restoreConfirmId, setRestoreConfirmId] = useState<string | null>(null);
+  const [hardDeleteId, setHardDeleteId] = useState<string | null>(null);
+  const [hardDeleteStep, setHardDeleteStep] = useState<1 | 2>(1);
+  const [hardDeletePrefix, setHardDeletePrefix] = useState("");
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [cloneTarget, setCloneTarget] = useState<{
+    id: string;
+    name: string;
+    asTemplate: boolean;
+  } | null>(null);
+  const [cloneSaving, setCloneSaving] = useState(false);
+  const [cloneError, setCloneError] = useState<string | null>(null);
+
+  const listLabel = isArchives ? "archives" : isTemplates ? "templates" : "projects";
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const endpoint = "/api/projects";
+      const endpoint = isArchives
+        ? "/api/projects?archived=true"
+        : isTemplates
+          ? "/api/projects?template=true"
+          : "/api/projects";
       const initialDebug = {
         whenIso: new Date().toISOString(),
         endpoint,
@@ -258,7 +364,10 @@ export function ProjectsListPanel() {
       }
       setProjects(json?.projects ?? []);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to load projects";
+      const msg =
+        e instanceof Error
+          ? e.message
+          : `Failed to load ${listLabel}`;
       console.error("[Projects] load failed", {
         message: msg,
         debugLast: debugLastRef.current,
@@ -269,24 +378,56 @@ export function ProjectsListPanel() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isArchives, isTemplates, listLabel]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  async function confirmDeleteProject() {
-    if (!deleteConfirmId) return;
-    setDeletingId(deleteConfirmId);
+  async function confirmClone(projectname: string) {
+    if (!cloneTarget) return;
+    setCloneSaving(true);
+    setCloneError(null);
+    try {
+      const res = await fetchWithTimeout(`/api/projects/${cloneTarget.id}/clone`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectname,
+          template: cloneTarget.asTemplate || isTemplates,
+        }),
+        timeoutMs: 60000,
+      });
+      const parsed = await readApiResponse<{ id?: string; error?: string }>(res);
+      if (!parsed.ok || !parsed.json?.id) {
+        throw new Error(parsed.json?.error ?? parsed.text?.slice(0, 200) ?? "Clone failed");
+      }
+      const newId = parsed.json.id;
+      setCloneTarget(null);
+      router.push(`/projects/project?id=${encodeURIComponent(newId)}`);
+    } catch (e) {
+      setCloneError(e instanceof Error ? e.message : "Clone failed");
+    } finally {
+      setCloneSaving(false);
+    }
+  }
+
+  async function patchArchived(id: string, archived: boolean) {
+    setPendingId(id);
     setError(null);
     try {
-      const endpoint = `/api/projects/${deleteConfirmId}`;
+      const endpoint = `/api/projects/${id}`;
       setDebugLast({
         whenIso: new Date().toISOString(),
         endpoint,
         online: typeof navigator !== "undefined" ? navigator.onLine : true,
       });
-      const res = await fetchWithTimeout(endpoint, { method: "DELETE", timeoutMs: 15000 });
+      const res = await fetchWithTimeout(endpoint, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived }),
+        timeoutMs: 15000,
+      });
       const parsed = await readApiResponse<{ error?: string }>(res);
       const json = parsed.json;
       const bodySnippet =
@@ -313,18 +454,103 @@ export function ProjectsListPanel() {
               : `HTTP ${parsed.status}`,
         );
       }
-      setDeleteConfirmId(null);
+      setArchiveConfirmId(null);
+      setRestoreConfirmId(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : archived ? "Archive failed" : "Restore failed");
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  function resetHardDelete() {
+    setHardDeleteId(null);
+    setHardDeleteStep(1);
+    setHardDeletePrefix("");
+  }
+
+  function closeHardDelete() {
+    if (pendingId) return;
+    resetHardDelete();
+  }
+
+  async function confirmHardDeleteProject() {
+    if (!hardDeleteId) return;
+    const target = projects.find((p) => p.id === hardDeleteId);
+    if (!target) return;
+    if (hardDeleteStep === 1) {
+      if (!projectHardDeletePrefixMatches(target.projectname, hardDeletePrefix)) return;
+      setHardDeleteStep(2);
+      return;
+    }
+    setPendingId(hardDeleteId);
+    setError(null);
+    try {
+      const endpoint = `/api/projects/${hardDeleteId}`;
+      setDebugLast({
+        whenIso: new Date().toISOString(),
+        endpoint,
+        online: typeof navigator !== "undefined" ? navigator.onLine : true,
+      });
+      const res = await fetchWithTimeout(endpoint, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          confirmNamePrefix: projectHardDeleteNamePrefix(target.projectname),
+        }),
+        timeoutMs: 60000,
+      });
+      const parsed = await readApiResponse<{ error?: string }>(res);
+      const json = parsed.json;
+      const bodySnippet =
+        typeof json?.error === "string"
+          ? json.error.slice(0, 400)
+          : (parsed.text ?? "").slice(0, 400);
+      setDebugLast((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: parsed.status,
+              contentType: parsed.contentType,
+              bodySnippet: bodySnippet || undefined,
+            }
+          : prev,
+      );
+
+      if (!parsed.ok) {
+        throw new Error(
+          typeof json?.error === "string"
+            ? json.error
+            : bodySnippet
+              ? `HTTP ${parsed.status}: ${bodySnippet}`
+              : `HTTP ${parsed.status}`,
+        );
+      }
+      resetHardDelete();
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
     } finally {
-      setDeletingId(null);
+      setPendingId(null);
     }
   }
 
-  const projectPendingDelete = deleteConfirmId
-    ? projects.find((p) => p.id === deleteConfirmId)
+  const projectPendingArchive = archiveConfirmId
+    ? projects.find((p) => p.id === archiveConfirmId)
     : undefined;
+  const projectPendingRestore = restoreConfirmId
+    ? projects.find((p) => p.id === restoreConfirmId)
+    : undefined;
+  const projectPendingHardDelete = hardDeleteId
+    ? projects.find((p) => p.id === hardDeleteId)
+    : undefined;
+  const hardDeleteExpectedPrefix = projectPendingHardDelete
+    ? projectHardDeleteNamePrefix(projectPendingHardDelete.projectname)
+    : "";
+  const hardDeletePrefixOk =
+    Boolean(projectPendingHardDelete) &&
+    projectHardDeletePrefixMatches(projectPendingHardDelete!.projectname, hardDeletePrefix);
 
   const statusPill = (status: string) => {
     if (status === "Live") return "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300";
@@ -337,20 +563,28 @@ export function ProjectsListPanel() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-sf-brand dark:text-zinc-50">
-            Projects
+            {isArchives ? "Archives" : isTemplates ? "Templates" : "Projects"}
           </h1>
           <p className="mt-0.5 text-sm text-sf-text-secondary dark:text-zinc-400">
-            {loading ? "…" : `${projects.length} project${projects.length !== 1 ? "s" : ""}`}
+            {loading
+              ? "…"
+              : isArchives
+                ? `${projects.length} archived`
+                : isTemplates
+                  ? `${projects.length} template${projects.length !== 1 ? "s" : ""}`
+                  : `${projects.length} project${projects.length !== 1 ? "s" : ""}`}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setNewProjectOpen(true)}
-          className="inline-flex items-center gap-2 rounded-lg bg-sf-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sf-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sf-accent"
-        >
-          <IconPlus className="h-4 w-4" />
-          Add project
-        </button>
+        {isTemplates || isArchives ? null : (
+          <button
+            type="button"
+            onClick={() => setNewProjectOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-sf-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sf-accent-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sf-accent"
+          >
+            <IconPlus className="h-4 w-4" />
+            Add project
+          </button>
+        )}
       </div>
 
       {error ? (
@@ -381,7 +615,13 @@ body: ${debugLast.bodySnippet ?? "—"}`}
         <p className="text-sf-text-weak dark:text-zinc-400">Loading…</p>
       ) : projects.length === 0 ? (
         <div className="rounded-xl border border-sf-border bg-sf-surface p-8 text-center shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
-          <p className="text-sf-text-secondary dark:text-zinc-400">No projects yet.</p>
+          <p className="text-sf-text-secondary dark:text-zinc-400">
+            {isArchives
+              ? "No archived projects. Archive a project from the Projects or Templates list."
+              : isTemplates
+                ? "No templates yet. Save a project as a template from the Projects list."
+                : "No projects yet."}
+          </p>
         </div>
       ) : (
         <div className="grid max-w-4xl grid-cols-1 gap-6 sm:grid-cols-2">
@@ -401,6 +641,11 @@ body: ${debugLast.bodySnippet ?? "—"}`}
                     >
                       {p.status}
                     </span>
+                    {isArchives && isProjectTemplateFlag(p.template) ? (
+                      <span className="inline-flex shrink-0 items-center rounded-full border border-sf-accent/20 bg-sf-accent-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sf-accent">
+                        Template
+                      </span>
+                    ) : null}
                   </div>
                   {typeof p.projectid === "number" ? (
                     <p className="mt-0.5 text-xs text-sf-text-weak dark:text-zinc-500">
@@ -419,9 +664,28 @@ body: ${debugLast.bodySnippet ?? "—"}`}
                 <ProjectTileOverflowMenu
                   projectDocId={p.id}
                   projectName={p.projectname}
-                  onDelete={() => setDeleteConfirmId(p.id)}
+                  isArchives={isArchives}
+                  onArchive={() => setArchiveConfirmId(p.id)}
+                  onRestore={() => setRestoreConfirmId(p.id)}
+                  onHardDelete={() => {
+                    setHardDeleteId(p.id);
+                    setHardDeleteStep(1);
+                    setHardDeletePrefix("");
+                  }}
+                  onClone={() => {
+                    setCloneError(null);
+                    setCloneTarget({ id: p.id, name: p.projectname, asTemplate: false });
+                  }}
+                  onSaveAsTemplate={
+                    !isTemplates && !isArchives && canManageProjectTemplates
+                      ? () => {
+                          setCloneError(null);
+                          setCloneTarget({ id: p.id, name: p.projectname, asTemplate: true });
+                        }
+                      : undefined
+                  }
                   onExportError={(message) => setError(message)}
-                  disabled={deletingId === p.id}
+                  disabled={pendingId === p.id}
                 />
               </div>
               <div className="flex-1 px-4 pb-4">
@@ -434,6 +698,31 @@ body: ${debugLast.bodySnippet ?? "—"}`}
                 )}
               </div>
               <div className="border-t border-sf-border dark:border-zinc-700" />
+              {isArchives ? (
+                <div className="flex items-center gap-2 p-3">
+                  <button
+                    type="button"
+                    disabled={pendingId === p.id}
+                    onClick={() => setRestoreConfirmId(p.id)}
+                    className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-sf-brand py-2 text-xs font-medium text-white transition-colors hover:bg-sf-brand-hover disabled:opacity-50"
+                  >
+                    {isProjectTemplateFlag(p.template) ? "Restore to templates" : "Restore to projects"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pendingId === p.id}
+                    onClick={() => {
+                      setHardDeleteId(p.id);
+                      setHardDeleteStep(1);
+                      setHardDeletePrefix("");
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-sf-destructive transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:hover:bg-red-950/40"
+                  >
+                    <IconTrash className="h-3.5 w-3.5 shrink-0" />
+                    Delete
+                  </button>
+                </div>
+              ) : (
               <div className="flex items-center gap-2 p-3">
                 <Link
                   href={`/projects/project?id=${p.id}`}
@@ -462,31 +751,145 @@ body: ${debugLast.bodySnippet ?? "—"}`}
                   ) : null}
                 </Link>
               </div>
+              )}
             </article>
           ))}
         </div>
       )}
 
-      <NewProjectDialog
-        open={newProjectOpen}
-        onClose={() => setNewProjectOpen(false)}
-        onCreated={() => void load()}
+      {isTemplates || isArchives ? null : (
+        <NewProjectDialog
+          open={newProjectOpen}
+          onClose={() => setNewProjectOpen(false)}
+          onCreated={() => void load()}
+        />
+      )}
+
+      <CloneProjectDialog
+        open={Boolean(cloneTarget) && !isArchives}
+        title={
+          cloneTarget?.asTemplate ? "Save as template" : isTemplates ? "Clone template" : "Clone project"
+        }
+        description={
+          cloneTarget?.asTemplate
+            ? "Creates a full copy that appears under Templates. You can edit it afterwards."
+            : isTemplates
+              ? "Creates a full copy of this template with a new name."
+              : "Creates a full copy with a new name. Everything else is copied as-is."
+        }
+        confirmLabel={cloneTarget?.asTemplate ? "Save template" : "Clone"}
+        defaultName={
+          cloneTarget
+            ? cloneTarget.asTemplate
+              ? `${cloneTarget.name} template`
+              : `${cloneTarget.name} copy`
+            : ""
+        }
+        saving={cloneSaving}
+        error={cloneError}
+        onClose={() => {
+          if (!cloneSaving) {
+            setCloneTarget(null);
+            setCloneError(null);
+          }
+        }}
+        onConfirm={(name) => void confirmClone(name)}
       />
 
       <ConfirmDialog
-        open={Boolean(deleteConfirmId)}
-        title="Delete project?"
+        open={Boolean(archiveConfirmId)}
+        title={isTemplates ? "Archive template?" : "Archive project?"}
         description={
-          projectPendingDelete
-            ? `“${projectPendingDelete.projectname}” will be removed. This cannot be undone.`
-            : "This project will be removed. This cannot be undone."
+          projectPendingArchive
+            ? `“${projectPendingArchive.projectname}” will move to Archives. You can restore it later or permanently delete it from there.`
+            : "This will move to Archives. You can restore it later."
         }
-        confirmLabel="Delete"
+        confirmLabel="Archive"
+        cancelLabel="Cancel"
+        pending={Boolean(pendingId)}
+        onCancel={() => {
+          if (!pendingId) setArchiveConfirmId(null);
+        }}
+        onConfirm={() => {
+          if (archiveConfirmId) void patchArchived(archiveConfirmId, true);
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(restoreConfirmId)}
+        title={
+          projectPendingRestore && isProjectTemplateFlag(projectPendingRestore.template)
+            ? "Restore to templates?"
+            : "Restore to projects?"
+        }
+        description={
+          projectPendingRestore
+            ? isProjectTemplateFlag(projectPendingRestore.template)
+              ? `“${projectPendingRestore.projectname}” will return to the Templates list.`
+              : `“${projectPendingRestore.projectname}” will return to the Projects list.`
+            : "This will leave Archives and return to its list."
+        }
+        confirmLabel="Restore"
+        cancelLabel="Cancel"
+        pending={Boolean(pendingId)}
+        onCancel={() => {
+          if (!pendingId) setRestoreConfirmId(null);
+        }}
+        onConfirm={() => {
+          if (restoreConfirmId) void patchArchived(restoreConfirmId, false);
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(hardDeleteId) && hardDeleteStep === 1}
+        title="Permanently delete?"
+        description={
+          projectPendingHardDelete ? (
+            <>
+              Type the first {hardDeleteExpectedPrefix.length} character
+              {hardDeleteExpectedPrefix.length === 1 ? "" : "s"} of “
+              {projectPendingHardDelete.projectname}” to continue. This only removes this
+              project’s own areas, lines, scope answers, and notes.
+            </>
+          ) : (
+            "Type the start of the project name to continue."
+          )
+        }
+        confirmLabel="Continue"
         cancelLabel="Cancel"
         variant="danger"
-        pending={Boolean(deletingId)}
-        onCancel={() => setDeleteConfirmId(null)}
-        onConfirm={() => void confirmDeleteProject()}
+        pending={Boolean(pendingId)}
+        confirmDisabled={!hardDeletePrefixOk}
+        onCancel={closeHardDelete}
+        onConfirm={() => void confirmHardDeleteProject()}
+      >
+        <label className="block text-sm font-medium text-sf-text dark:text-zinc-200">
+          Confirmation
+          <input
+            type="text"
+            autoComplete="off"
+            value={hardDeletePrefix}
+            onChange={(e) => setHardDeletePrefix(e.target.value)}
+            className="mt-1.5 h-10 w-full rounded-lg border border-sf-border bg-sf-surface px-3 text-sm text-sf-text outline-none focus:border-sf-accent focus:ring-2 focus:ring-sf-accent/30 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200"
+            placeholder={hardDeleteExpectedPrefix ? `e.g. ${hardDeleteExpectedPrefix}` : ""}
+          />
+        </label>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={Boolean(hardDeleteId) && hardDeleteStep === 2}
+        title="Delete cannot be undone"
+        description={
+          projectPendingHardDelete
+            ? `“${projectPendingHardDelete.projectname}” and its project-only data will be deleted forever. Catalog, templates setup, and other projects are not affected.`
+            : "This project and its project-only data will be deleted forever."
+        }
+        confirmLabel="Delete permanently"
+        cancelLabel="Cancel"
+        variant="danger"
+        pending={Boolean(pendingId)}
+        onCancel={closeHardDelete}
+        onConfirm={() => void confirmHardDeleteProject()}
       />
     </div>
   );

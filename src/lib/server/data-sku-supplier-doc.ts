@@ -37,5 +37,11 @@ export function dataSkuSupplierDocToPublic(
     priceIncGst: parseNumberOrNull(data.priceIncGst),
     priceExcGst: parseNumberOrNull(data.priceExcGst),
     sourceSheetRows: parseSourceSheetRows(data.sourceSheetRows),
+    append1Type: parseText(data.append1Type),
+    append1Spec: parseText(data.append1Spec),
+    append2Type: parseText(data.append2Type),
+    append2Spec: parseText(data.append2Spec),
+    append3Type: parseText(data.append3Type),
+    append3Spec: parseText(data.append3Spec),
   };
 }

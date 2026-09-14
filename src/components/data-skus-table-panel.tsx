@@ -2,10 +2,12 @@
 
 import { ModalFrame } from "@/components/modal-frame";
 import { readApiJson } from "@/lib/client/read-api-json";
+import { isAllLookupOrFilterValue } from "@/lib/lookup-list-values";
 import { sfDataSurface, sfPrimaryToolbarButton } from "@/lib/sf-layout";
+import { normalizeElevateLevel, normalizeSkuPart } from "@/lib/sku/normalize-sku-part";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { DataSkuSupplierPublic } from "@/types/data-sku-supplier-public";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 type Filters = {
   category: string;
@@ -13,14 +15,23 @@ type Filters = {
   productTypes: string[];
   elevateLevel: string;
   style: string;
+  /** Case-insensitive substring match on product name. Empty = no product search. */
+  productSearch: string;
+  /** When a type is selected, also include SKU rows whose type is All. */
+  includeAllProductTypes: boolean;
+  /** When an elevate level is selected, also include SKU rows with All. */
+  includeAllElevate: boolean;
+  /** When a style is selected, also include SKU rows with All. */
+  includeAllStyle: boolean;
 };
 
-const FILTER_LABELS: Record<Exclude<keyof Filters, "productTypes">, string> = {
+type FilterKey = "category" | "elevateLevel" | "style";
+
+const FILTER_LABELS: Record<FilterKey, string> = {
   category: "Category",
   elevateLevel: "Elevate Level",
   style: "Style",
 };
-type FilterKey = "category" | "elevateLevel" | "style";
 
 type SortKey =
   | FilterKey
@@ -43,6 +54,14 @@ type CurrentScope = "current" | "archived" | "all";
 
 const EMPTY_FILTER = "";
 const TABLE_COL_COUNT = 21;
+const DEFAULT_INCLUDE_ALL = {
+  includeAllProductTypes: true,
+  includeAllElevate: true,
+  includeAllStyle: true,
+};
+const filterSelectClass =
+  "w-full min-w-[7rem] max-w-[14rem] min-h-8 rounded border border-sf-border bg-sf-surface px-1.5 py-1 text-xs dark:border-zinc-600 dark:bg-zinc-900";
+const headerFilterCellClass = "align-bottom whitespace-nowrap py-1.5 pr-3";
 
 function parseCalculatedM2Input(raw: string): number | null {
   const t = raw.trim();
@@ -98,21 +117,69 @@ function productTypeFilterLabel(selected: string[]): string {
   return `${selected[0]!} +${selected.length - 1}`;
 }
 
-function matchesProductTypes(row: DataSkuPublic, selected: string[]): boolean {
+function dimensionTokens(value: string): string[] {
+  const raw = value.trim();
+  if (!raw) return [""];
+  if (!/[;,]/.test(raw)) return [raw];
+  const parts = raw
+    .split(/[,;]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : [""];
+}
+
+function dimensionValueMatches(
+  rowValue: string,
+  filter: string,
+  includeAll: boolean,
+  kind: "elevate" | "text",
+): boolean {
+  if (!filter) return true;
+  if (includeAll && isAllLookupOrFilterValue(rowValue)) return true;
+  const norm = kind === "elevate" ? normalizeElevateLevel : normalizeSkuPart;
+  const want = norm(filter === "(blank)" ? "" : filter);
+  return dimensionTokens(rowValue).some((token) => {
+    const t = token === "(blank)" ? "" : token;
+    return norm(t) === want;
+  });
+}
+
+function matchesProductTypes(
+  row: DataSkuPublic,
+  selected: string[],
+  includeAll: boolean,
+): boolean {
   if (selected.length === 0) return true;
-  const tokens = new Set(rowProductTypeTokens(row));
-  return selected.some((s) => tokens.has(s));
+  const tokens = rowProductTypeTokens(row);
+  if (selected.some((s) => tokens.includes(s))) return true;
+  if (includeAll) {
+    return tokens.some((t) => isAllLookupOrFilterValue(t === "(blank)" ? "" : t));
+  }
+  return false;
 }
 
 function matchesFilter(row: DataSkuPublic, filters: Filters): boolean {
   if (filters.category && rowFieldValue(row, "category") !== filters.category) {
     return false;
   }
-  if (!matchesProductTypes(row, filters.productTypes)) return false;
-  if (filters.elevateLevel && rowFieldValue(row, "elevateLevel") !== filters.elevateLevel) {
+  if (!matchesProductTypes(row, filters.productTypes, filters.includeAllProductTypes)) {
     return false;
   }
-  if (filters.style && rowFieldValue(row, "style") !== filters.style) {
+  if (
+    !dimensionValueMatches(
+      row.elevateLevel,
+      filters.elevateLevel,
+      filters.includeAllElevate,
+      "elevate",
+    )
+  ) {
+    return false;
+  }
+  if (!dimensionValueMatches(row.style, filters.style, filters.includeAllStyle, "text")) {
+    return false;
+  }
+  const productQ = filters.productSearch.trim().toLowerCase();
+  if (productQ && !row.product.toLowerCase().includes(productQ)) {
     return false;
   }
   return true;
@@ -175,6 +242,50 @@ function SortableTh({
   );
 }
 
+function IncludeAllCheckbox({
+  checked,
+  onChange,
+  title,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  title: string;
+}) {
+  return (
+    <label
+      className="flex h-[18px] cursor-pointer items-center gap-1 text-[11px] leading-none text-sf-text-secondary dark:text-zinc-400"
+      title={title}
+    >
+      <input
+        type="checkbox"
+        className="h-3.5 w-3.5 shrink-0"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      Include all
+    </label>
+  );
+}
+
+function HeaderFilterCell({
+  children,
+  includeAll,
+  className,
+}: {
+  children?: ReactNode;
+  includeAll?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <th className={`${headerFilterCellClass} ${className ?? ""}`}>
+      <div className="flex flex-col justify-end gap-1">
+        <div className="h-[18px]">{includeAll ?? null}</div>
+        {children}
+      </div>
+    </th>
+  );
+}
+
 type Props = {
   refreshKey?: number;
 };
@@ -188,6 +299,8 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
     productTypes: [],
     elevateLevel: EMPTY_FILTER,
     style: EMPTY_FILTER,
+    productSearch: EMPTY_FILTER,
+    ...DEFAULT_INCLUDE_ALL,
   });
   const [productTypePickerOpen, setProductTypePickerOpen] = useState(false);
   const [productTypeDraft, setProductTypeDraft] = useState<string[]>([]);
@@ -376,6 +489,8 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
       productTypes: [],
       elevateLevel: EMPTY_FILTER,
       style: EMPTY_FILTER,
+      productSearch: EMPTY_FILTER,
+      ...DEFAULT_INCLUDE_ALL,
     });
     setCurrentScope("current");
   };
@@ -396,6 +511,7 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
     filters.productTypes.length > 0 ||
     filters.elevateLevel !== EMPTY_FILTER ||
     filters.style !== EMPTY_FILTER ||
+    filters.productSearch.trim() !== EMPTY_FILTER ||
     currentScope !== "current";
 
   return (
@@ -429,48 +545,6 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-sf-text-secondary dark:text-zinc-400">On sheet</span>
-            <select
-              value={currentScope}
-              onChange={(e) => setCurrentScope(e.target.value as CurrentScope)}
-              className="min-h-10 rounded border border-sf-border bg-sf-surface px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-            >
-              <option value="current">Current only</option>
-              <option value="archived">Not on sheet</option>
-              <option value="all">All</option>
-            </select>
-          </label>
-          {(Object.keys(FILTER_LABELS) as FilterKey[]).map((key) => (
-            <label key={key} className="flex flex-col gap-1 text-sm">
-              <span className="text-sf-text-secondary dark:text-zinc-400">{FILTER_LABELS[key]}</span>
-              <select
-                value={filters[key]}
-                onChange={(e) => setFilters((f) => ({ ...f, [key]: e.target.value }))}
-                className="min-h-10 rounded border border-sf-border bg-sf-surface px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-              >
-                <option value={EMPTY_FILTER}>All</option>
-                {filterOptions[key].map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-          <div className="flex flex-col gap-1 text-sm">
-            <span className="text-sf-text-secondary dark:text-zinc-400">Product Type</span>
-            <button
-              type="button"
-              onClick={openProductTypePicker}
-              className="min-h-10 rounded border border-sf-border bg-sf-surface px-2 py-1.5 text-left text-sm hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-            >
-              {productTypeFilterLabel(filters.productTypes)}
-            </button>
-          </div>
-        </div>
-
         {error ? <p className="text-sm text-red-800 dark:text-red-300">{error}</p> : null}
       </section>
 
@@ -478,6 +552,116 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
         <div className="max-h-[calc(100dvh-14rem)] overflow-auto px-4 py-3 md:px-5 lg:px-6">
           <table className="w-full min-w-[1400px] border-collapse text-left text-sm">
             <thead className="sticky top-0 z-10 bg-sf-surface dark:bg-zinc-900">
+              <tr className="border-b border-sf-border/70 dark:border-zinc-700">
+                <HeaderFilterCell className="pl-1" />
+                <HeaderFilterCell>
+                  <select
+                    aria-label="Filter category"
+                    value={filters.category}
+                    onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}
+                    className={filterSelectClass}
+                  >
+                    <option value={EMPTY_FILTER}>All</option>
+                    {filterOptions.category.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </HeaderFilterCell>
+                <HeaderFilterCell
+                  includeAll={
+                    <IncludeAllCheckbox
+                      checked={filters.includeAllProductTypes}
+                      onChange={(next) =>
+                        setFilters((f) => ({ ...f, includeAllProductTypes: next }))
+                      }
+                      title="When a type is selected, also show SKU rows whose type is All."
+                    />
+                  }
+                >
+                  <button
+                    type="button"
+                    aria-label="Filter product type"
+                    onClick={openProductTypePicker}
+                    className={`${filterSelectClass} text-left hover:bg-sf-page dark:hover:bg-zinc-800`}
+                  >
+                    {productTypeFilterLabel(filters.productTypes)}
+                  </button>
+                </HeaderFilterCell>
+                <HeaderFilterCell>
+                  <input
+                    type="search"
+                    aria-label="Search product"
+                    placeholder="Search product"
+                    value={filters.productSearch}
+                    onChange={(e) => setFilters((f) => ({ ...f, productSearch: e.target.value }))}
+                    className={filterSelectClass}
+                  />
+                </HeaderFilterCell>
+                <HeaderFilterCell
+                  includeAll={
+                    <IncludeAllCheckbox
+                      checked={filters.includeAllElevate}
+                      onChange={(next) => setFilters((f) => ({ ...f, includeAllElevate: next }))}
+                      title="When an elevate level is selected (e.g. Investor), also show SKU rows with All."
+                    />
+                  }
+                >
+                  <select
+                    aria-label="Filter elevate level"
+                    value={filters.elevateLevel}
+                    onChange={(e) => setFilters((f) => ({ ...f, elevateLevel: e.target.value }))}
+                    className={filterSelectClass}
+                  >
+                    <option value={EMPTY_FILTER}>All</option>
+                    {filterOptions.elevateLevel.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </HeaderFilterCell>
+                <HeaderFilterCell
+                  includeAll={
+                    <IncludeAllCheckbox
+                      checked={filters.includeAllStyle}
+                      onChange={(next) => setFilters((f) => ({ ...f, includeAllStyle: next }))}
+                      title="When a style is selected, also show SKU rows with All."
+                    />
+                  }
+                >
+                  <select
+                    aria-label="Filter style"
+                    value={filters.style}
+                    onChange={(e) => setFilters((f) => ({ ...f, style: e.target.value }))}
+                    className={filterSelectClass}
+                  >
+                    <option value={EMPTY_FILTER}>All</option>
+                    {filterOptions.style.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </HeaderFilterCell>
+                <HeaderFilterCell />
+                <HeaderFilterCell>
+                  <select
+                    aria-label="Filter on sheet"
+                    value={currentScope}
+                    onChange={(e) => setCurrentScope(e.target.value as CurrentScope)}
+                    className={filterSelectClass}
+                  >
+                    <option value="current">Current only</option>
+                    <option value="archived">Not on sheet</option>
+                    <option value="all">All</option>
+                  </select>
+                </HeaderFilterCell>
+                {Array.from({ length: TABLE_COL_COUNT - 8 }, (_, i) => (
+                  <HeaderFilterCell key={`filter-pad-${i}`} />
+                ))}
+              </tr>
               <tr className="border-b border-sf-border dark:border-zinc-700">
                 <SortableTh
                   label="SKU ID"
@@ -745,7 +929,9 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
               <span className="mt-0.5 block">{selectedProduct.product || "—"}</span>
             </p>
             <p>
-              <span className="text-sf-text-secondary dark:text-zinc-400">Append 1</span>
+              <span className="text-sf-text-secondary dark:text-zinc-400">
+                Product row — Append 1
+              </span>
               <span className="mt-0.5 block">
                 {selectedProduct.append1Type || selectedProduct.append1Spec
                   ? `${selectedProduct.append1Type || "—"} · ${selectedProduct.append1Spec || "—"}`
@@ -753,7 +939,9 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
               </span>
             </p>
             <p>
-              <span className="text-sf-text-secondary dark:text-zinc-400">Append 2</span>
+              <span className="text-sf-text-secondary dark:text-zinc-400">
+                Product row — Append 2
+              </span>
               <span className="mt-0.5 block">
                 {selectedProduct.append2Type || selectedProduct.append2Spec
                   ? `${selectedProduct.append2Type || "—"} · ${selectedProduct.append2Spec || "—"}`
@@ -761,7 +949,9 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
               </span>
             </p>
             <p>
-              <span className="text-sf-text-secondary dark:text-zinc-400">Append 3</span>
+              <span className="text-sf-text-secondary dark:text-zinc-400">
+                Product row — Append 3
+              </span>
               <span className="mt-0.5 block">
                 {selectedProduct.append3Type || selectedProduct.append3Spec
                   ? `${selectedProduct.append3Type || "—"} · ${selectedProduct.append3Spec || "—"}`
@@ -786,6 +976,7 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
                     <th className="py-2 pr-3 font-medium">Supplier SKU</th>
                     <th className="py-2 pr-3 font-medium">$ Inc GST</th>
                     <th className="py-2 pr-3 font-medium">$ Exc GST</th>
+                    <th className="py-2 pr-3 font-medium">Option Append 1</th>
                     <th className="py-2 font-medium">Link</th>
                   </tr>
                 </thead>
@@ -798,6 +989,11 @@ export function DataSkusTablePanel({ refreshKey = 0 }: Props) {
                       <td className="py-2 pr-3 font-mono text-xs">{s.supplierSku || "—"}</td>
                       <td className="py-2 pr-3 tabular-nums">{formatMoney(s.priceIncGst)}</td>
                       <td className="py-2 pr-3 tabular-nums">{formatMoney(s.priceExcGst)}</td>
+                      <td className="py-2 pr-3 text-xs">
+                        {s.append1Type || s.append1Spec
+                          ? `${s.append1Type || "—"} · ${s.append1Spec || "—"}`
+                          : "—"}
+                      </td>
                       <td className="py-2 pr-3">
                         {s.link ? (
                           <a

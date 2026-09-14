@@ -30,8 +30,8 @@ function ProjectsTabsInner() {
     !onProjectNotes;
 
   const projectHref = `/projects/project${projectQuerySuffix(searchParams, ["id"])}`;
-  const checklistHref = `/projects/project/checklist${projectQuerySuffix(searchParams, ["id"])}`;
-  const workbenchHref = `/projects/project/workbench${projectQuerySuffix(searchParams, ["id"])}`;
+  const checklistHref = `/projects/project/checklist${projectQuerySuffix(searchParams, ["id", "line"])}`;
+  const workbenchHref = `/projects/project/workbench${projectQuerySuffix(searchParams, ["id", "line"])}`;
   const notesHref = `/projects/project/notes${projectQuerySuffix(searchParams, ["id"])}`;
 
   return (

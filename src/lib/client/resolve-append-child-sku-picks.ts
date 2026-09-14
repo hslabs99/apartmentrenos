@@ -10,8 +10,9 @@ import {
   type SupplierDiscountByKey,
 } from "@/lib/client/supplier-discount-price";
 import {
+  appendSlotsForSupplierOption,
+  appendSpecForSupplierOption,
   appendSlotsFromDataSku,
-  appendSpecForSlot,
   type DataSkuAppendSlotRef,
 } from "@/lib/sku/data-sku-append-slots";
 import type { ColourLookupIndex } from "@/lib/sku/colour-lookup-index";
@@ -65,6 +66,7 @@ function pickFromSkuAndSupplier(
   return {
     skuId: sku.skuId,
     product: sku.product?.trim() ?? "",
+    uom: sku.uom?.trim() ?? "",
     supplierOption: sup.supplierOption,
     supplier: sup.supplier.trim(),
     model: sup.model.trim(),
@@ -72,6 +74,7 @@ function pickFromSkuAndSupplier(
     link: sup.link.trim(),
     priceExcGst,
     discountPctApplied,
+    appendSlots: appendSlotsFromDataSku(sup),
   };
 }
 
@@ -129,6 +132,28 @@ function matchAppendSpecSkus(
   );
 }
 
+function matchAppendTypeSkus(
+  ctx: AppendResolveContext,
+  slot: DataSkuAppendSlotRef,
+): DataSkuPublic[] {
+  const { style, colour } = effectiveStyleColourForLine(ctx.pa, ctx.project, ctx.line);
+  const elevateLevel = effectiveElevateLevelForLine(
+    ctx.priceLevels,
+    ctx.line,
+    ctx.pa,
+    ctx.project,
+    ctx.cascades,
+  );
+  const qo = findQuoteObjectForAppend(ctx.quoteObjects, ctx.parentCategory, slot.productType);
+  if (!qo) return [];
+  return matchingSkusForScopeLine(
+    ctx.catalogSkus,
+    qo,
+    { elevateLevel, style, colour },
+    { colourLookupIndex: ctx.colourLookupIndex ?? null },
+  );
+}
+
 function resolveAppendSlot(
   ctx: AppendResolveContext,
   slot: DataSkuAppendSlotRef,
@@ -145,18 +170,8 @@ function resolveAppendSlot(
     };
   }
 
-  if (!slot.product.trim()) {
-    return {
-      slot: slot.slot,
-      productType: slot.productType,
-      product: slot.product,
-      pick: null,
-      quoteObjectDocId: qo.id,
-      resolveError: null,
-    };
-  }
-
-  const matches = matchAppendSpecSkus(ctx, slot);
+  const spec = slot.product.trim();
+  const matches = spec ? matchAppendSpecSkus(ctx, slot) : matchAppendTypeSkus(ctx, slot);
   if (matches.length === 0) {
     return {
       slot: slot.slot,
@@ -164,7 +179,9 @@ function resolveAppendSlot(
       product: slot.product,
       pick: null,
       quoteObjectDocId: qo.id,
-      resolveError: `No SKU matches append spec "${slot.product}" for ${slot.productType}.`,
+      resolveError: spec
+        ? `No SKU matches append spec "${slot.product}" for ${slot.productType}.`
+        : `No SKU matches append type "${slot.productType}".`,
     };
   }
   if (matches.length > 1) {
@@ -174,14 +191,14 @@ function resolveAppendSlot(
       product: slot.product,
       pick: null,
       quoteObjectDocId: qo.id,
-      resolveError: `${matches.length} SKUs match append spec "${slot.product}" — select one manually.`,
+      resolveError: `${matches.length} SKUs match append ${spec ? `spec "${slot.product}"` : `type "${slot.productType}"`} — select one manually.`,
     };
   }
   const sku = matches[0]!;
   const pick = preferredSupplierPick(
     sku,
     ctx.suppliersBySkuId[sku.skuId] ?? [],
-    ctx.preferredSupplierOption,
+    PREFERRED_SUPPLIER_OPTION,
     ctx.supplierDiscountByKey,
   );
   if (!pick) {
@@ -224,6 +241,8 @@ export function resolveAppendChildSkuPicks(args: {
   preferredSupplierOption: number | null;
   supplierDiscountByKey?: SupplierDiscountByKey;
   colourLookupIndex?: ColourLookupIndex | null;
+  /** Slots already shown on the Select SKU pick (that priority’s data row). */
+  pickAppendSlots?: DataSkuAppendSlotRef[];
 }): ResolvedAppendChild[] {
   const ctx: AppendResolveContext = {
     parentCategory: args.parentCategory,
@@ -239,7 +258,16 @@ export function resolveAppendChildSkuPicks(args: {
     supplierDiscountByKey: args.supplierDiscountByKey ?? new Map(),
     colourLookupIndex: args.colourLookupIndex ?? null,
   };
-  const slots = appendSlotsFromDataSku(args.parentSku);
+  const fromPick = (args.pickAppendSlots ?? []).filter(
+    (s) => s.productType.trim() || s.product.trim(),
+  );
+  const slots =
+    fromPick.length > 0
+      ? fromPick
+      : appendSlotsForSupplierOption(
+          args.suppliersBySkuId[args.parentSku.skuId] ?? [],
+          args.preferredSupplierOption,
+        );
   return slots.map((slot) => resolveAppendSlot(ctx, slot));
 }
 
@@ -262,11 +290,18 @@ export function bundledAppendSkuPickerHint(args: {
 }): string | null {
   if (args.childLine.skuId?.trim()) return null;
   const slot = args.childLine.bundledAppendSlot;
-  if (slot == null || !args.parentSku) return null;
-  const spec = appendSpecForSlot(args.parentSku, slot);
+  if (slot == null) return null;
+  const spec = appendSpecForSupplierOption(
+    args.suppliersBySkuId[args.parentSku?.skuId ?? ""] ?? [],
+    args.preferredSupplierOption ?? args.parentLine.supplierOption ?? null,
+    slot,
+  );
   if (!spec) return null;
 
-  const slots = appendSlotsFromDataSku(args.parentSku);
+  const slots = appendSlotsForSupplierOption(
+    args.suppliersBySkuId[args.parentSku?.skuId ?? ""] ?? [],
+    args.preferredSupplierOption ?? args.parentLine.supplierOption ?? null,
+  );
   const slotRef = slots.find((s) => s.slot === slot);
   if (!slotRef) return null;
 

@@ -4,15 +4,22 @@ import { ModalFrame } from "@/components/modal-frame";
 import { formatMoney } from "@/lib/client/format-money";
 import {
   encodeScopeLineSkuPickValue,
+  SCOPE_LINE_SKU_SPEC_ALL,
   scopeLineSkuPickDescriptionLabel,
   type ScopeLineSkuPick,
 } from "@/lib/client/scope-line-sku-match";
+import { formatAppendSlotsSummary } from "@/lib/sku/data-sku-append-slots";
 
 type Props = {
   open: boolean;
   picks: ScopeLineSkuPick[];
   selectedValue: string;
   objectLabel: string;
+  /** Quote object category (e.g. Appliances). */
+  objectCategory?: string;
+  specOptions?: string[];
+  specFilter?: string;
+  onSpecFilterChange?: (spec: string) => void;
   pickTitle?: (pick: ScopeLineSkuPick) => string;
   showAddBlankLineOption?: boolean;
   /** When set, show the “Show all priorities” control in the modal. */
@@ -38,6 +45,10 @@ export function WbScopeLineSkuPickerModal({
   picks,
   selectedValue,
   objectLabel,
+  objectCategory = "",
+  specOptions = [],
+  specFilter = SCOPE_LINE_SKU_SPEC_ALL,
+  onSpecFilterChange,
   pickTitle,
   showAddBlankLineOption = false,
   showAllPriorities = false,
@@ -49,14 +60,21 @@ export function WbScopeLineSkuPickerModal({
 }: Props) {
   if (!open) return null;
 
-  const defaultModeHint =
-    "Default list: best available priority per matching SKU (P1, else P2…).";
-  const allModeHint = "Showing all matching supplier priorities (P1, P2, P3…).";
+  const specIsAll = specFilter.trim() === SCOPE_LINE_SKU_SPEC_ALL;
+  const showSpecFilter = specOptions.length > 0 && Boolean(onSpecFilterChange);
+  const defaultModeHint = specIsAll
+    ? `Best available priority per ${objectLabel || "matching"} specification (P1, else P2…).`
+    : "Best available priority for this specification (P1, else P2…).";
+  const allModeHint = specIsAll
+    ? `All supplier priorities across every ${objectLabel || "matching"} specification.`
+    : "All supplier priorities for this specification (P1, P2, P3…).";
+  const scopeHint = specIsAll
+    ? `All ${objectLabel || "object"} specifications`
+    : specFilter.trim();
 
   return (
     <ModalFrame
       title="Select SKU"
-      description={`Matching catalog options for “${objectLabel}” (${picks.length}).`}
       onClose={onClose}
       wide
       panelClassName="sm:max-w-3xl"
@@ -86,24 +104,64 @@ export function WbScopeLineSkuPickerModal({
         </div>
       }
     >
-      {showShowAllPrioritiesCheckbox ? (
-        <div className="mb-3 rounded-lg border border-sf-border bg-sf-page px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-950/50">
-          <label className="flex cursor-pointer items-start gap-2.5">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 shrink-0 rounded border-sf-border-strong"
-              checked={showAllPriorities}
-              onChange={(e) => onShowAllPrioritiesChange?.(e.target.checked)}
-            />
-            <span className="min-w-0">
+      <div className="mb-3 rounded-lg border border-sf-border bg-sf-page px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-950/50">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
+          Object
+        </p>
+        <p className="mt-0.5 text-lg font-semibold leading-tight text-sf-text dark:text-zinc-50">
+          {objectLabel || "—"}
+        </p>
+        {objectCategory ? (
+          <p className="mt-0.5 text-sm text-sf-text-secondary dark:text-zinc-400">
+            {objectCategory}
+          </p>
+        ) : null}
+        <p className="mt-1.5 text-xs text-sf-text-secondary dark:text-zinc-400">
+          {scopeHint} · {picks.length} option{picks.length === 1 ? "" : "s"}
+        </p>
+      </div>
+
+      {showSpecFilter || showShowAllPrioritiesCheckbox ? (
+        <div className="mb-3 space-y-3 rounded-lg border border-sf-border bg-sf-page px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-950/50">
+          {showSpecFilter ? (
+            <label className="block min-w-0">
               <span className="block text-sm font-medium text-sf-text dark:text-zinc-100">
-                Show all priorities
+                Specification
               </span>
-              <span className="mt-0.5 block text-xs text-sf-text-secondary dark:text-zinc-400">
-                {showAllPriorities ? allModeHint : defaultModeHint}
+              <select
+                className="mt-1.5 min-h-10 w-full rounded-md border border-sf-border-strong bg-sf-surface px-2.5 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                value={specFilter}
+                onChange={(e) => onSpecFilterChange?.(e.target.value)}
+              >
+                <option value={SCOPE_LINE_SKU_SPEC_ALL}>
+                  All {objectLabel || "specifications"}
+                </option>
+                {specOptions.map((spec) => (
+                  <option key={spec} value={spec}>
+                    {spec}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {showShowAllPrioritiesCheckbox ? (
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-sf-border-strong"
+                checked={showAllPriorities}
+                onChange={(e) => onShowAllPrioritiesChange?.(e.target.checked)}
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-sf-text dark:text-zinc-100">
+                  Show all priorities
+                </span>
+                <span className="mt-0.5 block text-xs text-sf-text-secondary dark:text-zinc-400">
+                  {showAllPriorities ? allModeHint : defaultModeHint}
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+          ) : null}
         </div>
       ) : null}
       <ul className="divide-y divide-sf-border dark:divide-zinc-700">
@@ -114,6 +172,7 @@ export function WbScopeLineSkuPickerModal({
           const supplierName = pick.supplier.trim() || "—";
           const supplierSku = pick.supplierSku.trim();
           const model = pick.model.trim();
+          const appendSummary = formatAppendSlotsSummary(pick.appendSlots ?? []);
           return (
             <li key={value}>
               <div
@@ -143,6 +202,11 @@ export function WbScopeLineSkuPickerModal({
                     <span className="font-medium text-sf-text-secondary dark:text-zinc-400">
                       (P{pick.supplierOption})
                     </span>
+                    {appendSummary ? (
+                      <span className="ml-2 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-950 dark:bg-amber-950/60 dark:text-amber-100">
+                        Append
+                      </span>
+                    ) : null}
                   </span>
                   <span className="tabular-nums text-sm font-medium text-teal-900 dark:text-teal-200">
                     {priceLabel(pick)}
@@ -150,6 +214,17 @@ export function WbScopeLineSkuPickerModal({
                 </div>
                 <p className="text-sm text-sf-text dark:text-zinc-200">
                   {model || "—"}
+                </p>
+                <p
+                  className={
+                    appendSummary
+                      ? "rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100"
+                      : "text-xs text-sf-text-secondary dark:text-zinc-400"
+                  }
+                >
+                  {appendSummary
+                    ? `This priority also adds: ${appendSummary}`
+                    : "This priority has no append"}
                 </p>
                 {supplierSku ? (
                   <p className="text-xs text-sf-text-secondary dark:text-zinc-400">

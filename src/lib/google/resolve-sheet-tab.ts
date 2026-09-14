@@ -28,6 +28,9 @@ export async function resolveSheetTitleByGid(
   return tab.tabTitle;
 }
 
+const WORKBOOK_TAB_LIST_FIELDS =
+  "sheets(properties(sheetId,title,hidden,gridProperties(rowCount,columnCount)))";
+
 export async function resolveSheetTabByGid(
   spreadsheetId: string,
   gid: number,
@@ -36,6 +39,7 @@ export async function resolveSheetTabByGid(
   const res = await sheets.spreadsheets.get({
     spreadsheetId,
     includeGridData: false,
+    fields: WORKBOOK_TAB_LIST_FIELDS,
   });
   const match = (res.data.sheets ?? []).find(
     (s) => s.properties?.sheetId === gid,
@@ -56,36 +60,45 @@ export async function resolveSheetTabByGid(
   };
 }
 
+export async function listWorkbookTabs(spreadsheetId: string): Promise<ResolvedSheetTab[]> {
+  const { sheets } = getSheetsApiClient();
+  const res = await sheets.spreadsheets.get({
+    spreadsheetId,
+    includeGridData: false,
+    fields: WORKBOOK_TAB_LIST_FIELDS,
+  });
+  return (res.data.sheets ?? []).flatMap((s) => {
+    const props = s.properties;
+    if (props?.sheetId == null || !props.title) return [];
+    const grid = props.gridProperties;
+    return [
+      {
+        tabTitle: props.title,
+        gid: props.sheetId,
+        gridRowCount: grid?.rowCount ?? null,
+        gridColumnCount: grid?.columnCount ?? null,
+      },
+    ];
+  });
+}
+
+export function findWorkbookTab(
+  tabs: ResolvedSheetTab[],
+  requiredTabTitle: string,
+): ResolvedSheetTab | null {
+  return tabs.find((t) => sheetTabTitleMatches(t.tabTitle, requiredTabTitle)) ?? null;
+}
+
 /** Resolve a worksheet by title (case-insensitive, trimmed). */
 export async function resolveSheetTabByTitle(
   spreadsheetId: string,
   requiredTabTitle: string,
 ): Promise<ResolvedSheetTab> {
-  const { sheets } = getSheetsApiClient();
-  const res = await sheets.spreadsheets.get({
-    spreadsheetId,
-    includeGridData: false,
-  });
-  const all = res.data.sheets ?? [];
+  const all = await listWorkbookTabs(spreadsheetId);
+  const match = findWorkbookTab(all, requiredTabTitle);
+  if (match) return match;
 
-  const match = all.find((s) =>
-    sheetTabTitleMatches(String(s.properties?.title ?? ""), requiredTabTitle),
-  );
-
-  if (match?.properties?.sheetId != null && match.properties.title) {
-    const grid = match.properties.gridProperties;
-    return {
-      tabTitle: match.properties.title,
-      gid: match.properties.sheetId,
-      gridRowCount: grid?.rowCount ?? null,
-      gridColumnCount: grid?.columnCount ?? null,
-    };
-  }
-
-  const tabNames = all
-    .map((s) => String(s.properties?.title ?? "").trim())
-    .filter(Boolean);
-
+  const tabNames = all.map((t) => t.tabTitle.trim()).filter(Boolean);
   throw new Error(
     `Worksheet "${requiredTabTitle}" was not found in this workbook (match is case-insensitive). ` +
       `Available tabs: ${tabNames.join(", ") || "(none)"}.`,

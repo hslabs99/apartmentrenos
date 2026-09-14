@@ -123,6 +123,72 @@ function normalizeDraftInheritMeasureLocked(
   return out;
 }
 
+export function emptyDraftAnswer(label: string): ScopeFormDraftAnswer {
+  return {
+    answerid: crypto.randomUUID(),
+    label,
+    attachedQuoteObjectIds: [],
+    attachedObjectTools: {},
+    attachedObjectShowAll: {},
+    attachedObjectShowAllDefault: {},
+    attachedObjectNoCharge: {},
+    attachedObjectForce: {},
+    attachedObjectInheritM2Source: {},
+    attachedObjectInheritMeasureLocked: {},
+    includeOnDemolitionReport: false,
+    defaultToTrue: false,
+    suppressZeroSkuRows: false,
+  };
+}
+
+export function cloneDraftAnswer(source: ScopeFormDraftAnswer): ScopeFormDraftAnswer {
+  const base = source.label.trim() || "Option";
+  const suffix = " (copy)";
+  const label = base.length + suffix.length <= 200 ? `${base}${suffix}` : base.slice(0, 200);
+  return {
+    ...source,
+    answerid: crypto.randomUUID(),
+    label,
+    defaultToTrue: false,
+    attachedQuoteObjectIds: [...source.attachedQuoteObjectIds],
+    attachedObjectTools: { ...source.attachedObjectTools },
+    attachedObjectShowAll: { ...source.attachedObjectShowAll },
+    attachedObjectShowAllDefault: { ...source.attachedObjectShowAllDefault },
+    attachedObjectNoCharge: { ...source.attachedObjectNoCharge },
+    attachedObjectForce: { ...source.attachedObjectForce },
+    attachedObjectInheritM2Source: { ...source.attachedObjectInheritM2Source },
+    attachedObjectInheritMeasureLocked: { ...source.attachedObjectInheritMeasureLocked },
+  };
+}
+
+export function reorderDraftAnswers(
+  answers: ScopeFormDraftAnswer[],
+  draggedId: string,
+  targetId: string,
+): ScopeFormDraftAnswer[] {
+  if (draggedId === targetId) return answers;
+  const from = answers.findIndex((a) => a.answerid === draggedId);
+  const to = answers.findIndex((a) => a.answerid === targetId);
+  if (from < 0 || to < 0) return answers;
+  const next = [...answers];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+export function moveDraftAnswer(
+  answers: ScopeFormDraftAnswer[],
+  answerid: string,
+  direction: -1 | 1,
+): ScopeFormDraftAnswer[] {
+  const from = answers.findIndex((a) => a.answerid === answerid);
+  const to = from + direction;
+  if (from < 0 || to < 0 || to >= answers.length) return answers;
+  const next = [...answers];
+  [next[from], next[to]] = [next[to], next[from]];
+  return next;
+}
+
 export function publicAnswersToDraft(
   answers: ScopeAnswerPublic[],
   quoteById: Map<string, QuoteObjectPublic>,
@@ -130,16 +196,22 @@ export function publicAnswersToDraft(
   return answers.map((a) => {
     let ids = [...(a.attachedQuoteObjectIds ?? [])];
     if (ids.length === 0 && (a.attachedObjectNames?.length ?? 0) > 0) {
-      const names = new Set(
-        a.attachedObjectNames.map((n) => n.trim().toLowerCase()).filter(Boolean),
-      );
+      const byName = new Map<string, string[]>();
       for (const q of quoteById.values()) {
         const n = q.objectname.trim().toLowerCase();
-        if (n && names.has(n)) ids.push(q.id);
+        if (!n) continue;
+        const list = byName.get(n) ?? [];
+        list.push(q.id);
+        byName.set(n, list);
       }
-      for (const name of a.attachedObjectNames ?? []) {
+      for (const name of a.attachedObjectNames) {
         const trimmed = name.trim();
-        if (isSystemScopeObjectId(trimmed)) ids.push(trimmed);
+        if (!trimmed) continue;
+        if (isSystemScopeObjectId(trimmed)) {
+          ids.push(trimmed);
+          continue;
+        }
+        for (const id of byName.get(trimmed.toLowerCase()) ?? []) ids.push(id);
       }
       ids = [...new Set(ids)];
     }

@@ -18,6 +18,7 @@ import {
 /** Shown even when Sheets API credentials fail (live without secret). */
 const FALLBACK_SKU_SHEET_URL = masterPricesSpreadsheetEditUrl(MASTER_PRICES_SKU_TAB_GID);
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { IconChevronDown, IconChevronRight } from "@/components/icons/lightning-icons";
 import { clearLookupsCache } from "@/lib/client/use-lookups";
 import { clearLookupsColoursCache } from "@/lib/client/use-lookups-colours";
 import { consumeNdjsonStream } from "@/lib/client/consume-ndjson-stream";
@@ -32,6 +33,7 @@ import type {
   DataSkusImportSource,
   ImportDataSkusProgress,
 } from "@/lib/server/import-data-skus";
+import type { PrepareDataObjectsProgress } from "@/lib/server/prepare-data-objects";
 import { importLogFromProgress } from "@/lib/client/import-log-from-progress";
 import { DataObjectsTablePanel } from "@/components/data-objects-table-panel";
 import { DataSkusTablePanel } from "@/components/data-skus-table-panel";
@@ -46,7 +48,7 @@ import { ImportSummaryBanner } from "@/components/import-summary-banner";
 import { sfTabStripClass, sfUnderlineTabClass } from "@/lib/sf-tabs";
 import { SKU_DATA_START_ROW_1_BASED, SKU_HEADER_ROW_1_BASED } from "@/lib/google/parse-master-prices-skus";
 import type { ImportLogPublic } from "@/types/import-log-types";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 function elementCoverageWarningClass(message: string): string {
   if (message.includes("element matrix")) {
@@ -120,14 +122,48 @@ type ImportTabInfo = {
   importNonBlankRows: number | null;
 };
 
+function ImportSectionToggle({
+  expanded,
+  onToggle,
+  title,
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+  title: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className="flex w-full items-center gap-2 text-left text-base font-semibold text-sf-text dark:text-zinc-100"
+    >
+      {expanded ? (
+        <IconChevronDown className="h-4 w-4 shrink-0 text-sf-text-weak" />
+      ) : (
+        <IconChevronRight className="h-4 w-4 shrink-0 text-sf-text-weak" />
+      )}
+      <span className="min-w-0 flex-1">{title}</span>
+      <span className="shrink-0 text-xs font-normal text-sf-text-weak dark:text-zinc-500">
+        {expanded ? "Hide details" : "Show details"}
+      </span>
+    </button>
+  );
+}
+
 function formatSkuTabImportCounts(tab: ImportTabInfo): string | null {
-  if (tab.importProductCount == null) return null;
-  const products = tab.importProductCount;
-  const suppliers = tab.importSupplierCount ?? 0;
-  if (suppliers > 0) {
-    return `~${products} product(s) · ~${suppliers} supplier row(s)`;
+  if (tab.importProductCount != null) {
+    const products = tab.importProductCount;
+    const suppliers = tab.importSupplierCount ?? 0;
+    if (suppliers > 0) {
+      return `~${products} product(s) · ~${suppliers} supplier row(s)`;
+    }
+    return `~${products} product(s)`;
   }
-  return `~${products} product(s)`;
+  if (tab.gridRowCount != null) {
+    return `~${tab.gridRowCount} grid rows`;
+  }
+  return null;
 }
 
 const DATA_SKUS_IMPORT_ENDPOINTS: Record<DataSkusImportSource, string> = {
@@ -144,6 +180,15 @@ const DATA_SKUS_SOURCE_LABEL: Record<DataSkusImportSource, string> = {
 
 type SkuImportBatchMode = "single" | "start" | "continue";
 
+const SHEETS_CONNECT_TIMEOUT_MS = 12_000;
+
+function isAbortError(e: unknown): boolean {
+  return (
+    (e instanceof DOMException && e.name === "AbortError") ||
+    (e instanceof Error && e.name === "AbortError")
+  );
+}
+
 function phaseLabel(phase: ImportDataSkusProgress["phase"]): string {
   switch (phase) {
     case "resolving_tab":
@@ -156,6 +201,31 @@ function phaseLabel(phase: ImportDataSkusProgress["phase"]): string {
       return "Clear collection";
     case "writing":
       return "Write Firestore";
+    case "done":
+      return "Done";
+    case "error":
+      return "Error";
+    default:
+      return phase;
+  }
+}
+
+function preparePhaseLabel(phase: PrepareDataObjectsProgress["phase"]): string {
+  switch (phase) {
+    case "loading":
+      return "Load sources";
+    case "pruning_data_objects":
+      return "Remove stale data objects";
+    case "writing_data_objects":
+      return "Merge data objects";
+    case "labour_skus":
+      return "Labour SKUs";
+    case "quote_objects":
+      return "Validate quote objects";
+    case "pruning_quote_objects":
+      return "Remove stale quote objects";
+    case "lookups":
+      return "Category lookups";
     case "done":
       return "Done";
     case "error":
@@ -207,6 +277,9 @@ export function ImportMasterPricesPanel() {
     null,
   );
   const [preparingObjects, setPreparingObjects] = useState(false);
+  const [prepareProgress, setPrepareProgress] = useState<PrepareDataObjectsProgress | null>(
+    null,
+  );
   const [prepareResult, setPrepareResult] = useState<{
     distinctFromSkus: number;
     distinctFromLabourRates: number;
@@ -218,18 +291,26 @@ export function ImportMasterPricesPanel() {
     removedDataObjects: number;
     quoteObjectsCreated: number;
     quoteObjectsUpdated: number;
+    quoteObjectsSkipped: number;
     removedQuoteObjects: number;
     objectCategoryLookupsCreated: number;
     objectCategoryLookupsAlreadyPresent: number;
   } | null>(null);
   /** Prepare Objects: drop data_objects not derived from current data_skus or data_labourrates. */
-  const [removeDataObjectsNotInSkus, setRemoveDataObjectsNotInSkus] = useState(false);
+  const [removeDataObjectsNotInSkus, setRemoveDataObjectsNotInSkus] = useState(true);
   /** Prepare Objects: drop SKU-pipeline quote_objects with no matching data_objects row. */
   const [removeQuoteObjectsNotInDataObjects, setRemoveQuoteObjectsNotInDataObjects] =
-    useState(false);
+    useState(true);
   const [prepareError, setPrepareError] = useState<string | null>(null);
   const [clearingObjects, setClearingObjects] = useState(false);
   const [clearObjectsConfirmOpen, setClearObjectsConfirmOpen] = useState(false);
+  const [clearObjectsAck, setClearObjectsAck] = useState(false);
+  const [skuSectionExpanded, setSkuSectionExpanded] = useState(false);
+  const [supportingSectionExpanded, setSupportingSectionExpanded] = useState(false);
+  const [objectsSectionExpanded, setObjectsSectionExpanded] = useState(false);
+  const [systemAdminUnlocked, setSystemAdminUnlocked] = useState(false);
+  const [importTabLoading, setImportTabLoading] = useState(true);
+  const [sheetsConnectElapsedSec, setSheetsConnectElapsedSec] = useState(0);
   const [clearObjectsResult, setClearObjectsResult] = useState<{ deleted: number } | null>(null);
   const [clearObjectsError, setClearObjectsError] = useState<string | null>(null);
   const [importingLists, setImportingLists] = useState(false);
@@ -339,27 +420,18 @@ export function ImportMasterPricesPanel() {
   /** After full SKU import: delete data_skus left with isCurrent=false (not on sheet). */
   const [removeProductsNotInSheet, setRemoveProductsNotInSheet] = useState(true);
   const [importSkuAllSelected, setImportSkuAllSelected] = useState(true);
-  const [importBuildingSelected, setImportBuildingSelected] = useState(false);
-  const [importPaintingSelected, setImportPaintingSelected] = useState(false);
-  const [importLabourRatesSelected, setImportLabourRatesSelected] = useState(false);
-  const [importBuildingElementsSelected, setImportBuildingElementsSelected] = useState(false);
-  const [importPaintingElementsSelected, setImportPaintingElementsSelected] = useState(false);
-  const [importCascadesSelected, setImportCascadesSelected] = useState(false);
-  const [importSupplierDiscountsSelected, setImportSupplierDiscountsSelected] = useState(false);
-  const [importListsSelected, setImportListsSelected] = useState(false);
-  const [importIncrementalLabourSelected, setImportIncrementalLabourSelected] = useState(false);
+  const [importBuildingSelected, setImportBuildingSelected] = useState(true);
+  const [importPaintingSelected, setImportPaintingSelected] = useState(true);
+  const [importLabourRatesSelected, setImportLabourRatesSelected] = useState(true);
+  const [importBuildingElementsSelected, setImportBuildingElementsSelected] = useState(true);
+  const [importPaintingElementsSelected, setImportPaintingElementsSelected] = useState(true);
+  const [importCascadesSelected, setImportCascadesSelected] = useState(true);
+  const [importSupplierDiscountsSelected, setImportSupplierDiscountsSelected] = useState(true);
+  const [importListsSelected, setImportListsSelected] = useState(true);
+  const [importIncrementalLabourSelected, setImportIncrementalLabourSelected] = useState(true);
   const [listsTabInfo, setListsTabInfo] = useState<ImportTabInfo | null>(null);
   const [listsTabError, setListsTabError] = useState<string | null>(null);
   const importing = activeImportSource != null;
-  const importBusy =
-    importing ||
-    importingLists ||
-    importingCascades ||
-    importingLabourRates ||
-    importingBuildingElements ||
-    importingPaintingElements ||
-    importingSupplierDiscounts ||
-    importingObjectLabourRates;
   const [importProgress, setImportProgress] = useState<ImportDataSkusProgress | null>(null);
   const [importLog, setImportLog] = useState<ImportDataSkusProgress[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
@@ -385,12 +457,28 @@ export function ImportMasterPricesPanel() {
   );
   const [supplierDiscountsTabError, setSupplierDiscountsTabError] = useState<string | null>(null);
   const [importTabError, setImportTabError] = useState<string | null>(null);
+  const sheetsConnecting = importTabLoading && !importTabInfo && !importTabError;
+  const importBusy =
+    importing ||
+    importingLists ||
+    importingCascades ||
+    importingLabourRates ||
+    importingBuildingElements ||
+    importingPaintingElements ||
+    importingSupplierDiscounts ||
+    importingObjectLabourRates ||
+    sheetsConnecting;
   const importAnchorRef = useRef<HTMLDivElement>(null);
   const logContainerRef = useRef<HTMLDivElement>(null);
+  const importTabConnectGenRef = useRef(0);
 
-  const loadImportTab = useCallback(async () => {
+  const loadImportTab = useCallback(async (signal: AbortSignal) => {
+    const gen = ++importTabConnectGenRef.current;
+    setImportTabLoading(true);
+    setSheetsConnectElapsedSec(0);
+    const stillCurrent = () => gen === importTabConnectGenRef.current;
     try {
-      const res = await fetch("/api/import-master-prices/import-tab");
+      const res = await fetch("/api/import-master-prices/import-tab", { signal });
       const data = await readApiJson<{
         skuAll?: ImportTabInfo;
         building?: ImportTabInfo | null;
@@ -414,6 +502,7 @@ export function ImportMasterPricesPanel() {
         error?: string;
         spreadsheet?: { id?: string; url?: string };
       }>(res);
+      if (!stillCurrent()) return;
       if (!res.ok || data.error || !data.skuAll) {
         setImportTabError(data.error ?? `Import tab not found (${res.status})`);
         setImportTabInfo(null);
@@ -435,6 +524,15 @@ export function ImportMasterPricesPanel() {
         setListsTabError(null);
         setIncrementalLabourProductsTabInfo(null);
         setIncrementalLabourProductsTabError(null);
+        setImportBuildingSelected(false);
+        setImportPaintingSelected(false);
+        setImportLabourRatesSelected(false);
+        setImportBuildingElementsSelected(false);
+        setImportPaintingElementsSelected(false);
+        setImportCascadesSelected(false);
+        setImportSupplierDiscountsSelected(false);
+        setImportListsSelected(false);
+        setImportIncrementalLabourSelected(false);
         return;
       }
       setImportTabError(null);
@@ -457,8 +555,25 @@ export function ImportMasterPricesPanel() {
       setListsTabError(data.listsError ?? null);
       setIncrementalLabourProductsTabInfo(data.incrementalLabourProducts ?? null);
       setIncrementalLabourProductsTabError(data.incrementalLabourProductsError ?? null);
+      if (!data.building) setImportBuildingSelected(false);
+      if (!data.painting) setImportPaintingSelected(false);
+      if (!data.labour) setImportLabourRatesSelected(false);
+      if (!data.buildingElements) setImportBuildingElementsSelected(false);
+      if (!data.paintingElements) setImportPaintingElementsSelected(false);
+      if (!data.cascades) setImportCascadesSelected(false);
+      if (!data.supplierDiscounts) setImportSupplierDiscountsSelected(false);
+      if (!data.lists) setImportListsSelected(false);
+      if (!data.incrementalLabourProducts) setImportIncrementalLabourSelected(false);
     } catch (e) {
-      setImportTabError(e instanceof Error ? e.message : String(e));
+      if (isAbortError(e) && !stillCurrent()) return;
+      if (!stillCurrent()) return;
+      setImportTabError(
+        isAbortError(e)
+          ? "Connecting to pricing sheets timed out. Refresh the page to try again."
+          : e instanceof Error
+            ? e.message
+            : String(e),
+      );
       setImportTabInfo(null);
       setBuildingTabInfo(null);
       setBuildingTabError(null);
@@ -478,6 +593,17 @@ export function ImportMasterPricesPanel() {
       setListsTabError(null);
       setIncrementalLabourProductsTabInfo(null);
       setIncrementalLabourProductsTabError(null);
+      setImportBuildingSelected(false);
+      setImportPaintingSelected(false);
+      setImportLabourRatesSelected(false);
+      setImportBuildingElementsSelected(false);
+      setImportPaintingElementsSelected(false);
+      setImportCascadesSelected(false);
+      setImportSupplierDiscountsSelected(false);
+      setImportListsSelected(false);
+      setImportIncrementalLabourSelected(false);
+    } finally {
+      if (stillCurrent()) setImportTabLoading(false);
     }
   }, []);
 
@@ -533,8 +659,28 @@ export function ImportMasterPricesPanel() {
   );
 
   useEffect(() => {
-    void loadImportTab();
+    const ac = new AbortController();
+    const timeoutId = window.setTimeout(() => ac.abort(), SHEETS_CONNECT_TIMEOUT_MS);
+    void loadImportTab(ac.signal);
+    return () => {
+      window.clearTimeout(timeoutId);
+      importTabConnectGenRef.current += 1;
+      ac.abort();
+    };
   }, [loadImportTab]);
+
+  useEffect(() => {
+    if (!sheetsConnecting) return;
+    const startedAt = Date.now();
+    const id = window.setInterval(() => {
+      setSheetsConnectElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [sheetsConnecting]);
+
+  useEffect(() => {
+    if (!clearObjectsConfirmOpen) setClearObjectsAck(false);
+  }, [clearObjectsConfirmOpen]);
 
   const runTest = useCallback(async () => {
     setTestLoading(true);
@@ -1076,6 +1222,11 @@ export function ImportMasterPricesPanel() {
     setPreparingObjects(true);
     setPrepareError(null);
     setPrepareResult(null);
+    setPrepareProgress({
+      phase: "loading",
+      message: "Starting…",
+      percent: 0,
+    });
     try {
       const res = await fetch("/api/data-objects/prepare", {
         method: "POST",
@@ -1085,39 +1236,33 @@ export function ImportMasterPricesPanel() {
           removeQuoteObjectsNotInDataObjects,
         }),
       });
-      const data = await readApiJson<{
-        ok?: boolean;
-        distinctFromSkus?: number;
-        distinctFromLabourRates?: number;
-        created?: number;
-        mergedExisting?: number;
-        skippedIncomplete?: number;
-        labourSkusCreated?: number;
-        labourSkusUpdated?: number;
-        removedDataObjects?: number;
-        quoteObjectsCreated?: number;
-        quoteObjectsUpdated?: number;
-        removedQuoteObjects?: number;
-        objectCategoryLookupsCreated?: number;
-        objectCategoryLookupsAlreadyPresent?: number;
-        error?: string;
-      }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Prepare objects failed");
-      setPrepareResult({
-        distinctFromSkus: data.distinctFromSkus ?? 0,
-        distinctFromLabourRates: data.distinctFromLabourRates ?? 0,
-        created: data.created ?? 0,
-        mergedExisting: data.mergedExisting ?? 0,
-        skippedIncomplete: data.skippedIncomplete ?? 0,
-        labourSkusCreated: data.labourSkusCreated ?? 0,
-        labourSkusUpdated: data.labourSkusUpdated ?? 0,
-        removedDataObjects: data.removedDataObjects ?? 0,
-        quoteObjectsCreated: data.quoteObjectsCreated ?? 0,
-        quoteObjectsUpdated: data.quoteObjectsUpdated ?? 0,
-        removedQuoteObjects: data.removedQuoteObjects ?? 0,
-        objectCategoryLookupsCreated: data.objectCategoryLookupsCreated ?? 0,
-        objectCategoryLookupsAlreadyPresent: data.objectCategoryLookupsAlreadyPresent ?? 0,
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(
+          text.trim()
+            ? `Prepare objects failed (${res.status}): ${text.slice(0, 300)}`
+            : `Prepare objects failed (${res.status} ${res.statusText})`,
+        );
+      }
+      let sawDone = false;
+      let streamError: string | null = null;
+      await consumeNdjsonStream<PrepareDataObjectsProgress>(res, (event) => {
+        setPrepareProgress(event);
+        if (event.phase === "error") {
+          streamError = event.error ?? event.message;
+          setPrepareError(streamError);
+        }
+        if (event.phase === "done" && event.result) {
+          sawDone = true;
+          setPrepareResult(event.result);
+        }
       });
+      if (streamError) {
+        throw new Error(streamError);
+      }
+      if (!sawDone) {
+        throw new Error("Prepare objects stopped before completing");
+      }
       clearLookupsCache();
       setDataObjectsRefreshKey((k) => k + 1);
       setPageTab("data-objects");
@@ -1364,6 +1509,29 @@ export function ImportMasterPricesPanel() {
 
   return (
     <div className="flex flex-col gap-6">
+      {pageTab === "import" && sheetsConnecting ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/25 p-4"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="flex min-w-[18rem] items-center gap-4 rounded-lg border border-sf-border bg-sf-surface px-5 py-4 shadow-xl dark:border-zinc-600 dark:bg-zinc-900">
+            <span
+              className="inline-block h-6 w-6 shrink-0 animate-spin rounded-full border-2 border-sf-brand border-t-transparent dark:border-[#58a9f5] dark:border-t-transparent"
+              aria-hidden
+            />
+            <div>
+              <p className="text-sm font-medium text-sf-text dark:text-zinc-100">
+                Please wait, connecting to pricing sheets.
+              </p>
+              <p className="mt-0.5 tabular-nums text-xs text-sf-text-weak dark:text-zinc-400">
+                {sheetsConnectElapsedSec}s
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <header>
         <h1 className="text-2xl font-normal tracking-tight text-sf-text dark:text-zinc-50">
           Import Master Prices
@@ -1421,7 +1589,9 @@ export function ImportMasterPricesPanel() {
       {pageTab === "data-objects" ? (
         <DataObjectsTablePanel
           refreshKey={dataObjectsRefreshKey}
-          onRequestEmpty={() => setClearObjectsConfirmOpen(true)}
+          onRequestEmpty={
+            systemAdminUnlocked ? () => setClearObjectsConfirmOpen(true) : undefined
+          }
           emptying={clearingObjects}
         />
       ) : null}
@@ -1437,11 +1607,33 @@ export function ImportMasterPricesPanel() {
         {importTabError ? (
           <p className="text-sm text-red-800 dark:text-red-300">{importTabError}</p>
         ) : null}
+        {!importTabError && importTabInfo ? (
+          <div
+            className="rounded-lg border-2 border-green-500 bg-green-50 px-5 py-4 dark:border-green-500/80 dark:bg-green-950/40"
+            role="status"
+          >
+            <p className="text-xl font-bold tracking-tight text-green-800 dark:text-green-300">
+              Connected — ready to import
+            </p>
+            <p className="mt-1 text-sm text-green-800/90 dark:text-green-200/90">
+              Pricing sheets are available. It is safe to run SKU, supporting, blinds, and objects
+              imports.
+            </p>
+          </div>
+        ) : null}
 
         <section className="flex flex-col gap-3 rounded-lg border-2 border-sf-brand/30 bg-sf-page px-4 py-4 dark:border-[#58a9f5]/30 dark:bg-zinc-900/60">
-          <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">
-            SKU data → <code className="text-xs font-normal">data_skus</code>
-          </h2>
+          <ImportSectionToggle
+            expanded={skuSectionExpanded}
+            onToggle={() => setSkuSectionExpanded((v) => !v)}
+            title={
+              <>
+                SKU data → <code className="text-xs font-normal">data_skus</code>
+              </>
+            }
+          />
+          {skuSectionExpanded ? (
+            <>
           <p className="text-xs text-sf-text-weak dark:text-zinc-500">
             Populates product rows and suppliers. Run <strong>Prepare Objects</strong> afterward to
             build <code className="text-xs">data_objects</code>.
@@ -1613,6 +1805,8 @@ export function ImportMasterPricesPanel() {
               </span>
             </span>
           </label>
+            </>
+          ) : null}
 
           <div className="flex flex-wrap gap-3">
             <button
@@ -1633,9 +1827,13 @@ export function ImportMasterPricesPanel() {
         </section>
 
         <section className="flex flex-col gap-3 rounded-lg border border-sf-border bg-sf-page px-4 py-4 dark:border-zinc-700 dark:bg-zinc-900/60">
-          <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">
-            Supporting data
-          </h2>
+          <ImportSectionToggle
+            expanded={supportingSectionExpanded}
+            onToggle={() => setSupportingSectionExpanded((v) => !v)}
+            title="Supporting data"
+          />
+          {supportingSectionExpanded ? (
+            <>
           <p className="text-xs text-sf-text-weak dark:text-zinc-500">
             Lookup tables, labour rates, cascades, supplier discounts, and incremental labour products
             — separate from the SKU product catalog.
@@ -1986,6 +2184,8 @@ export function ImportMasterPricesPanel() {
               )}
             </span>
           </label>
+            </>
+          ) : null}
 
           <div className="flex flex-wrap gap-3">
             <button
@@ -2047,7 +2247,7 @@ export function ImportMasterPricesPanel() {
           </p>
         ) : null}
 
-        <section className="flex flex-col gap-3 border-t border-sf-border pt-4 dark:border-zinc-700">
+        <section className="flex flex-col gap-3 rounded-lg border-2 border-sf-brand/30 bg-sf-page px-4 py-4 dark:border-[#58a9f5]/30 dark:bg-zinc-900/60">
           <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">
             Blinds retail price workbook
           </h2>
@@ -2061,6 +2261,29 @@ export function ImportMasterPricesPanel() {
             replaced on import.
           </p>
           <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => void runImportBlinds()}
+              disabled={
+                importing ||
+                testLoading ||
+                testingBlinds ||
+                importingBlinds ||
+                syncingBlindsQuoteObjects ||
+                preparingObjects ||
+                importingLists ||
+                importingCascades ||
+                importingLabourRates ||
+                importingBuildingElements ||
+              importingPaintingElements ||
+                importingSupplierDiscounts ||
+                importingObjectLabourRates ||
+                importTabLoading
+              }
+              className={sfPrimaryToolbarButton}
+            >
+              {importingBlinds ? "Importing…" : "Import blinds → Firestore"}
+            </button>
             <a
               href={blindsPricesSpreadsheetEditUrl()}
               target="_blank"
@@ -2085,33 +2308,12 @@ export function ImportMasterPricesPanel() {
                 importingBuildingElements ||
               importingPaintingElements ||
                 importingSupplierDiscounts ||
-                importingObjectLabourRates
+                importingObjectLabourRates ||
+                importTabLoading
               }
               className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
             >
               {testingBlinds ? "Scanning tabs…" : "Test parse blinds workbook"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void runImportBlinds()}
-              disabled={
-                importing ||
-                testLoading ||
-                testingBlinds ||
-                importingBlinds ||
-                syncingBlindsQuoteObjects ||
-                preparingObjects ||
-                importingLists ||
-                importingCascades ||
-                importingLabourRates ||
-                importingBuildingElements ||
-              importingPaintingElements ||
-                importingSupplierDiscounts ||
-                importingObjectLabourRates
-              }
-              className={sfPrimaryToolbarButton}
-            >
-              {importingBlinds ? "Importing…" : "Import blinds → Firestore"}
             </button>
             <button
               type="button"
@@ -2129,7 +2331,8 @@ export function ImportMasterPricesPanel() {
                 importingBuildingElements ||
               importingPaintingElements ||
                 importingSupplierDiscounts ||
-                importingObjectLabourRates
+                importingObjectLabourRates ||
+                importTabLoading
               }
               className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
             >
@@ -2221,12 +2424,13 @@ export function ImportMasterPricesPanel() {
         </section>
 
         <section className="flex flex-col gap-3 rounded-lg border-2 border-sf-brand/30 bg-sf-page px-4 py-4 dark:border-[#58a9f5]/30 dark:bg-zinc-900/60">
-          <h3 className="text-sm font-semibold text-sf-text dark:text-zinc-100">
-            Create objects — <code className="text-xs font-normal">data_skus</code> +{" "}
-            <code className="text-xs font-normal">data_labourrates</code> →{" "}
-            <code className="text-xs font-normal">data_objects</code> →{" "}
-            <code className="text-xs font-normal">quote_objects</code>
-          </h3>
+          <ImportSectionToggle
+            expanded={objectsSectionExpanded}
+            onToggle={() => setObjectsSectionExpanded((v) => !v)}
+            title="Objects"
+          />
+          {objectsSectionExpanded ? (
+            <>
           <p className="text-xs text-sf-text-weak dark:text-zinc-500">
             <strong>Prepare Objects</strong> merges distinct category + product type rows from SKUs
             and every row from <code className="text-xs">data_labourrates</code> (product type =
@@ -2275,27 +2479,9 @@ export function ImportMasterPricesPanel() {
               </span>
             </span>
           </label>
+            </>
+          ) : null}
           <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={() => setClearObjectsConfirmOpen(true)}
-            disabled={
-              importing ||
-              testLoading ||
-              preparingObjects ||
-              clearingObjects ||
-              importingLists ||
-              importingCascades ||
-              importingLabourRates ||
-              importingBuildingElements ||
-              importingPaintingElements ||
-              importingSupplierDiscounts ||
-              importingObjectLabourRates
-            }
-            className={`${sfNeutralToolbarButton} min-h-11 text-red-700 dark:text-red-400`}
-          >
-            {clearingObjects ? "Emptying…" : "Empty data_objects"}
-          </button>
           <button
             type="button"
             onClick={() => void runPrepareObjects()}
@@ -2310,13 +2496,92 @@ export function ImportMasterPricesPanel() {
               importingBuildingElements ||
               importingPaintingElements ||
               importingSupplierDiscounts ||
-              importingObjectLabourRates
+              importingObjectLabourRates ||
+              importTabLoading
             }
-            className="inline-flex min-h-11 items-center justify-center rounded border border-sf-border bg-sf-surface px-4 py-2 text-sm font-normal text-sf-brand hover:bg-sf-page dark:border-zinc-600 dark:bg-zinc-900 dark:text-[#58a9f5] dark:hover:bg-zinc-800"
+            className={sfPrimaryToolbarButton}
           >
-            {preparingObjects ? "Preparing…" : "Prepare Objects"}
+            {preparingObjects
+              ? prepareProgress?.phase === "quote_objects" && prepareProgress.total
+                ? `Preparing… ${Math.min((prepareProgress.done ?? 0) + 1, prepareProgress.total)}/${prepareProgress.total}`
+                : prepareProgress
+                  ? `Preparing… ${prepareProgress.percent}%`
+                  : "Preparing…"
+              : "Prepare Objects"}
           </button>
           </div>
+          {preparingObjects || prepareProgress ? (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <span className="font-medium text-sf-text dark:text-zinc-200">
+                  {prepareProgress
+                    ? `${preparePhaseLabel(prepareProgress.phase)} — ${prepareProgress.message}`
+                    : "Starting…"}
+                </span>
+                <span className="tabular-nums text-sf-text-secondary dark:text-zinc-400">
+                  {prepareProgress?.percent ?? 0}%
+                </span>
+              </div>
+              <div
+                className="h-3 overflow-hidden rounded-full bg-sf-page dark:bg-zinc-800"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={prepareProgress?.percent ?? 0}
+              >
+                <div
+                  className="h-full bg-sf-brand transition-[width] duration-300 ease-out dark:bg-[#58a9f5]"
+                  style={{ width: `${prepareProgress?.percent ?? 0}%` }}
+                />
+              </div>
+              {prepareProgress?.phase === "quote_objects" && prepareProgress.total != null ? (
+                <p className="text-xs text-sf-text-secondary dark:text-zinc-400">
+                  Quote objects {Math.min((prepareProgress.done ?? 0) + 1, prepareProgress.total)} /{" "}
+                  {prepareProgress.total}
+                  {` · ${prepareProgress.quoteObjectsSkipped ?? 0} already exist, ${prepareProgress.quoteObjectsCreated ?? 0} created`}
+                </p>
+              ) : null}
+              {prepareProgress?.phase === "writing_data_objects" &&
+              prepareProgress.total != null ? (
+                <p className="text-xs text-sf-text-secondary dark:text-zinc-400">
+                  Data objects {Math.min((prepareProgress.done ?? 0) + 1, prepareProgress.total)} /{" "}
+                  {prepareProgress.total}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {prepareError ? (
+            <p className="text-sm text-red-800 dark:text-red-300">{prepareError}</p>
+          ) : null}
+          {prepareResult ? (
+            <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
+              Prepare objects: {prepareResult.distinctFromSkus} distinct SKU line(s),{" "}
+              {prepareResult.distinctFromLabourRates} labour rate line(s) —{" "}
+              {prepareResult.created} data_object(s) added, {prepareResult.mergedExisting} merged
+              {prepareResult.removedDataObjects > 0
+                ? `, ${prepareResult.removedDataObjects} data_object(s) removed (not in sources)`
+                : ""}
+              {prepareResult.quoteObjectsCreated > 0 ||
+              prepareResult.quoteObjectsSkipped > 0 ||
+              prepareResult.quoteObjectsUpdated > 0
+                ? ` · quote_objects: ${prepareResult.quoteObjectsCreated} created, ${prepareResult.quoteObjectsSkipped} already exist`
+                : ""}
+              {prepareResult.removedQuoteObjects > 0
+                ? `, ${prepareResult.removedQuoteObjects} quote_object(s) removed (not in data_objects)`
+                : ""}
+              {prepareResult.labourSkusCreated > 0 || prepareResult.labourSkusUpdated > 0
+                ? ` · labour SKUs: ${prepareResult.labourSkusCreated} added, ${prepareResult.labourSkusUpdated} updated`
+                : ""}
+              {prepareResult.skippedIncomplete > 0
+                ? ` · ${prepareResult.skippedIncomplete} source row(s) missing required fields`
+                : ""}
+              {prepareResult.objectCategoryLookupsCreated > 0 ||
+              prepareResult.objectCategoryLookupsAlreadyPresent > 0
+                ? ` · ObjectCategory lookups: ${prepareResult.objectCategoryLookupsCreated} added, ${prepareResult.objectCategoryLookupsAlreadyPresent} already present`
+                : ""}
+              .
+            </p>
+          ) : null}
         </section>
 
         {importLabourRatesError ? (
@@ -2445,47 +2710,6 @@ export function ImportMasterPricesPanel() {
           </div>
         ) : null}
 
-        {clearObjectsError ? (
-          <p className="text-sm text-red-800 dark:text-red-300">{clearObjectsError}</p>
-        ) : null}
-        {clearObjectsResult ? (
-          <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
-            Emptied <code className="text-xs">data_objects</code> — {clearObjectsResult.deleted}{" "}
-            row(s) deleted. Run <strong>Prepare Objects</strong> to rebuild from SKUs.
-          </p>
-        ) : null}
-
-        {prepareError ? (
-          <p className="text-sm text-red-800 dark:text-red-300">{prepareError}</p>
-        ) : null}
-        {prepareResult ? (
-          <p className="text-sm text-sf-text-secondary dark:text-zinc-400" role="status">
-            Prepare objects: {prepareResult.distinctFromSkus} distinct SKU line(s),{" "}
-            {prepareResult.distinctFromLabourRates} labour rate line(s) —{" "}
-            {prepareResult.created} data_object(s) added, {prepareResult.mergedExisting} merged
-            {prepareResult.removedDataObjects > 0
-              ? `, ${prepareResult.removedDataObjects} data_object(s) removed (not in sources)`
-              : ""}
-            {prepareResult.quoteObjectsCreated > 0 || prepareResult.quoteObjectsUpdated > 0
-              ? ` · quote_objects: ${prepareResult.quoteObjectsCreated} created, ${prepareResult.quoteObjectsUpdated} updated`
-              : ""}
-            {prepareResult.removedQuoteObjects > 0
-              ? `, ${prepareResult.removedQuoteObjects} quote_object(s) removed (not in data_objects)`
-              : ""}
-            {prepareResult.labourSkusCreated > 0 || prepareResult.labourSkusUpdated > 0
-              ? ` · labour SKUs: ${prepareResult.labourSkusCreated} added, ${prepareResult.labourSkusUpdated} updated`
-              : ""}
-            {prepareResult.skippedIncomplete > 0
-              ? ` · ${prepareResult.skippedIncomplete} source row(s) missing required fields`
-              : ""}
-            {prepareResult.objectCategoryLookupsCreated > 0 ||
-            prepareResult.objectCategoryLookupsAlreadyPresent > 0
-              ? ` · ObjectCategory lookups: ${prepareResult.objectCategoryLookupsCreated} added, ${prepareResult.objectCategoryLookupsAlreadyPresent} already present`
-              : ""}
-            .
-          </p>
-        ) : null}
-
         {importing || importProgress ? (
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between gap-2 text-sm">
@@ -2562,10 +2786,59 @@ export function ImportMasterPricesPanel() {
 
       {displayLog ? <ImportLogAuditPanel log={displayLog} /> : null}
 
+      {systemAdminUnlocked ? (
       <section className={`${sfDataSurface} flex flex-col gap-4 p-4 md:p-5`}>
         <h2 className="text-base font-semibold text-sf-text dark:text-zinc-100">
-          Workbook access test
+          System Admin
         </h2>
+        <section className="flex flex-col gap-3 rounded-lg border-2 border-red-300 bg-red-50/70 px-4 py-4 dark:border-red-900/70 dark:bg-red-950/25">
+          <h3 className="text-sm font-semibold text-red-900 dark:text-red-200">
+            Empty data_objects
+          </h3>
+          <p className="text-xs text-red-900/90 dark:text-red-200/90">
+            <strong>Do not use this as part of a typical import.</strong> Emptying{" "}
+            <code className="text-xs">data_objects</code> permanently deletes every object row so
+            you can rebuild after key or schema changes. Normal importing upserts sheet data and
+            then <strong>Prepare Objects</strong> merges into existing rows — emptying first is not
+            required and will break quote object links until you rebuild.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => setClearObjectsConfirmOpen(true)}
+              disabled={
+                importing ||
+                testLoading ||
+                preparingObjects ||
+                clearingObjects ||
+                importingLists ||
+                importingCascades ||
+                importingLabourRates ||
+                importingBuildingElements ||
+                importingPaintingElements ||
+                importingSupplierDiscounts ||
+                importingObjectLabourRates ||
+                importTabLoading
+              }
+              className={`${sfNeutralToolbarButton} min-h-11 text-red-700 dark:text-red-400`}
+            >
+              {clearingObjects ? "Emptying…" : "Empty data_objects"}
+            </button>
+          </div>
+          {clearObjectsError ? (
+            <p className="text-sm text-red-800 dark:text-red-300">{clearObjectsError}</p>
+          ) : null}
+          {clearObjectsResult ? (
+            <p className="text-sm text-red-900/90 dark:text-red-200/90" role="status">
+              Emptied <code className="text-xs">data_objects</code> — {clearObjectsResult.deleted}{" "}
+              row(s) deleted. Run <strong>Prepare Objects</strong> to rebuild from SKUs. Recreate
+              quote objects and scopes as needed.
+            </p>
+          ) : null}
+        </section>
+        <h3 className="text-sm font-semibold text-sf-text dark:text-zinc-100">
+          Workbook access test
+        </h3>
         <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
           <code className="text-xs">{MASTER_PRICES_SKU_TAB_TITLE}</code>,{" "}
           <code className="text-xs">{MASTER_PRICES_BUILDING_TAB_TITLE}</code>, and{" "}
@@ -2724,20 +2997,77 @@ export function ImportMasterPricesPanel() {
           </section>
         ) : null}
       </section>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setSystemAdminUnlocked(true)}
+          className="self-start text-xs text-sf-text-weak underline-offset-2 hover:text-sf-text hover:underline dark:text-zinc-500 dark:hover:text-zinc-300"
+        >
+          System Admin
+        </button>
+      )}
         </>
       ) : null}
 
       <ConfirmDialog
         open={clearObjectsConfirmOpen}
-        title="Empty data_objects?"
-        description="Deletes every row in the data_objects collection (collection metadata is kept). Quote object links on deleted rows are removed. Use this before rebuilding with Prepare Objects after key changes. This cannot be undone."
-        confirmLabel="Empty table"
+        title="Permanently empty data_objects?"
+        description={
+          <div className="space-y-3">
+            <p className="font-medium text-red-800 dark:text-red-300">
+              This is a system-admin action. It is not part of a normal Master Prices import.
+            </p>
+            <p>
+              Emptying deletes <strong>every row</strong> in the{" "}
+              <code className="text-xs">data_objects</code> collection (collection metadata is
+              kept). There is no undo and no recycle bin.
+            </p>
+            <p>Consequences:</p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li>
+                Quote object links stored on those rows are removed. Matching{" "}
+                <code className="text-xs">quote_objects</code> are not deleted, but they will no
+                longer have a source data object until you rebuild.
+              </li>
+              <li>
+                Scopes, checklists, and quotes that depend on those objects can be left inconsistent
+                until you run <strong>Prepare Objects</strong> and recreate quote objects / scopes as
+                needed.
+              </li>
+              <li>
+                Typical importing upserts SKUs and supporting data, then{" "}
+                <strong>Prepare Objects</strong> merges into existing rows. You do{" "}
+                <strong>not</strong> empty the table first.
+              </li>
+            </ul>
+            <p>
+              Only use this after object keys or schema have changed and you need a clean rebuild.
+            </p>
+          </div>
+        }
+        confirmLabel="Empty data_objects anyway"
         cancelLabel="Cancel"
         variant="danger"
+        wide
         pending={clearingObjects}
+        confirmDisabled={!clearObjectsAck}
         onCancel={() => setClearObjectsConfirmOpen(false)}
         onConfirm={() => void runClearDataObjects()}
-      />
+      >
+        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2.5 text-sm text-red-950 dark:border-red-900/70 dark:bg-red-950/40 dark:text-red-100">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 shrink-0"
+            checked={clearObjectsAck}
+            disabled={clearingObjects}
+            onChange={(e) => setClearObjectsAck(e.target.checked)}
+          />
+          <span>
+            I understand this cannot be undone, it is not part of a typical import, and I still want
+            to empty <code className="text-xs">data_objects</code>.
+          </span>
+        </label>
+      </ConfirmDialog>
     </div>
   );
 }

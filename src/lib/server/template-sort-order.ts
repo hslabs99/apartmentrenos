@@ -98,18 +98,23 @@ async function commitSortOrderBatch(
   }
 }
 
-/** After POST: renumber all existing 0..n-1, return index for the new document (n). */
-export async function renumberAllAndNextIndex(
+/**
+ * Next `sortOrder` for a newly created row: max existing finite value + 1 (0 if none).
+ * Does not write or reorder existing documents.
+ */
+export async function nextAppendSortOrder(
   db: Firestore,
   collectionName: string,
   isMeta: (id: string) => boolean,
-  secondaryLabel: (data: DocumentData, docId: string) => string,
 ): Promise<number> {
   const snap = await db.collection(collectionName).get();
-  const docs = snap.docs.filter((d) => !isMeta(d.id));
-  const sorted = [...docs].sort((da, db_) => compareTemplateDocs(da, db_, secondaryLabel));
-  await commitSortOrderBatch(db, sorted);
-  return sorted.length;
+  let max = -1;
+  for (const doc of snap.docs) {
+    if (isMeta(doc.id)) continue;
+    const so = doc.data().sortOrder;
+    if (typeof so === "number" && Number.isFinite(so) && so > max) max = so;
+  }
+  return max + 1;
 }
 
 export async function reorderAreaObjectNeighbor(

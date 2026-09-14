@@ -1,6 +1,7 @@
 "use client";
 
 import type { ScopeLineSkuPick } from "@/lib/client/scope-line-sku-match";
+import { formatAppendSlotsSummary } from "@/lib/sku/data-sku-append-slots";
 import {
   useCallback,
   useEffect,
@@ -128,6 +129,7 @@ export function WbSkuHoverCard({
   const supplierSku = pick.supplierSku.trim();
   const linkText = pick.link.trim();
   const href = productHref(linkText);
+  const appendSummary = formatAppendSlotsSummary(pick.appendSlots ?? []);
 
   const card =
     open && coords && typeof document !== "undefined"
@@ -150,6 +152,7 @@ export function WbSkuHoverCard({
               <Detail label="Supplier" value={supplier} />
               <Detail label="Model" value={model} />
               <Detail label="Supplier SKU" value={supplierSku} />
+              <Detail label="Also adds" value={appendSummary} />
               <div className="min-w-0">
                 <dt className="text-[11px] font-semibold uppercase tracking-wide text-sf-text-weak dark:text-zinc-400">
                   Product URL

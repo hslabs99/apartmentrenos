@@ -105,33 +105,52 @@ export async function resolveQuoteObjectLinesForObjectNames(
   objectNames: string[],
   templateAreaDocId: string,
 ): Promise<ScopeCategoryLineSeed[]> {
-  const nameSet = new Set(
-    objectNames.map((n) => n.trim().toLowerCase()).filter(Boolean),
-  );
-  if (nameSet.size === 0) return [];
+  const orderedNames: string[] = [];
+  const nameSet = new Set<string>();
+  for (const raw of objectNames) {
+    const n = raw.trim().toLowerCase();
+    if (!n || nameSet.has(n)) continue;
+    nameSet.add(n);
+    orderedNames.push(n);
+  }
+  if (orderedNames.length === 0) return [];
 
   const snap = await db.collection("quote_objects").get();
-  const candidates: Cand[] = [];
+  const byName = new Map<string, Cand[]>();
 
   for (const doc of snap.docs) {
     if (isQuoteObjectsMetaDocument(doc.id)) continue;
     const data = doc.data() as DocumentData;
     const objectname = String(data.objectname ?? "").trim();
-    if (!objectname || !nameSet.has(objectname.toLowerCase())) continue;
+    const key = objectname.toLowerCase();
+    if (!objectname || !nameSet.has(key)) continue;
     if (!quoteObjectMatchesAreaTags(data, templateAreaDocId)) continue;
 
     const objectid = integerObjectId(data.objectid);
     if (objectid === undefined) continue;
 
-    candidates.push({
+    const list = byName.get(key) ?? [];
+    list.push({
       objectid,
       notes1: String(data.notes1 ?? ""),
       notes2: String(data.notes2 ?? ""),
       sortOrder: numOrNull(data.sortOrder),
     });
+    byName.set(key, list);
   }
 
-  return finalizeQuoteObjectCandidates(candidates);
+  const seen = new Set<number>();
+  const out: ScopeCategoryLineSeed[] = [];
+  for (const name of orderedNames) {
+    const hits = byName.get(name);
+    if (!hits?.length) continue;
+    for (const c of finalizeQuoteObjectCandidates(hits)) {
+      if (seen.has(c.objectid)) continue;
+      seen.add(c.objectid);
+      out.push(c);
+    }
+  }
+  return out;
 }
 
 /** Explicit quote object rows selected on the scope answer. */

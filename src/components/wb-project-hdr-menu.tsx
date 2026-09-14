@@ -6,7 +6,6 @@ import {
   WB_TRADE_REPORTS,
   type WbTradeReportId,
 } from "@/lib/workbench-trade-report";
-import { WB_PAINT_LITRES_REPORT_LABEL } from "@/lib/workbench-paint-litres-report";
 import { WB_PURCHASING_LIST_REPORT_WINDOW_LABEL } from "@/lib/workbench-purchasing-list-report";
 import { useEffect, useRef, useState } from "react";
 
@@ -14,7 +13,6 @@ type Props = {
   projectLabel: string;
   exportDisabled?: boolean;
   onPrintTradeReport: (tradeId: WbTradeReportId) => void;
-  onPrintPaintLitresReport: () => void;
   onOpenPurchasingListReport: () => void;
   onExport: (sortMode: WorkbenchXlsSortMode) => void;
   onAddArea: () => void;
@@ -48,7 +46,6 @@ export function WbProjectHdrMenu({
   projectLabel,
   exportDisabled = false,
   onPrintTradeReport,
-  onPrintPaintLitresReport,
   onOpenPurchasingListReport,
   onExport,
   onAddArea,
@@ -117,17 +114,6 @@ export function WbProjectHdrMenu({
               {report.label}
             </button>
           ))}
-          <button
-            type="button"
-            role="menuitem"
-            className={menuItemClass}
-            onClick={() => {
-              setOpen(false);
-              onPrintPaintLitresReport();
-            }}
-          >
-            {WB_PAINT_LITRES_REPORT_LABEL}
-          </button>
           <button
             type="button"
             role="menuitem"

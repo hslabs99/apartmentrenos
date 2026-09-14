@@ -185,6 +185,22 @@ export function IconFolder({ className }: { className?: string }) {
   );
 }
 
+export function IconArchive({ className }: { className?: string }) {
+  return (
+    <svg className={className} width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 7.5h16v3.25H4V7.5Zm1.25 3.25V18.5A1.5 1.5 0 0 0 6.75 20h10.5a1.5 1.5 0 0 0 1.5-1.5v-7.75M3.5 4.5h17v3H3.5v-3ZM9.75 13.5h4.5" />
+    </svg>
+  );
+}
+
+export function IconActivity({ className }: { className?: string }) {
+  return (
+    <svg className={className} width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M22 12h-4l-3 7-6-14-3 7H2" />
+    </svg>
+  );
+}
+
 export function IconSettings({ className }: { className?: string }) {
   return (
     <svg className={className} width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>

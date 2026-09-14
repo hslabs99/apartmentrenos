@@ -8,7 +8,7 @@ import { isQuoteObjectsMetaDocument } from "@/lib/firestore/quote-objects-collec
 import { allocateNextSequence } from "@/lib/firestore/sequences";
 import { ensureObjectCategoryLookup } from "@/lib/server/ensure-object-category-lookup";
 import { priceRowsAndLegacyTopLevel } from "@/lib/server/quote-object-doc";
-import { renumberAllAndNextIndex } from "@/lib/server/template-sort-order";
+import { nextAppendSortOrder } from "@/lib/server/template-sort-order";
 
 export const BLINDS_QUOTE_CATEGORY = "Blinds";
 export const BLINDS_SYSTEM_OBJECT = "Blinds";
@@ -133,11 +133,10 @@ export async function syncBlindsQuoteObjects(
     }
 
     const objectid = await allocateNextSequence(db, "objectid");
-    const sortOrder = await renumberAllAndNextIndex(
+    const sortOrder = await nextAppendSortOrder(
       db,
       "quote_objects",
       isQuoteObjectsMetaDocument,
-      (data) => String(data.objectname ?? ""),
     );
     await ref.set({
       ...payload,

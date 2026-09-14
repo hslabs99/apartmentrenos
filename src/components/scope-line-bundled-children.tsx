@@ -36,7 +36,7 @@ import { WbBuildingElementSkuCell } from "@/components/wb-building-element-sku-c
 import { formatCurrencyInput, parseCurrencyInput } from "@/lib/client/format-money";
 import { quoteObjectCategory } from "@/lib/client/quote-object-category";
 import { bundledAppendSkuPickerHint } from "@/lib/client/resolve-append-child-sku-picks";
-import { appendSpecForSlot } from "@/lib/sku/data-sku-append-slots";
+import { appendSpecForSupplierOption } from "@/lib/sku/data-sku-append-slots";
 import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
 import {
   resolveScopeLineSkuUnitPriceExcGst,
@@ -248,8 +248,12 @@ function ChecklistBundledLine({
     : undefined;
   const parentCategory = quoteObjectCategory(parentLine, quoteObjects) ?? "";
   const appendProductSpec =
-    parentSku && child.bundledAppendSlot != null
-      ? appendSpecForSlot(parentSku, child.bundledAppendSlot)
+    child.bundledAppendSlot != null
+      ? appendSpecForSupplierOption(
+          suppliersBySkuId[parentLine.skuId?.trim() ?? ""] ?? [],
+          parentLine.supplierOption ?? null,
+          child.bundledAppendSlot,
+        )
       : "";
   const appendHint = bundledAppendSkuPickerHint({
     parentLine,
@@ -421,8 +425,12 @@ function WorkbenchBundledLine({
     : undefined;
   const parentCategory = quoteObjectCategory(parentLine, quoteObjects) ?? "";
   const appendProductSpec =
-    parentSku && child.bundledAppendSlot != null
-      ? appendSpecForSlot(parentSku, child.bundledAppendSlot)
+    child.bundledAppendSlot != null
+      ? appendSpecForSupplierOption(
+          suppliersBySkuId[parentLine.skuId?.trim() ?? ""] ?? [],
+          parentLine.supplierOption ?? null,
+          child.bundledAppendSlot,
+        )
       : "";
   const appendHint = bundledAppendSkuPickerHint({
     parentLine,

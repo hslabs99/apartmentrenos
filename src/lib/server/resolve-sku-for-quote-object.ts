@@ -12,6 +12,11 @@ import {
   type DataSkuFilterFields,
 } from "@/lib/sku/match-data-sku-filters";
 import { loadColourLookupIndex } from "@/lib/server/load-colour-lookup-index";
+import {
+  collectShowAllIdentities,
+  matchShowAllCatalogSkus,
+  type ShowAllSkuHint,
+} from "@/lib/sku/show-all-scope-skus";
 
 export type ResolvedSkuForQuoteObject = {
   skuId: string;
@@ -64,6 +69,18 @@ export function clearDataSkusResolveCache(): void {
   skuCache = null;
 }
 
+/** Catalog UOM for a SKU id (empty when missing). Uses the same cache as SKU resolve. */
+export async function loadSkuUomBySkuId(
+  db: Firestore,
+  skuId: string | null | undefined,
+): Promise<string> {
+  const id = String(skuId ?? "").trim();
+  if (!id) return "";
+  const skus = await loadCurrentSkus(db);
+  const hit = skus.find((s) => s.skuId === id);
+  return hit?.uom.trim() ?? "";
+}
+
 /**
  * One SKU per quote object line: category + productType (objectname) + elevate + style + colour.
  * Product on the SKU row is not filtered (any product value may match).
@@ -90,6 +107,48 @@ export async function resolveAllSkusForQuoteObject(
   filters: Omit<DataSkuFilterFields, "category" | "productType">,
 ): Promise<{ skuId: string; product: string; uom: string }[]> {
   const matches = await matchingSkusForQuoteObjectData(db, quoteObjectData, filters);
+  return matches.map((hit) => ({
+    skuId: hit.skuId,
+    product: hit.product.trim(),
+    uom: hit.uom.trim(),
+  }));
+}
+
+/**
+ * Show All expansion: Elevate + Style (colour optional), unioning quote-object identity
+ * with categories/types from SKUs already on the object.
+ */
+export async function resolveShowAllSkusForQuoteObject(
+  db: Firestore,
+  quoteObjectData: DocumentData | undefined,
+  filters: Omit<DataSkuFilterFields, "category" | "productType">,
+  extra?: {
+    lineObjectNames?: string[];
+    skuHints?: ShowAllSkuHint[];
+    existingSkuIds?: string[];
+  },
+): Promise<{ skuId: string; product: string; uom: string }[]> {
+  const skus = await loadCurrentSkus(db);
+  const hints = [...(extra?.skuHints ?? [])];
+  if (extra?.existingSkuIds?.length) {
+    const want = new Set(extra.existingSkuIds.map((id) => id.trim()).filter(Boolean));
+    for (const sku of skus) {
+      if (!want.has(sku.skuId)) continue;
+      hints.push({ category: sku.category, productType: sku.productType });
+    }
+  }
+  const category = String(quoteObjectData?.category ?? "").trim();
+  const objectname = String(quoteObjectData?.objectname ?? "").trim();
+  const identities = collectShowAllIdentities({
+    quoteCategory: category,
+    quoteObjectName: objectname,
+    lineObjectNames: extra?.lineObjectNames,
+    skuRows: hints,
+  });
+  if (identities.length === 0) return [];
+
+  const colourLookupIndex = await loadColourLookupIndex(db);
+  const matches = matchShowAllCatalogSkus(skus, identities, filters, colourLookupIndex);
   return matches.map((hit) => ({
     skuId: hit.skuId,
     product: hit.product.trim(),

@@ -26,6 +26,7 @@ import { ClProjectHeaderMenu } from "@/components/cl-project-header-menu";
 import {
   ClScrollContextRail,
   clAreaAnchorId,
+  clLineAnchorId,
   type ClScrollContextArea,
 } from "@/components/cl-scroll-context-rail";
 import { ClScopeActionsMenu } from "@/components/cl-scope-actions-menu";
@@ -101,8 +102,14 @@ import {
   findPaintingElementForLine,
 } from "@/lib/client/painting-element-index";
 import { partitionAreaLines } from "@/lib/client/partition-area-lines";
+import { collectChecklistProjectHealthIssues } from "@/lib/client/checklist-project-health";
+import {
+  currentCatalogSkuIdSet,
+  projectLineHasOrphanSku,
+} from "@/lib/health-check/orphan-refs";
 import {
   compareProjectAreaLineOrder,
+  groupProjectAreaLinesByObjectId,
   sortProjectAreaLines,
   workbenchFlatDisplayLines,
 } from "@/lib/project-area-line-order";
@@ -115,11 +122,18 @@ import {
   lineFinalPriceBreakdownTitle,
 } from "@/lib/client/line-final-price";
 import {
+  effectiveStyleColourForLine,
+  effectiveElevateLevelForLine,
   resolveScopeLineSkuUnitPriceExcGst,
-  scopeLineMatchesSkuPick,
   scopeLineSkuPickWithResolvedPrice,
   type ScopeLineSkuPick,
 } from "@/lib/client/scope-line-sku-match";
+import {
+  expectedShowAllCatalogSkus,
+  lineSkuProductLabel,
+  missingShowAllExpectedSkus,
+  scopeObjectIsShowAll,
+} from "@/lib/client/scope-show-all-expected";
 import { IconTrash } from "@/components/icons/lightning-icons";
 import { ProjectAreaStatusSelect } from "@/components/project-area-status-select";
 import {
@@ -135,6 +149,8 @@ import { PriceLevelIdSelect } from "@/components/price-level-id-select";
 import { ProjectsTabs } from "@/components/projects-tabs";
 import { useLookups } from "@/lib/client/use-lookups";
 import { useLookupsColours } from "@/lib/client/use-lookups-colours";
+import type { ColourLookupIndex } from "@/lib/sku/colour-lookup-index";
+import { useRedirectUnauthorizedTemplate } from "@/lib/client/use-redirect-unauthorized-template";
 import { ChecklistMeasureInput } from "@/components/checklist-measure-input";
 import { ScopeChecklistMetricsRow } from "@/components/scope-checklist-metrics-row";
 import { ScopeWorkbenchMetricsRow } from "@/components/scope-workbench-metrics-row";
@@ -156,6 +172,8 @@ import {
 import { sfRowIconBtn, sfRowIconBtnDanger } from "@/lib/sf-row-actions";
 import { defaultTrueAnswerId, singleYesAnswerId } from "@/lib/scope-single-yes-answer";
 import {
+  clRedundantScopeAnchorId,
+  leftoverHintsByScopeDocId,
   redundantScopeEntriesForProject,
   redundantScopeEntriesForProjectArea,
   type RedundantScopeEntry,
@@ -227,12 +245,6 @@ import {
   type WbTradeReportId,
 } from "@/lib/workbench-trade-report";
 import {
-  buildWorkbenchPaintLitresReport,
-  wbPaintLitresReportHasContent,
-  WB_PAINT_LITRES_REPORT_LABEL,
-  type WbPaintLitresReportData,
-} from "@/lib/workbench-paint-litres-report";
-import {
   buildWorkbenchPurchasingListReport,
   wbPurchasingListReportHasContent,
   WB_PURCHASING_LIST_REPORT_WINDOW_LABEL,
@@ -244,7 +256,6 @@ import {
   projectHasPaintConsumption,
 } from "@/lib/painting-site-fee";
 import { WorkbenchTradeReportWindow } from "@/components/workbench-trade-report-window";
-import { WorkbenchPaintLitresPrintReport } from "@/components/workbench-paint-litres-print-report";
 import { WorkbenchPurchasingListReportWindow } from "@/components/workbench-purchasing-list-report-window";
 import { supplierDiscountByKeyFromRows } from "@/lib/client/supplier-discount-price";
 import type { DataSupplierDiscountPublic } from "@/types/data-supplier-discount-public";
@@ -343,17 +354,121 @@ function formatLoad(n: number | null | undefined): string {
 
 
 /** Object name row once per `objectid` within a scope’s lines (Show All = many SKU rows, one header). */
-function scopeLineShowsObjectNameHeader(
+function isFirstScopeLineForObject(
   scopeLines: ProjectAreaObjectPublic[],
   lineIdx: number,
 ): boolean {
   const line = scopeLines[lineIdx];
   if (!line) return false;
   const prev = lineIdx > 0 ? scopeLines[lineIdx - 1] : null;
-  const isFirstLineForObject = !prev || prev.objectid !== line.objectid;
-  if (!isFirstLineForObject) return false;
+  return !prev || prev.objectid !== line.objectid;
+}
+
+function scopeLineShowsObjectNameHeader(
+  scopeLines: ProjectAreaObjectPublic[],
+  lineIdx: number,
+): boolean {
+  const line = scopeLines[lineIdx];
+  if (!line) return false;
+  if (!isFirstScopeLineForObject(scopeLines, lineIdx)) return false;
   const scopeHasMultipleLines = scopeLines.length > 1;
   return scopeHasMultipleLines || lineIdx > 0;
+}
+
+function clScopeShowAllObjectTooltip(
+  objectLabel: string,
+  filters: { elevateLevel: string; style: string; colour: string },
+  expected: DataSkuPublic[],
+  objectLines: ProjectAreaObjectPublic[],
+  catalogSkus: DataSkuPublic[],
+  orphanCount: number,
+  underPopulated: boolean,
+): string {
+  const missing = missingShowAllExpectedSkus(objectLines, expected, catalogSkus);
+  const shown = objectLines.map((l) => lineSkuProductLabel(l, catalogSkus));
+  const bullet = (items: string[]) =>
+    items.length > 0 ? items.map((item) => `• ${item}`).join("\n") : "• (none)";
+  const parts: string[] = [
+    `${objectLabel} is a Show All object.`,
+    "It should list every current catalog product of this object type that matches the area Elevate and Style. Colour does not have to match.",
+    `Elevate: ${filters.elevateLevel || "(not set)"}`,
+    `Style: ${filters.style || "(not set)"}`,
+    `Area colour: ${filters.colour || "(not set)"} (not required for this list)`,
+    `Catalog should present ${expected.length} line${expected.length === 1 ? "" : "s"}:`,
+    bullet(expected.map((s) => s.product.trim() || s.skuId)),
+    `This checklist currently has ${objectLines.length}:`,
+    bullet(shown),
+  ];
+  if (missing.length > 0) {
+    parts.push(
+      `Missing ${missing.length}:`,
+      bullet(missing.map((s) => s.product.trim() || s.skuId)),
+    );
+  }
+  if (orphanCount > 0) {
+    parts.push(
+      `${orphanCount} current line${orphanCount === 1 ? " has a SKU that is no longer in the catalog" : "s have SKUs that are no longer in the catalog"} (No matching SKU).`,
+    );
+  }
+  if (underPopulated || orphanCount > 0) {
+    parts.push(
+      "Open the ⋯ menu on this object and choose Repopulate SKUs. Lines whose SKUs still exist stay, including quantities. Missing catalog matches are added at the object default quantity. Other objects on this scope are not changed.",
+    );
+  }
+  return parts.join("\n");
+}
+
+type ClScopeRepopulateState = {
+  show: boolean;
+  expectedCount: number;
+  actualCount: number;
+  orphanCount: number;
+  tooltip: string;
+};
+
+function clScopeObjectRepopulateState(
+  objectLines: ProjectAreaObjectPublic[],
+  currentSkuIds: ReadonlySet<string>,
+  catalogSkus: DataSkuPublic[],
+  quoteObject: QuoteObjectPublic | undefined,
+  scope: ScopePublic | undefined,
+  filters: { elevateLevel: string; style: string; colour: string },
+  colourLookupIndex: ColourLookupIndex | null,
+  objectLabel: string,
+): ClScopeRepopulateState {
+  const actualCount = objectLines.length;
+  const orphanCount = objectLines.filter((l) =>
+    projectLineHasOrphanSku(l, currentSkuIds),
+  ).length;
+  const isShowAll = scopeObjectIsShowAll(objectLines, quoteObject, scope);
+  const expected = isShowAll
+    ? expectedShowAllCatalogSkus(
+        objectLines,
+        quoteObject,
+        catalogSkus,
+        filters,
+        colourLookupIndex,
+      )
+    : [];
+  const expectedCount = expected.length;
+  const missingExpected = missingShowAllExpectedSkus(objectLines, expected, catalogSkus);
+  const underPopulated =
+    isShowAll && (missingExpected.length > 0 || expectedCount > actualCount);
+  const show = underPopulated || orphanCount > 0;
+  const tooltip = isShowAll
+    ? clScopeShowAllObjectTooltip(
+        objectLabel,
+        filters,
+        expected,
+        objectLines,
+        catalogSkus,
+        orphanCount,
+        underPopulated,
+      )
+    : orphanCount > 0
+      ? `${objectLabel} has ${orphanCount} SKU${orphanCount === 1 ? "" : "s"} no longer in the catalog. Open ⋯ and choose Repopulate SKUs to replace them.`
+      : "";
+  return { show, expectedCount, actualCount, orphanCount, tooltip };
 }
 
 function lineSourceLabel(row: ProjectAreaObjectPublic): string {
@@ -598,13 +713,17 @@ function ClScopeQuestionLabel({
 function redundantScopeDetailParts(entry: RedundantScopeEntry): string[] {
   const parts: string[] = [];
   if (entry.answerLabel) parts.push(`Answer: ${entry.answerLabel}`);
-  if (entry.lineCount > 0) {
-    parts.push(`${entry.lineCount} line${entry.lineCount === 1 ? "" : "s"}`);
+  if (entry.leftoverLineSummaries.length > 0) {
+    parts.push(`Leftover lines: ${entry.leftoverLineSummaries.join("; ")}`);
+  } else if (entry.lineCount > 0) {
+    parts.push(`${entry.lineCount} leftover line${entry.lineCount === 1 ? "" : "s"}`);
+  } else if (entry.hasLeftoverAnswer) {
+    parts.push("Leftover answer only — not shown in this area's list");
   }
   if (entry.instanceCount > 1) {
     parts.push(`${entry.instanceCount} copies`);
   }
-  if (entry.scopeMissing) parts.push("Setup scope deleted");
+  if (entry.scopeMissing) parts.push("Question deleted from Setup");
   return parts;
 }
 
@@ -618,6 +737,9 @@ type WbBlankLineContext = {
   sourceRowWasIncluded?: boolean;
 };
 
+const HEALTH_FOCUS_LINE_CLASS =
+  "scroll-mt-28 outline outline-2 outline-offset-2 outline-amber-500 dark:outline-amber-400";
+
 export function ProjectChecklistPanel({
   mode = "checklist",
 }: {
@@ -625,6 +747,8 @@ export function ProjectChecklistPanel({
 }) {
   const searchParams = useSearchParams();
   const projectDocId = searchParams.get("id");
+  const healthFocusLineId = searchParams.get("line")?.trim() || null;
+  const healthFocusRedundantId = searchParams.get("redundant")?.trim() || null;
   const { isExpanded: isClScopeBodyExpanded, toggle: toggleClScopeBodyExpanded } =
     useClScopeBodyExpanded(projectDocId);
   const { lookups } = useLookups();
@@ -639,6 +763,7 @@ export function ProjectChecklistPanel({
   const [error, setError] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectPublic | null>(null);
   const [numericProjectId, setNumericProjectId] = useState<number | null>(null);
+  useRedirectUnauthorizedTemplate(project, !loading && Boolean(projectDocId));
   const [areas, setAreas] = useState<AreaPublic[]>([]);
   const [projectAreas, setProjectAreas] = useState<ProjectAreaPublic[]>([]);
   const [allObjects, setAllObjects] = useState<ProjectAreaObjectPublic[]>([]);
@@ -655,6 +780,7 @@ export function ProjectChecklistPanel({
   const [cascades, setCascades] = useState<CascadeRow[]>([]);
   const [priceLevels, setPriceLevels] = useState<PriceLevelPublic[]>([]);
   const [catalogSkus, setCatalogSkus] = useState<DataSkuPublic[]>([]);
+  const currentSkuIds = useMemo(() => currentCatalogSkuIdSet(catalogSkus), [catalogSkus]);
   const [suppliersBySkuId, setSuppliersBySkuId] = useState<
     Record<string, DataSkuSupplierPublic[]>
   >({});
@@ -694,6 +820,13 @@ export function ProjectChecklistPanel({
   const [paDeleting, setPaDeleting] = useState(false);
   const [paoDeleteId, setPaoDeleteId] = useState<string | null>(null);
   const [paoDeleting, setPaoDeleting] = useState(false);
+  const [repopulateTarget, setRepopulateTarget] = useState<{
+    pa: ProjectAreaPublic;
+    scopeDocId: string;
+    scopeInstanceId?: string | null;
+    objectid: number;
+    objectLabel: string;
+  } | null>(null);
   const [pickObjectOpen, setPickObjectOpen] = useState(false);
   const [pickObjectContext, setPickObjectContext] = useState<{
     projectAreaDocId: string;
@@ -724,8 +857,6 @@ export function ProjectChecklistPanel({
   const [wbPaintingElementLineId, setWbPaintingElementLineId] = useState<string | null>(null);
   const [wbExporting, setWbExporting] = useState(false);
   const [wbTradeReportData, setWbTradeReportData] = useState<WbTradeReportData | null>(null);
-  const [wbPaintLitresReportData, setWbPaintLitresReportData] =
-    useState<WbPaintLitresReportData | null>(null);
   const [wbPurchasingListReportWindowData, setWbPurchasingListReportWindowData] =
     useState<WbPurchasingListReportData | null>(null);
   const [wbColumnView, setWbColumnView] = useState<"detail" | "summary">("detail");
@@ -1573,7 +1704,6 @@ export function ProjectChecklistPanel({
         suppliersBySkuId,
         supplierDiscountByKey,
       );
-      if (scopeLineMatchesSkuPick(parentLine, resolvedPick)) return;
 
       setRowSavingId(parentLine.id);
       setError(null);
@@ -1764,6 +1894,26 @@ export function ProjectChecklistPanel({
     mode,
   ]);
 
+  useEffect(() => {
+    if (loading || !healthFocusLineId) return;
+    let cancelled = false;
+    let attempts = 0;
+    const tick = () => {
+      if (cancelled) return;
+      const el = document.getElementById(clLineAnchorId(healthFocusLineId));
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      attempts += 1;
+      if (attempts < 24) window.setTimeout(tick, 150);
+    };
+    tick();
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, healthFocusLineId, allObjects.length, projectAreas.length, mode]);
+
   const workbenchLookupLabourSyncingRef = useRef(false);
 
   /** Workbench: apply object labour rates table to lookup silos on load and when rates/lines change. */
@@ -1826,6 +1976,11 @@ export function ProjectChecklistPanel({
     }
     return m;
   }, [allObjects, projectAreas]);
+
+  const projectRedundantScopeHints = useMemo(
+    () => leftoverHintsByScopeDocId(objectsByProjectAreaDocId),
+    [objectsByProjectAreaDocId],
+  );
 
   const projectRedundantScopeEntries = useMemo(() => {
     if (mode !== "checklist") return [];
@@ -2260,6 +2415,49 @@ export function ProjectChecklistPanel({
     [reloadLineItems, reloadProjectAreas],
   );
 
+  const confirmRepopulateScopeObject = useCallback(async () => {
+    if (!repopulateTarget) return;
+    const { pa, scopeDocId, scopeInstanceId, objectid } = repopulateTarget;
+    const savingKey = `scope-repopulate:${scopeAnswerSavingKey(scopeDocId, scopeInstanceId)}`;
+    setScopeAnswerSaving(savingKey);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/projectareas/${encodeURIComponent(pa.id)}/repopulate-object`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            scopeDocId,
+            objectid,
+            scopeInstanceId: scopeInstanceId?.trim() ? scopeInstanceId.trim() : null,
+          }),
+        },
+      );
+      const data = await readApiResponse<{ error?: string }>(res);
+      if (!res.ok) throw new Error(data.error ?? "Failed to repopulate SKUs");
+      setRepopulateTarget(null);
+      await reloadLineItems();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to repopulate SKUs");
+      await reloadProjectAreas();
+    } finally {
+      setScopeAnswerSaving(null);
+    }
+  }, [repopulateTarget, reloadLineItems, reloadProjectAreas]);
+
+  const cloneLineOrBlindsScope = useCallback(
+    (pa: ProjectAreaPublic, line: ProjectAreaObjectPublic) => {
+      const scopeDocId = line.scopeDocId?.trim();
+      if (isBlindsSystemLine(line) && scopeDocId) {
+        void cloneScopeInstance(pa, scopeDocId, line.scopeInstanceId ?? null);
+        return;
+      }
+      void cloneLineItem(line.id);
+    },
+    [cloneLineItem, cloneScopeInstance],
+  );
+
   async function addProjectAreaFromTemplate(areaDocId: string) {
     if (!projectDocId) return;
     const inheritedPl = project?.defaultpricelevelid ?? null;
@@ -2514,6 +2712,39 @@ export function ProjectChecklistPanel({
     areas,
   ]);
 
+  const checklistHealthIssues = useMemo(
+    () =>
+      mode === "workbench"
+        ? []
+        : collectChecklistProjectHealthIssues({
+            projectAreas: sortedProjectAreas,
+            areas,
+            scopes,
+            objectsByProjectAreaDocId,
+            quoteObjects,
+            catalogSkus,
+            currentSkuIds,
+            project,
+            priceLevels,
+            cascades,
+            colourLookupIndex,
+          }),
+    [
+      mode,
+      sortedProjectAreas,
+      areas,
+      scopes,
+      objectsByProjectAreaDocId,
+      quoteObjects,
+      catalogSkus,
+      currentSkuIds,
+      project,
+      priceLevels,
+      cascades,
+      colourLookupIndex,
+    ],
+  );
+
   const projectRealisedMarginExcGst = useMemo(() => {
     if (grandTotal <= 0 && grandFinalTotal <= 0) return null;
     return Math.round((grandFinalTotal - grandTotal) * 100) / 100;
@@ -2631,7 +2862,6 @@ export function ProjectChecklistPanel({
         return;
       }
       setError(null);
-      setWbPaintLitresReportData(null);
       setWbPurchasingListReportWindowData(null);
       setWbTradeReportData(data);
     },
@@ -2648,47 +2878,6 @@ export function ProjectChecklistPanel({
       objectsByProjectAreaDocId,
     ],
   );
-
-  const printWorkbenchPaintLitresReport = useCallback(() => {
-    if (numericProjectId == null || !project) return;
-    const data = buildWorkbenchPaintLitresReport({
-      project,
-      projectAreas: sortedProjectAreas,
-      areas,
-      quoteObjects,
-      catalogSkus,
-      suppliersBySkuId,
-      supplierDiscountByKey,
-      paintingElementBySkuName,
-      objectsByProjectAreaDocId,
-      contractLabourRates,
-      marginPct,
-    });
-    if (!wbPaintLitresReportHasContent(data)) {
-      setError(
-        `No included paint lines with a SKU product found on this project for ${WB_PAINT_LITRES_REPORT_LABEL}.`,
-      );
-      return;
-    }
-    setError(null);
-    setWbTradeReportData(null);
-    setWbPurchasingListReportWindowData(null);
-    setWbPaintLitresReportData(data);
-    window.setTimeout(() => window.print(), 50);
-  }, [
-    numericProjectId,
-    project,
-    sortedProjectAreas,
-    areas,
-    quoteObjects,
-    catalogSkus,
-    suppliersBySkuId,
-    supplierDiscountByKey,
-    paintingElementBySkuName,
-    objectsByProjectAreaDocId,
-    contractLabourRates,
-    marginPct,
-  ]);
 
   const openWorkbenchPurchasingListReport = useCallback(() => {
     if (!project) return;
@@ -2711,7 +2900,6 @@ export function ProjectChecklistPanel({
     }
     setError(null);
     setWbTradeReportData(null);
-    setWbPaintLitresReportData(null);
     setWbPurchasingListReportWindowData(data);
   }, [
     project,
@@ -3114,9 +3302,9 @@ export function ProjectChecklistPanel({
                             Redundant scope questions on this project
                           </h3>
                           <p className="text-xs text-sf-text-secondary dark:text-zinc-400">
-                            Leftover answers, lines, and metrics from scopes no longer on each
-                            template area. Remove clears all project data for that scope on the
-                            area (answers, lines, bundled children, and metrics).
+                            Leftover answers and lines from questions deleted in Setup or removed
+                            from a template area. They do not appear in the area list. Remove
+                            clears answers, leftover lines, bundled children, and metrics.
                           </p>
                         </div>
                         <button
@@ -3212,7 +3400,6 @@ export function ProjectChecklistPanel({
                               projectLabel={project.projectname}
                               exportDisabled={wbExporting}
                               onPrintTradeReport={printWorkbenchTradeReport}
-                              onPrintPaintLitresReport={printWorkbenchPaintLitresReport}
                               onOpenPurchasingListReport={openWorkbenchPurchasingListReport}
                               onExport={(sortMode) => {
                                 void (async () => {
@@ -3433,7 +3620,13 @@ export function ProjectChecklistPanel({
                 const areaScopes = scopesForProjectArea(pa, areas, scopes);
                 const redundantScopeEntries =
                   mode === "checklist"
-                    ? redundantScopeEntriesForProjectArea(pa, areas, scopes, rows)
+                    ? redundantScopeEntriesForProjectArea(
+                        pa,
+                        areas,
+                        scopes,
+                        rows,
+                        projectRedundantScopeHints,
+                      )
                     : [];
                 const areaNameForHeading = projectAreaHeading(pa, areas);
                 const areaTemplateName = projectAreaTemplateName(pa, areas);
@@ -3605,6 +3798,57 @@ export function ProjectChecklistPanel({
                             </div>
                           </div>
                           <div className={`${wbAreaObjectBand} space-y-0 px-0 py-0`}>
+                          {redundantScopeEntries.length > 0 ? (
+                            <div className="space-y-2 border-b border-amber-200/80 px-5 py-3 dark:border-amber-900/50">
+                              <h5 className="text-xs font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200/90">
+                                Not shown in this area&apos;s list
+                              </h5>
+                              <p className="text-xs text-sf-text-secondary dark:text-zinc-400">
+                                Leftover from a question deleted in Setup or removed from this
+                                template. It does not appear with the objects below. Remove
+                                clears the leftover answer and any stored lines.
+                              </p>
+                              <ul className="flex w-full flex-col items-start space-y-2">
+                                {redundantScopeEntries.map((entry) => {
+                                  const busy = scopeAnswerSaving === entry.scopeDocId;
+                                  const detailParts = redundantScopeDetailParts(entry);
+                                  const anchorId = clRedundantScopeAnchorId(
+                                    pa.id,
+                                    entry.scopeDocId,
+                                  );
+                                  const focused = healthFocusRedundantId === anchorId;
+                                  return (
+                                    <li
+                                      key={`redundant:${entry.scopeDocId}`}
+                                      id={anchorId}
+                                      className={`flex w-full flex-wrap items-center gap-2 rounded-md border border-amber-200/90 bg-amber-50/70 px-3 py-2 scroll-mt-28 dark:border-amber-900/60 dark:bg-amber-950/25${focused ? ` ${HEALTH_FOCUS_LINE_CLASS}` : ""}`}
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <span className="text-sm font-medium text-sf-text dark:text-zinc-100">
+                                          {entry.questionLabel}
+                                        </span>
+                                        {detailParts.length > 0 ? (
+                                          <span className="mt-0.5 block text-xs text-sf-text-secondary dark:text-zinc-400">
+                                            {detailParts.join(" · ")}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="shrink-0 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-950 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/50"
+                                        disabled={busy || areaBusy}
+                                        onClick={() =>
+                                          void purgeRedundantScopeFromArea(pa, entry.scopeDocId)
+                                        }
+                                      >
+                                        {busy ? "Removing…" : "Remove"}
+                                      </button>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          ) : null}
                           {areaScopes.length > 0 ? (
                             <ul className="flex w-full flex-col items-stretch space-y-0">
                               {areaScopes.flatMap((scope) => {
@@ -3648,14 +3892,18 @@ export function ProjectChecklistPanel({
                                 const busy =
                                   scopeAnswerSaving === answerSavingKey ||
                                   scopeAnswerSaving ===
-                                    `scope-clone:${answerSavingKey}`;
+                                    `scope-clone:${answerSavingKey}` ||
+                                  scopeAnswerSaving ===
+                                    `scope-repopulate:${answerSavingKey}`;
                                 const yesOnlyId = singleYesAnswerId(scope);
                                 const isExtraScope = (pa.extraScopeDocIds ?? []).includes(scope.id);
-                                const scopeLines = rows.filter(
+                                const scopeLines = groupProjectAreaLinesByObjectId(
+                                  rows.filter(
                                   (r) =>
                                     r.linesource === "scope" &&
                                     r.scopeDocId === scope.id &&
                                     matchesScopeInstance(r.scopeInstanceId, scopeInstanceId),
+                                ),
                                 );
                                 const scopeAnswered = Boolean(value) || scopeLines.length > 0;
                                 const canCloneScope = scopeAnswered;
@@ -3706,7 +3954,12 @@ export function ProjectChecklistPanel({
                                   scope.id,
                                   scopeInstanceId,
                                 );
-                                const scopeBodyExpanded = isClScopeBodyExpanded(scopeBodyKey);
+                                const containsHealthFocusLine = Boolean(
+                                  healthFocusLineId &&
+                                    scopeLines.some((l) => l.id === healthFocusLineId),
+                                );
+                                const scopeBodyExpanded =
+                                  isClScopeBodyExpanded(scopeBodyKey) || containsHealthFocusLine;
                                 const scopeSkuBodyId = clScopeSkuBodyDomId(scopeBodyKey);
                                 return (
                                   <li
@@ -3928,6 +4181,28 @@ export function ProjectChecklistPanel({
                                           scope,
                                           quoteObjects,
                                         );
+                                        const objectLinesForRepopulate = scopeLines.filter(
+                                          (l) => l.objectid === lineRow.objectid,
+                                        );
+                                        const objectRepopulateLabel = objectLabel(
+                                          lineRow,
+                                          quoteObjects,
+                                        );
+                                        const objectRepopulate =
+                                          !isBlindsSystemLine(lineRow) &&
+                                          !isLabourChecklistLine(lineRow, quoteObjects)
+                                            ? clScopeObjectRepopulateState(
+                                                objectLinesForRepopulate,
+                                                currentSkuIds,
+                                                catalogSkus,
+                                                qObj,
+                                                scope,
+                                                scopeSkuFilters,
+                                                colourLookupIndex,
+                                                objectRepopulateLabel,
+                                              )
+                                            : null;
+                                        const showRepopulate = Boolean(objectRepopulate?.show);
                                         const scopeInheritMeasureSource =
                                           resolveScopeLineInheritMeasureSource(
                                             lineRow,
@@ -3973,15 +4248,18 @@ export function ProjectChecklistPanel({
                                           clScopeLineHasPositiveQuantity(
                                             lineRow,
                                             effectiveMeasureForPrice,
-                                          );
+                                          ) ||
+                                          lineRow.id === healthFocusLineId;
                                         if (!isFirstRow && !skuBodyVisible) return null;
                                         return (
                                           <Fragment key={lineRow.id}>
                                           <div
+                                            id={clLineAnchorId(lineRow.id)}
+                                            data-health-focus={lineRow.id === healthFocusLineId ? "1" : undefined}
                                             className={
                                               lineIdx > 0
-                                                ? `${clScopeLineStackClass} mt-2`
-                                                : clScopeLineStackClass
+                                                ? `${clScopeLineStackClass} mt-2${lineRow.id === healthFocusLineId ? ` ${HEALTH_FOCUS_LINE_CLASS}` : ""}`
+                                                : `${clScopeLineStackClass}${lineRow.id === healthFocusLineId ? ` ${HEALTH_FOCUS_LINE_CLASS}` : ""}`
                                             }
                                           >
                                             {isFirstRow ? (
@@ -4190,10 +4468,28 @@ export function ProjectChecklistPanel({
                                             {showObjectNameHeader ? (
                                               <div className={clObjectNameRowClass}>
                                                 <span
-                                                  className={clObjectNameTextClass}
-                                                  title={objectLabel(lineRow, quoteObjects)}
+                                                  className={`group/repop relative z-20 overflow-visible ${clObjectNameTextClass}${
+                                                    showRepopulate
+                                                      ? " cursor-help !text-red-700 dark:!text-red-400"
+                                                      : objectRepopulate?.tooltip
+                                                        ? " cursor-help"
+                                                        : ""
+                                                  }`}
+                                                  title={objectRepopulate?.tooltip || objectRepopulateLabel}
                                                 >
-                                                  {objectLabel(lineRow, quoteObjects)}
+                                                  {objectRepopulateLabel}
+                                                  {objectRepopulate?.tooltip ? (
+                                                    <span
+                                                      role="tooltip"
+                                                      className={`pointer-events-none absolute left-0 top-full z-50 mt-1 hidden max-h-72 w-[26rem] max-w-[min(26rem,calc(100vw-2rem))] overflow-y-auto whitespace-pre-wrap rounded-md border px-3 py-2 text-left text-xs font-normal leading-snug shadow-lg group-hover/repop:block ${
+                                                        showRepopulate
+                                                          ? "border-red-200 bg-white text-red-950 dark:border-red-800 dark:bg-zinc-900 dark:text-red-100"
+                                                          : "border-sf-border bg-white text-sf-text dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                                                      }`}
+                                                    >
+                                                      {objectRepopulate.tooltip}
+                                                    </span>
+                                                  ) : null}
                                                 </span>
                                               </div>
                                             ) : null}
@@ -4206,15 +4502,21 @@ export function ProjectChecklistPanel({
                                               className={`${clSkuFieldClass} ${clScopeSkuColClass}`}
                                             >
                                               <ClSkuPickerSlot
-                                                showAdditionalPrompt={qObj?.promptForMulti === true}
-                                                additionalObjectName={objectLabel(
-                                                  lineRow,
-                                                  quoteObjects,
-                                                )}
-                                                additionalDisabled={
-                                                  lineSaving || wbCloningLineId === lineRow.id
+                                                showAdditionalPrompt={
+                                                  qObj?.promptForMulti === true ||
+                                                  isBlindsSystemLine(lineRow)
                                                 }
-                                                onAdditional={() => void cloneLineItem(lineRow.id)}
+                                                additionalObjectName={
+                                                  isBlindsSystemLine(lineRow)
+                                                    ? "Blind"
+                                                    : objectLabel(lineRow, quoteObjects)
+                                                }
+                                                additionalDisabled={
+                                                  busy ||
+                                                  lineSaving ||
+                                                  wbCloningLineId === lineRow.id
+                                                }
+                                                onAdditional={() => void cloneLineOrBlindsScope(pa, lineRow)}
                                               >
                                                 {isLabourChecklistLine(lineRow, quoteObjects) ? (
                                                   <ClLabourProductDisplay
@@ -4364,9 +4666,25 @@ export function ProjectChecklistPanel({
                                               <ClLineRowMenu
                                                 lineLabel={objectLabel(lineRow, quoteObjects)}
                                                 disabled={
-                                                  lineSaving || wbCloningLineId === lineRow.id
+                                                  busy ||
+                                                  lineSaving ||
+                                                  paoDeleting ||
+                                                  wbCloningLineId === lineRow.id
                                                 }
-                                                onClone={() => void cloneLineItem(lineRow.id)}
+                                                onClone={() => void cloneLineOrBlindsScope(pa, lineRow)}
+                                                onDelete={() => setPaoDeleteId(lineRow.id)}
+                                                onRepopulate={
+                                                  showRepopulate
+                                                    ? () =>
+                                                        setRepopulateTarget({
+                                                          pa,
+                                                          scopeDocId: scope.id,
+                                                          scopeInstanceId,
+                                                          objectid: lineRow.objectid,
+                                                          objectLabel: objectRepopulateLabel,
+                                                        })
+                                                    : undefined
+                                                }
                                               />
                                             </div>
                                             </div>
@@ -4441,51 +4759,6 @@ export function ProjectChecklistPanel({
                               from any setup area.
                             </p>
                           )}
-                          {redundantScopeEntries.length > 0 ? (
-                            <div className="mt-3 space-y-2 border-t border-amber-200/80 pt-3 dark:border-amber-900/50">
-                              <h5 className="text-xs font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200/90">
-                                Redundant scope questions
-                              </h5>
-                              <p className="text-xs text-sf-text-secondary dark:text-zinc-400">
-                                Also listed at project level above. Remove clears answers, scope
-                                lines, bundled children, metrics, and stale extra-scope links for
-                                this area.
-                              </p>
-                              <ul className="flex w-full flex-col items-start space-y-2">
-                                {redundantScopeEntries.map((entry) => {
-                                  const busy = scopeAnswerSaving === entry.scopeDocId;
-                                  const detailParts = redundantScopeDetailParts(entry);
-                                  return (
-                                    <li
-                                      key={`redundant:${entry.scopeDocId}`}
-                                      className="flex w-full flex-wrap items-center gap-2 rounded-md border border-amber-200/90 bg-amber-50/70 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/25"
-                                    >
-                                      <div className="min-w-0 flex-1">
-                                        <span className="text-sm font-medium text-sf-text dark:text-zinc-100">
-                                          {entry.questionLabel}
-                                        </span>
-                                        {detailParts.length > 0 ? (
-                                          <span className="mt-0.5 block text-xs text-sf-text-secondary dark:text-zinc-400">
-                                            {detailParts.join(" · ")}
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                      <button
-                                        type="button"
-                                        className="shrink-0 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-950 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/50"
-                                        disabled={busy || areaBusy}
-                                        onClick={() =>
-                                          void purgeRedundantScopeFromArea(pa, entry.scopeDocId)
-                                        }
-                                      >
-                                        {busy ? "Removing…" : "Remove"}
-                                      </button>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
-                            </div>
-                          ) : null}
                           {(() => {
                             const nonScopeLines = rows.filter(
                               (r) => r.linesource !== "scope" && r.linesource !== "bundled",
@@ -4511,7 +4784,9 @@ export function ProjectChecklistPanel({
                                     return (
                                       <Fragment key={lineRow.id}>
                                       <div
-                                        className={`${clScopeLineStackClass} rounded-md border border-sf-border bg-sf-page py-2 dark:border-zinc-700 dark:bg-zinc-900/40`}
+                                        id={clLineAnchorId(lineRow.id)}
+                                        data-health-focus={lineRow.id === healthFocusLineId ? "1" : undefined}
+                                        className={`${clScopeLineStackClass} rounded-md border border-sf-border bg-sf-page py-2 dark:border-zinc-700 dark:bg-zinc-900/40${lineRow.id === healthFocusLineId ? ` ${HEALTH_FOCUS_LINE_CLASS}` : ""}`}
                                       >
                                         <div className={clObjectNameRowClass}>
                                           <span
@@ -4675,6 +4950,7 @@ export function ProjectChecklistPanel({
                                               wbCloningLineId === lineRow.id
                                             }
                                             onClone={() => void cloneLineItem(lineRow.id)}
+                                            onDelete={() => setPaoDeleteId(lineRow.id)}
                                           />
                                         </div>
                                         </div>
@@ -5200,7 +5476,8 @@ export function ProjectChecklistPanel({
                         const bundledRows = bundledByParentId.get(row.id) ?? [];
                         if (
                           wbCompressed &&
-                          !clScopeLineHasPositiveQuantity(row, effectiveMeasureForRow)
+                          !clScopeLineHasPositiveQuantity(row, effectiveMeasureForRow) &&
+                          row.id !== healthFocusLineId
                         ) {
                           return [];
                         }
@@ -5211,7 +5488,16 @@ export function ProjectChecklistPanel({
                           : bundledRows;
 
                         return [
-                          <tr key={row.id} className={rowStyle}>
+                          <tr
+                            key={row.id}
+                            id={clLineAnchorId(row.id)}
+                            data-health-focus={row.id === healthFocusLineId ? "1" : undefined}
+                            className={
+                              row.id === healthFocusLineId
+                                ? `${rowStyle} ${HEALTH_FOCUS_LINE_CLASS}`
+                                : rowStyle
+                            }
+                          >
                             <td className={`${wbCellMid} text-center`}>
                               <input
                                 type="checkbox"
@@ -5567,7 +5853,7 @@ export function ProjectChecklistPanel({
                                   disabled={
                                     saving || paoDeleting || wbCloningLineId === row.id
                                   }
-                                  onClone={() => void cloneLineItem(row.id)}
+                                  onClone={() => void cloneLineOrBlindsScope(pa, row)}
                                   onDelete={() => setPaoDeleteId(row.id)}
                                 />
                               </div>
@@ -5698,6 +5984,7 @@ export function ProjectChecklistPanel({
           projectTotalLabel={
             grandFinalTotal > 0 ? formatMoney(grandFinalTotal) : "—"
           }
+          healthIssues={checklistHealthIssues}
         />
       ) : null}
 
@@ -5995,14 +6282,36 @@ export function ProjectChecklistPanel({
         onConfirm={() => void confirmProjectAreaObjectDelete()}
       />
 
+      <ConfirmDialog
+        open={Boolean(repopulateTarget)}
+        title="Repopulate SKUs?"
+        description={
+          repopulateTarget
+            ? `${repopulateTarget.objectLabel} does not have the full set of catalog SKUs for the current Elevate, style, and colour. Lines whose SKUs still exist keep their quantities. SKUs no longer in the catalog are removed (quantities are not kept). Missing catalog matches are added at the object default quantity.`
+            : "SKUs no longer in the catalog will be removed, including their quantities. Lines with a valid SKU keep their quantities."
+        }
+        confirmLabel="Repopulate"
+        cancelLabel="Cancel"
+        pending={Boolean(
+          repopulateTarget &&
+            scopeAnswerSaving ===
+              `scope-repopulate:${scopeAnswerSavingKey(
+                repopulateTarget.scopeDocId,
+                repopulateTarget.scopeInstanceId,
+              )}`,
+        )}
+        onCancel={() => {
+          if (scopeAnswerSaving?.startsWith("scope-repopulate:")) return;
+          setRepopulateTarget(null);
+        }}
+        onConfirm={() => void confirmRepopulateScopeObject()}
+      />
+
       {wbTradeReportData ? (
         <WorkbenchTradeReportWindow
           data={wbTradeReportData}
           onClose={() => setWbTradeReportData(null)}
         />
-      ) : null}
-      {wbPaintLitresReportData ? (
-        <WorkbenchPaintLitresPrintReport data={wbPaintLitresReportData} />
       ) : null}
       {wbPurchasingListReportWindowData ? (
         <WorkbenchPurchasingListReportWindow

@@ -8,9 +8,17 @@ type Props = {
   lineLabel: string;
   disabled?: boolean;
   onClone: () => void;
+  onDelete: () => void;
+  onRepopulate?: () => void;
 };
 
-export function ClLineRowMenu({ lineLabel, disabled = false, onClone }: Props) {
+export function ClLineRowMenu({
+  lineLabel,
+  disabled = false,
+  onClone,
+  onDelete,
+  onRepopulate,
+}: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -54,6 +62,32 @@ export function ClLineRowMenu({ lineLabel, disabled = false, onClone }: Props) {
             }}
           >
             Clone
+          </button>
+          {onRepopulate ? (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={disabled}
+              className="block w-full px-3 py-2 text-left text-sm font-medium text-sf-text hover:bg-sf-page disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              onClick={() => {
+                setOpen(false);
+                onRepopulate();
+              }}
+            >
+              Repopulate SKUs
+            </button>
+          ) : null}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={disabled}
+            className="block w-full px-3 py-2 text-left text-sm font-medium text-sf-destructive hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950/40"
+            onClick={() => {
+              setOpen(false);
+              onDelete();
+            }}
+          >
+            Remove
           </button>
         </div>
       ) : null}

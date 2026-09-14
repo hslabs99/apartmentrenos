@@ -8,7 +8,7 @@ import { z } from "zod";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { isAreasMetaDocument } from "@/lib/firestore/areas-collection";
 import { allocateNextSequence } from "@/lib/firestore/sequences";
-import { compareTemplateDocs, renumberAllAndNextIndex } from "@/lib/server/template-sort-order";
+import { compareTemplateDocs, nextAppendSortOrder } from "@/lib/server/template-sort-order";
 import type { AreaPublic } from "@/types/area";
 
 export const runtime = "nodejs";
@@ -74,9 +74,7 @@ export async function POST(req: NextRequest) {
     }
     const db = getAdminFirestore();
     const areaid = await allocateNextSequence(db, "areaid");
-    const sortOrder = await renumberAllAndNextIndex(db, "areas", isAreasMetaDocument, (data) =>
-      String(data.areaname ?? ""),
-    );
+    const sortOrder = await nextAppendSortOrder(db, "areas", isAreasMetaDocument);
     const ref = db.collection("areas").doc();
     await ref.set({
       areaid,

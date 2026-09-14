@@ -15,6 +15,7 @@ import {
   type SkuCalcM2Fields,
 } from "@/lib/sku/sku-calc-m2-measure";
 import { labourHoursFromQuoteTemplateData } from "@/lib/server/labour-hours";
+import { mapSkuUomToQuoteUom } from "@/lib/map-sku-uom-to-quote-uom";
 import type { InheritMeasureSource } from "@/types/scope-metric";
 import type { ScopeMetricPublic } from "@/types/scope-metric";
 import type {
@@ -327,6 +328,18 @@ export function resolveProjectLineCustomUom(
 
 /** Scope Show All rows — each matched catalog SKU carries its own UOM (e.g. ea → Unit). */
 export { mapSkuUomToQuoteUom as resolveScopeShowAllLineCustomUom } from "@/lib/map-sku-uom-to-quote-uom";
+
+/**
+ * Exploded Show All lines always use that SKU's UOM. Never the quote-object template
+ * (first SKU in the category + product type). Spec UOM wins; catalog UOM fills blanks.
+ */
+export function customUomForScopeShowAllLine(
+  skuUom: string | null | undefined,
+  catalogUom?: string | null,
+): string {
+  const fromSku = String(skuUom ?? "").trim() || String(catalogUom ?? "").trim();
+  return mapSkuUomToQuoteUom(fromSku);
+}
 
 /**
  * Line pricing from a quote_object template for a given price level (project / area).

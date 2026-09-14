@@ -20,6 +20,10 @@ import {
   sfSectionLead,
 } from "@/lib/sf-layout";
 import { sfRowIconBtn, sfRowIconBtnDanger } from "@/lib/sf-row-actions";
+import {
+  quoteObjectCatalogFromRows,
+  scopeHasMissingQuoteObjects,
+} from "@/lib/health-check/orphan-refs";
 import { sortOrderInArea } from "@/lib/scope-areas";
 import type { ScopePublic } from "@/types/scope";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -110,6 +114,19 @@ export function ScopesPanel({
         return (a.scopeid ?? 0) - (b.scopeid ?? 0) || a.id.localeCompare(b.id);
       });
   }, [scopes, areaFilterAreaDocId]);
+
+  const quoteObjectCatalog = useMemo(
+    () => quoteObjectCatalogFromRows(quoteObjects),
+    [quoteObjects],
+  );
+
+  const brokenScopeIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of scopes) {
+      if (scopeHasMissingQuoteObjects(s, quoteObjectCatalog)) ids.add(s.id);
+    }
+    return ids;
+  }, [scopes, quoteObjectCatalog]);
 
   const allVisibleSelected =
     filteredScopes.length > 0 && filteredScopes.every((s) => selectedDeleteIds.has(s.id));
@@ -447,6 +464,7 @@ export function ScopesPanel({
                     reorderContextAreaDocId,
                   );
                   const checkedForDelete = selectedDeleteIds.has(s.id);
+                  const hasBrokenObjects = brokenScopeIds.has(s.id);
                   return (
                   <tr
                     key={s.id}
@@ -457,13 +475,15 @@ export function ScopesPanel({
                       setSelectedScopeRowId((cur) => (cur === s.id ? null : s.id))
                     }
                     onKeyDown={(e) => scopeReorder.onRowKeyDown(s.id, e)}
-                    aria-label={`${qLabel}. Arrow keys also reorder.`}
+                    aria-label={`${qLabel}${hasBrokenObjects ? ". Missing quote objects" : ""}. Arrow keys also reorder.`}
                     className={`cursor-pointer border-b border-sf-border last:border-0 outline-none focus-visible:bg-sf-page focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sf-brand/40 dark:border-zinc-700/80 dark:focus-visible:bg-zinc-800/40 dark:focus-visible:ring-sf-brand/40 ${
                       selectedScopeRowId === s.id
                         ? "bg-teal-50/70 dark:bg-teal-950/35"
-                        : checkedForDelete
-                          ? "bg-sf-page/80 dark:bg-zinc-800/50"
-                          : ""
+                        : hasBrokenObjects
+                          ? "bg-red-50/80 dark:bg-red-950/25"
+                          : checkedForDelete
+                            ? "bg-sf-page/80 dark:bg-zinc-800/50"
+                            : ""
                     }`}
                   >
                     <td
@@ -492,17 +512,24 @@ export function ScopesPanel({
                       </span>
                     </td>
                     <td className="max-w-[50ch] px-2 py-3 md:px-3 md:py-3.5">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openEdit(s);
-                        }}
-                        title={s.question || undefined}
-                        className="block max-w-full truncate text-left text-base font-medium text-blue-700 underline decoration-blue-700/70 underline-offset-2 hover:text-blue-900 dark:text-blue-400 dark:decoration-blue-400/70 dark:hover:text-blue-300"
-                      >
-                        {s.question || "—"}
-                      </button>
+                      <div className="flex max-w-full flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEdit(s);
+                          }}
+                          title={s.question || undefined}
+                          className="block max-w-full truncate text-left text-base font-medium text-blue-700 underline decoration-blue-700/70 underline-offset-2 hover:text-blue-900 dark:text-blue-400 dark:decoration-blue-400/70 dark:hover:text-blue-300"
+                        >
+                          {s.question || "—"}
+                        </button>
+                        {hasBrokenObjects ? (
+                          <span className="rounded border border-red-300 bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-900 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200">
+                            Missing object
+                          </span>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="px-1 py-3 text-center tabular-nums md:px-1.5 md:py-3.5">
                       {s.kind === "header" || s.kind === "footer"

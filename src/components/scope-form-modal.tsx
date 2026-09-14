@@ -1,11 +1,17 @@
 "use client";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { DragReorderHandle } from "@/components/drag-reorder-handle";
+import { ReorderArrows } from "@/components/reorder-arrows";
 import { ScopeAnswerObjectPicker } from "@/components/scope-answer-object-picker";
 import { ScopeMetricsEditor } from "@/components/scope-metrics-editor";
 import {
+  cloneDraftAnswer,
   draftToPayload,
+  emptyDraftAnswer,
+  moveDraftAnswer,
   publicAnswersToDraft,
+  reorderDraftAnswers,
   type ScopeFormDraftAnswer,
 } from "@/lib/client/scope-form-draft";
 import { readApiJson } from "@/lib/client/read-api-json";
@@ -31,7 +37,7 @@ import type { QuoteObjectPublic } from "@/types/quote-object";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { ScopePublic } from "@/types/scope";
 import { sfTabStripClass, sfUnderlineTabClass } from "@/lib/sf-tabs";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 type ScopeFormTab = "details" | "answers";
 
@@ -105,6 +111,7 @@ export function ScopeFormModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [answerRemoveConfirmId, setAnswerRemoveConfirmId] = useState<string | null>(null);
+  const [answerDragId, setAnswerDragId] = useState<string | null>(null);
   const [systemScopeDraft, setSystemScopeDraft] = useState(false);
   const [systemScopeTypeDraft, setSystemScopeTypeDraft] =
     useState<SystemScopeType>(DEFAULT_SYSTEM_SCOPE_TYPE);
@@ -281,6 +288,7 @@ export function ScopeFormModal({
     setError(null);
     setSaving(false);
     setAnswerRemoveConfirmId(null);
+    setAnswerDragId(null);
     setActiveTab("details");
     setFormReady(false);
 
@@ -291,21 +299,7 @@ export function ScopeFormModal({
       setQuestionAreaPickerKey((k) => k + 1);
       setQuestion("");
       setExplanation("");
-      const first = {
-        answerid: crypto.randomUUID(),
-        label: "Yes",
-        attachedQuoteObjectIds: [] as string[],
-        attachedObjectTools: {},
-        attachedObjectShowAll: {},
-        attachedObjectShowAllDefault: {},
-        attachedObjectNoCharge: {},
-        attachedObjectForce: {},
-        attachedObjectInheritM2Source: {},
-        attachedObjectInheritMeasureLocked: {},
-        includeOnDemolitionReport: false,
-        defaultToTrue: false,
-        suppressZeroSkuRows: false,
-      };
+      const first = emptyDraftAnswer("Yes");
       setDraftAnswers([first]);
       setSelectedAnswerId(first.answerid);
       setSystemScopeDraft(false);
@@ -395,26 +389,62 @@ export function ScopeFormModal({
   }
 
   function addAnswer() {
-    const id = crypto.randomUUID();
-    setDraftAnswers((prev) => [
-      ...prev,
-      {
-        answerid: id,
-        label: `Option ${prev.length + 1}`,
-        attachedQuoteObjectIds: [],
-        attachedObjectTools: {},
-        attachedObjectShowAll: {},
-        attachedObjectShowAllDefault: {},
-        attachedObjectNoCharge: {},
-        attachedObjectForce: {},
-        attachedObjectInheritM2Source: {},
-        attachedObjectInheritMeasureLocked: {},
-        includeOnDemolitionReport: false,
-        defaultToTrue: false,
-        suppressZeroSkuRows: false,
-      },
-    ]);
-    setSelectedAnswerId(id);
+    const next = emptyDraftAnswer(`Option ${draftAnswers.length + 1}`);
+    setDraftAnswers((prev) => [...prev, next]);
+    setSelectedAnswerId(next.answerid);
+  }
+
+  function cloneAnswer(answerid: string) {
+    const source = draftAnswers.find((a) => a.answerid === answerid);
+    if (!source) return;
+    const cloned = cloneDraftAnswer(source);
+    setDraftAnswers((prev) => {
+      const idx = prev.findIndex((a) => a.answerid === answerid);
+      if (idx < 0) return prev;
+      const next = [...prev];
+      next.splice(idx + 1, 0, cloned);
+      return next;
+    });
+    setScopeMetricsDraft((prev) =>
+      prev.map((m) =>
+        m.answerids.includes(answerid) && !m.answerids.includes(cloned.answerid)
+          ? { ...m, answerids: [...m.answerids, cloned.answerid] }
+          : m,
+      ),
+    );
+    setSelectedAnswerId(cloned.answerid);
+  }
+
+  function reorderAnswers(draggedId: string, targetId: string) {
+    setDraftAnswers((prev) => reorderDraftAnswers(prev, draggedId, targetId));
+  }
+
+  function moveAnswer(answerid: string, direction: -1 | 1) {
+    setDraftAnswers((prev) => moveDraftAnswer(prev, answerid, direction));
+  }
+
+  function handleAnswerDragStart(e: DragEvent<HTMLElement>, id: string) {
+    if (saving) return;
+    setAnswerDragId(id);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
+    const card = e.currentTarget.closest("li");
+    if (card instanceof HTMLElement) {
+      e.dataTransfer.setDragImage(card, 24, 16);
+    }
+  }
+
+  function handleAnswerDragOver(e: DragEvent<HTMLLIElement>) {
+    if (saving) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }
+
+  function handleAnswerDrop(e: DragEvent<HTMLLIElement>, targetId: string) {
+    e.preventDefault();
+    const dragged = answerDragId ?? e.dataTransfer.getData("text/plain");
+    setAnswerDragId(null);
+    if (dragged) reorderAnswers(dragged, targetId);
   }
 
   function removeAnswer(answerid: string) {
@@ -1151,14 +1181,24 @@ export function ScopeFormModal({
                       Add answer
                     </button>
                   </div>
+                  <p className="mb-2 text-xs text-sf-text-weak dark:text-zinc-400">
+                    Drag or use arrows to reorder. Clone copies the label, objects, and options.
+                    Save to persist order on the Check List.
+                  </p>
                   {draftAnswers.length === 0 ? (
                     <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
                       No answers yet. Add at least one option (e.g. Yes / No).
                     </p>
                   ) : (
                     <ul className="space-y-2">
-                      {draftAnswers.map((a) => (
-                        <li key={a.answerid}>
+                      {draftAnswers.map((a, answerIdx) => (
+                        <li
+                          key={a.answerid}
+                          onDragOver={handleAnswerDragOver}
+                          onDrop={(e) => handleAnswerDrop(e, a.answerid)}
+                          onDragEnd={() => setAnswerDragId(null)}
+                          className={answerDragId === a.answerid ? "opacity-60" : ""}
+                        >
                           <div
                             className={`rounded-lg border p-2 ${
                               selectedAnswerId === a.answerid
@@ -1166,13 +1206,30 @@ export function ScopeFormModal({
                                 : "border-sf-border dark:border-zinc-700"
                             }`}
                           >
-                            <button
-                              type="button"
-                              onClick={() => setSelectedAnswerId(a.answerid)}
-                              className="mb-2 w-full text-left text-sm font-medium text-sf-text dark:text-zinc-100"
-                            >
-                              {a.label || "(untitled)"}
-                            </button>
+                            <div className="mb-2 flex items-center gap-1">
+                              <DragReorderHandle
+                                itemLabel={a.label || "answer"}
+                                dragging={answerDragId === a.answerid}
+                                disabled={saving}
+                                dense
+                                onDragStart={(e) => handleAnswerDragStart(e, a.answerid)}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setSelectedAnswerId(a.answerid)}
+                                className="min-w-0 flex-1 text-left text-sm font-medium text-sf-text dark:text-zinc-100"
+                              >
+                                {a.label || "(untitled)"}
+                              </button>
+                              <ReorderArrows
+                                dense
+                                itemLabel={a.label || "answer"}
+                                onUp={() => moveAnswer(a.answerid, -1)}
+                                onDown={() => moveAnswer(a.answerid, 1)}
+                                disabledUp={saving || answerIdx === 0}
+                                disabledDown={saving || answerIdx === draftAnswers.length - 1}
+                              />
+                            </div>
                             <input
                               value={a.label}
                               onChange={(e) => updateAnswerLabel(a.answerid, e.target.value)}
@@ -1239,13 +1296,23 @@ export function ScopeFormModal({
                                 </span>
                               </span>
                             </label>
-                            <button
-                              type="button"
-                              onClick={() => setAnswerRemoveConfirmId(a.answerid)}
-                              className="text-xs font-medium text-red-700 hover:underline dark:text-red-400"
-                            >
-                              Remove answer
-                            </button>
+                            <div className="flex flex-wrap gap-x-3 gap-y-1">
+                              <button
+                                type="button"
+                                onClick={() => cloneAnswer(a.answerid)}
+                                disabled={saving}
+                                className="text-xs font-medium text-sf-brand hover:underline disabled:opacity-50 dark:text-[#58a9f5]"
+                              >
+                                Clone answer
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAnswerRemoveConfirmId(a.answerid)}
+                                className="text-xs font-medium text-red-700 hover:underline dark:text-red-400"
+                              >
+                                Remove answer
+                              </button>
+                            </div>
                           </div>
                         </li>
                       ))}

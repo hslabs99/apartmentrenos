@@ -40,7 +40,10 @@ import {
   resolveSkuImportIds,
 } from "@/lib/server/resolve-sku-import-ids";
 import { syncObjectCategoryLookupsFromQuoteObjects } from "@/lib/server/sync-object-category-lookups-from-quote-objects";
-import { syncQuoteObjectFromDataObject } from "@/lib/server/sync-quote-object-from-data-object";
+import {
+  loadPrepareQuoteObjectCache,
+  prepareQuoteObjectForDataObject,
+} from "@/lib/server/sync-quote-object-from-data-object";
 import type { DataSku } from "@/types/data-sku";
 
 const DELETE_BATCH_SIZE = 500;
@@ -73,10 +76,40 @@ export type PrepareDataObjectsResult = {
   removedDataObjects: number;
   quoteObjectsCreated: number;
   quoteObjectsUpdated: number;
+  quoteObjectsSkipped: number;
   removedQuoteObjects: number;
   objectCategoryLookupsCreated: number;
   objectCategoryLookupsAlreadyPresent: number;
 };
+
+export type PrepareDataObjectsPhase =
+  | "loading"
+  | "pruning_data_objects"
+  | "writing_data_objects"
+  | "labour_skus"
+  | "quote_objects"
+  | "pruning_quote_objects"
+  | "lookups"
+  | "done"
+  | "error";
+
+export type PrepareDataObjectsProgress = {
+  phase: PrepareDataObjectsPhase;
+  message: string;
+  percent: number;
+  done?: number;
+  total?: number;
+  quoteObjectsCreated?: number;
+  quoteObjectsUpdated?: number;
+  quoteObjectsSkipped?: number;
+  error?: string;
+  result?: PrepareDataObjectsResult;
+};
+
+function lerpPercent(from: number, to: number, done: number, total: number): number {
+  if (total <= 0) return to;
+  return Math.round(from + (Math.min(done, total) / total) * (to - from));
+}
 
 type DistinctRow = DataObjectKeyFields & { uom: string };
 
@@ -166,8 +199,13 @@ function mergeDistinctRows(
   return merged;
 }
 
-function collectDataObjectIdsByKey(snap: QuerySnapshot): Map<string, string> {
-  const byKey = new Map<string, string>();
+function collectExistingDataObjectsByKey(
+  snap: QuerySnapshot,
+): Map<string, { id: string; quoteObjectDocId: string | null; objectid: number | null }> {
+  const byKey = new Map<
+    string,
+    { id: string; quoteObjectDocId: string | null; objectid: number | null }
+  >();
   for (const doc of snap.docs) {
     if (isDataObjectsMetaDocument(doc.id)) continue;
     const data = doc.data();
@@ -177,7 +215,12 @@ function collectDataObjectIdsByKey(snap: QuerySnapshot): Map<string, string> {
       product: String(data.product ?? ""),
     });
     if (!key) continue;
-    if (!byKey.has(key)) byKey.set(key, doc.id);
+    if (byKey.has(key)) continue;
+    const quoteObjectDocId = String(data.quoteObjectDocId ?? "").trim() || null;
+    const rawId = data.objectid;
+    const objectid =
+      typeof rawId === "number" && Number.isFinite(rawId) ? rawId : null;
+    byKey.set(key, { id: doc.id, quoteObjectDocId, objectid });
   }
   return byKey;
 }
@@ -343,7 +386,17 @@ async function upsertLabourSkusFromRates(
 export async function runPrepareDataObjects(
   db: Firestore,
   options: PrepareDataObjectsOptions = {},
+  onProgress?: (event: PrepareDataObjectsProgress) => void,
 ): Promise<PrepareDataObjectsResult> {
+  const emit = (event: PrepareDataObjectsProgress) => {
+    onProgress?.(event);
+  };
+
+  emit({
+    phase: "loading",
+    message: "Loading SKUs and labour rates…",
+    percent: 2,
+  });
   await ensureDataObjectsBootstrap(db);
 
   const skuSnap = await db.collection(DATA_SKUS_COLLECTION).get();
@@ -357,26 +410,50 @@ export async function runPrepareDataObjects(
 
   let removedDataObjects = 0;
   if (options.removeDataObjectsNotInSkus) {
+    emit({
+      phase: "pruning_data_objects",
+      message: "Removing data objects not in current SKUs or labour rates…",
+      percent: 10,
+    });
     removedDataObjects = await removeDataObjectsNotInAllowedKeys(db, allowedKeys);
   }
 
   const existingSnap = await db.collection(DATA_OBJECTS_COLLECTION).get();
-  const existingByKey = collectDataObjectIdsByKey(existingSnap);
+  const existingByKey = collectExistingDataObjectsByKey(existingSnap);
 
   let created = 0;
   let mergedExisting = 0;
   const now = FieldValue.serverTimestamp();
+  const dataObjectTotal = distinctByKey.size;
+  let dataObjectIndex = 0;
 
   for (const row of distinctByKey.values()) {
+    emit({
+      phase: "writing_data_objects",
+      message: `Merging data objects ${dataObjectIndex + 1} of ${dataObjectTotal}`,
+      percent: lerpPercent(14, 38, dataObjectIndex, dataObjectTotal),
+      done: dataObjectIndex,
+      total: dataObjectTotal,
+    });
     const key = buildDataObjectKey(row);
-    const existingId = existingByKey.get(key);
-    const payload = dataObjectToFirestore(row, row.uom);
-    if (existingId) {
-      await db.collection(DATA_OBJECTS_COLLECTION).doc(existingId).update({
+    const existing = existingByKey.get(key);
+    const payload = dataObjectToFirestore(
+      row,
+      row.uom,
+      existing
+        ? {
+            quoteObjectDocId: existing.quoteObjectDocId,
+            objectid: existing.objectid,
+          }
+        : undefined,
+    );
+    if (existing) {
+      await db.collection(DATA_OBJECTS_COLLECTION).doc(existing.id).update({
         ...payload,
         updatedAt: now,
       });
       mergedExisting++;
+      dataObjectIndex++;
       continue;
     }
     const ref = db.collection(DATA_OBJECTS_COLLECTION).doc();
@@ -385,33 +462,81 @@ export async function runPrepareDataObjects(
       createdAt: now,
       updatedAt: now,
     });
-    existingByKey.set(key, ref.id);
+    existingByKey.set(key, {
+      id: ref.id,
+      quoteObjectDocId: null,
+      objectid: null,
+    });
     created++;
+    dataObjectIndex++;
   }
 
+  emit({
+    phase: "labour_skus",
+    message: "Updating labour SKUs from rates…",
+    percent: 40,
+  });
   const { created: labourSkusCreated, updated: labourSkusUpdated } =
     await upsertLabourSkusFromRates(db, labourSnap);
 
   let quoteObjectsCreated = 0;
   let quoteObjectsUpdated = 0;
+  let quoteObjectsSkipped = 0;
+  emit({
+    phase: "quote_objects",
+    message: "Loading quote objects to validate…",
+    percent: 42,
+  });
+  const quoteCache = await loadPrepareQuoteObjectCache(db);
   const afterDataObjectsSnap = await db.collection(DATA_OBJECTS_COLLECTION).get();
+  const quoteTotal = afterDataObjectsSnap.docs.reduce(
+    (n, d) => n + (isDataObjectsMetaDocument(d.id) ? 0 : 1),
+    0,
+  );
+  let quoteIndex = 0;
   for (const doc of afterDataObjectsSnap.docs) {
     if (isDataObjectsMetaDocument(doc.id)) continue;
-    const result = await syncQuoteObjectFromDataObject(db, doc.id);
-    if (result.action === "created") quoteObjectsCreated++;
-    else quoteObjectsUpdated++;
+    emit({
+      phase: "quote_objects",
+      message: `Validating quote objects ${quoteIndex + 1} of ${quoteTotal}`,
+      percent: lerpPercent(42, 92, quoteIndex, quoteTotal),
+      done: quoteIndex,
+      total: quoteTotal,
+      quoteObjectsCreated,
+      quoteObjectsUpdated,
+      quoteObjectsSkipped,
+    });
+    const action = await prepareQuoteObjectForDataObject(
+      db,
+      doc.id,
+      doc.data(),
+      quoteCache,
+    );
+    if (action === "created") quoteObjectsCreated++;
+    else quoteObjectsSkipped++;
+    quoteIndex++;
   }
 
   let removedQuoteObjects = 0;
   if (options.removeQuoteObjectsNotInDataObjects) {
+    emit({
+      phase: "pruning_quote_objects",
+      message: "Removing quote objects not in data objects…",
+      percent: 94,
+    });
     const afterSnap = await db.collection(DATA_OBJECTS_COLLECTION).get();
     const dataObjectKeys = collectDataObjectKeysFromSnap(afterSnap);
     removedQuoteObjects = await removeQuoteObjectsNotInDataObjectKeys(db, dataObjectKeys);
   }
 
+  emit({
+    phase: "lookups",
+    message: "Syncing object category lookups…",
+    percent: 97,
+  });
   const objectCategoryLookups = await syncObjectCategoryLookupsFromQuoteObjects(db);
 
-  return {
+  const result: PrepareDataObjectsResult = {
     distinctFromSkus: skuDistinct.size,
     distinctFromLabourRates: labourDistinct.size,
     created,
@@ -422,8 +547,21 @@ export async function runPrepareDataObjects(
     removedDataObjects,
     quoteObjectsCreated,
     quoteObjectsUpdated,
+    quoteObjectsSkipped,
     removedQuoteObjects,
     objectCategoryLookupsCreated: objectCategoryLookups.lookupsCreated,
     objectCategoryLookupsAlreadyPresent: objectCategoryLookups.lookupsAlreadyPresent,
   };
+  emit({
+    phase: "done",
+    message: "Prepare objects complete",
+    percent: 100,
+    done: quoteIndex,
+    total: quoteTotal,
+    quoteObjectsCreated,
+    quoteObjectsUpdated,
+    quoteObjectsSkipped,
+    result,
+  });
+  return result;
 }

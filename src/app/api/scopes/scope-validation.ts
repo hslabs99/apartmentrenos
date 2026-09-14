@@ -274,7 +274,7 @@ function normalizeObjectNameList(names: string[]): string[] {
     seen.add(n.toLowerCase());
     out.push(n);
   }
-  return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  return out;
 }
 
 function normalizeAttachedObjectTools(

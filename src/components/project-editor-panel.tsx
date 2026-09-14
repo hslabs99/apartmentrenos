@@ -6,6 +6,8 @@ import { useLookups } from "@/lib/client/use-lookups";
 import { distinctLookupValues, isAllLookupOrFilterValue } from "@/lib/lookup-list-values";
 import { LOOKUP_TYPE_STYLE } from "@/lib/lookup-types";
 import { PROJECT_STATUS_OPTIONS, type ProjectPublic, type ProjectStatus } from "@/types/project";
+import { useRedirectUnauthorizedTemplate } from "@/lib/client/use-redirect-unauthorized-template";
+import { isProjectTemplateFlag } from "@/lib/project-template";
 import type { SalesStaffPublic } from "@/types/sales-staff";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -74,6 +76,9 @@ export function ProjectEditorPanel() {
   const [quotedby, setQuotedby] = useState("");
   const [quotedon, setQuotedon] = useState("");
   const [status, setStatus] = useState<ProjectStatus>("Live");
+  const [project, setProject] = useState<ProjectPublic | null>(null);
+
+  useRedirectUnauthorizedTemplate(project, !loading && Boolean(projectDocId));
 
   const loadSalesStaff = useCallback(async () => {
     const res = await fetch("/api/sales-staff");
@@ -104,6 +109,7 @@ export function ProjectEditorPanel() {
             const data = await readApiResponse<{ project?: ProjectPublic; error?: string }>(res);
             if (!res.ok || !data.project) throw new Error(data.error ?? "Failed to load project");
             const p = data.project;
+            setProject(p);
             setNumericProjectId(
               typeof p.projectid === "number" && Number.isInteger(p.projectid) ? p.projectid : null,
             );
@@ -249,6 +255,11 @@ export function ProjectEditorPanel() {
               <span className="truncate text-xs font-medium text-sf-brand dark:text-zinc-100">
                 {projectname}
               </span>
+              {isProjectTemplateFlag(project?.template) ? (
+                <span className="inline-flex items-center rounded-full border border-sf-accent/20 bg-sf-accent-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sf-accent">
+                  Template
+                </span>
+              ) : null}
             </>
           ) : null}
         </div>

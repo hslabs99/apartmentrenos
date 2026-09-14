@@ -9,7 +9,7 @@ import {
   normalizeLoadValue,
   priceRowsAndLegacyTopLevel,
 } from "@/lib/server/quote-object-doc";
-import { renumberAllAndNextIndex } from "@/lib/server/template-sort-order";
+import { nextAppendSortOrder } from "@/lib/server/template-sort-order";
 import { quoteObjectCreateSchema } from "../quote-object-schemas";
 
 export const runtime = "nodejs";
@@ -231,11 +231,10 @@ export async function POST(req: NextRequest) {
         updated += 1;
       } else {
         const objectid = await allocateNextSequence(db, "objectid");
-        const sortOrder = await renumberAllAndNextIndex(
+        const sortOrder = await nextAppendSortOrder(
           db,
           "quote_objects",
           isQuoteObjectsMetaDocument,
-          (data) => String(data.objectname ?? ""),
         );
         const ref = db.collection("quote_objects").doc();
         await ref.set({

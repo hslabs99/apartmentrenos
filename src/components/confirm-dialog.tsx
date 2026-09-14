@@ -5,11 +5,15 @@ import type { ReactNode } from "react";
 type ConfirmDialogProps = {
   open: boolean;
   title: string;
-  description: string;
+  description: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   variant?: "danger" | "default";
   pending?: boolean;
+  /** When true, the confirm action cannot be submitted (e.g. acknowledgement required). */
+  confirmDisabled?: boolean;
+  /** Wider panel for longer warnings. */
+  wide?: boolean;
   children?: ReactNode;
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
@@ -23,6 +27,8 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   variant = "default",
   pending = false,
+  confirmDisabled = false,
+  wide = false,
   children,
   onConfirm,
   onCancel,
@@ -43,16 +49,20 @@ export function ConfirmDialog({
       aria-describedby="confirm-dialog-desc"
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="w-full max-w-md rounded-lg border border-sf-border bg-sf-surface p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+      <div
+        className={`w-full rounded-lg border border-sf-border bg-sf-surface p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900 ${
+          wide ? "max-w-lg" : "max-w-md"
+        }`}
+      >
         <h2 id="confirm-dialog-title" className="text-lg font-semibold">
           {title}
         </h2>
-        <p
+        <div
           id="confirm-dialog-desc"
           className="mt-2 text-sm text-sf-text-secondary dark:text-zinc-400"
         >
           {description}
-        </p>
+        </div>
         {children ? <div className="mt-4">{children}</div> : null}
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <button
@@ -63,7 +73,12 @@ export function ConfirmDialog({
           >
             {cancelLabel}
           </button>
-          <button type="button" onClick={() => void onConfirm()} disabled={pending} className={confirmClass}>
+          <button
+            type="button"
+            onClick={() => void onConfirm()}
+            disabled={pending || confirmDisabled}
+            className={confirmClass}
+          >
             {pending ? "Please wait…" : confirmLabel}
           </button>
         </div>

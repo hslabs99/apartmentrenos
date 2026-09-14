@@ -704,6 +704,12 @@ function dataSkuSupplierToFirestore(
     priceIncGst: row.priceIncGst,
     priceExcGst: row.priceExcGst,
     sourceSheetRows: row.sourceSheetRows,
+    append1Type: row.append1Type,
+    append1Spec: row.append1Spec,
+    append2Type: row.append2Type,
+    append2Spec: row.append2Spec,
+    append3Type: row.append3Type,
+    append3Spec: row.append3Spec,
     importRunId,
     importedAt: FieldValue.serverTimestamp(),
   };

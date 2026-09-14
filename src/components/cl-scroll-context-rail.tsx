@@ -11,6 +11,8 @@ import {
   clScrollContextRailSectionClass,
   clScrollContextRailSectionLabelClass,
 } from "@/components/cl-checklist-layout";
+import type { ChecklistHealthIssue } from "@/lib/client/checklist-project-health";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -29,6 +31,7 @@ export type ClScrollContextArea = {
 type Props = {
   areas: readonly ClScrollContextArea[];
   projectTotalLabel: string;
+  healthIssues?: readonly ChecklistHealthIssue[];
 };
 
 type RailPos = { left: number; top: number };
@@ -39,6 +42,11 @@ const JUMP_TO_TOP = "__top__";
 /** Checklist area header id — used by Jump to Area nav and the floating totals dropdown. */
 export function clAreaAnchorId(projectAreaDocId: string): string {
   return `cl-area-${projectAreaDocId}`;
+}
+
+/** Checklist / workbench line id — health check deep-links to orphaned SKU rows. */
+export function clLineAnchorId(lineId: string): string {
+  return `cl-line-${lineId}`;
 }
 
 function jumpToClTop() {
@@ -66,7 +74,11 @@ function jumpToClArea(projectAreaDocId: string) {
 function isRailInteractiveTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
-    Boolean(target.closest("select, option, button, a, input, label, textarea"))
+    Boolean(
+      target.closest(
+        "select, option, button, a, input, label, textarea, [data-cl-health-report]",
+      ),
+    )
   );
 }
 
@@ -103,18 +115,90 @@ function clampPos(pos: RailPos, el: HTMLElement): RailPos {
   };
 }
 
+const HEALTH_KIND_LABEL: Record<ChecklistHealthIssue["kind"], string> = {
+  orphan_sku: "No matching SKU",
+  underpopulated: "Incomplete Show All",
+  orphan_object: "Missing quote object",
+  redundant_scope: "Redundant scope",
+};
+
 /**
  * Fixed rail for checklist: current area name + area total + project total.
  * Tracks which area section is under the reading line as the user scrolls (desktop + tablet).
  * Drag to reposition; left/top persist in localStorage.
  */
-export function ClScrollContextRail({ areas, projectTotalLabel }: Props) {
+export function ClScrollContextRail({
+  areas,
+  projectTotalLabel,
+  healthIssues = [],
+}: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [activeAreaId, setActiveAreaId] = useState<string | null>(JUMP_TO_TOP);
   const [pos, setPos] = useState<RailPos | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [healthOpen, setHealthOpen] = useState(false);
   const railRef = useRef<HTMLElement>(null);
   const draggingRef = useRef(false);
   const offsetRef = useRef({ x: 0, y: 0 });
+
+  const issueCount = healthIssues.length;
+  const hasHealthIssues = issueCount > 0;
+
+  useEffect(() => {
+    if (!hasHealthIssues) setHealthOpen(false);
+  }, [hasHealthIssues]);
+
+  useEffect(() => {
+    if (!healthOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setHealthOpen(false);
+    }
+    function onDoc(e: MouseEvent) {
+      const el = railRef.current;
+      if (!el || el.contains(e.target as Node)) return;
+      setHealthOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDoc);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDoc);
+    };
+  }, [healthOpen]);
+
+  const jumpToIssue = useCallback(
+    (issue: ChecklistHealthIssue) => {
+      if (issue.lineId) {
+        const params = new URLSearchParams(searchParams.toString());
+        params.set("line", issue.lineId);
+        params.delete("redundant");
+        router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+        window.setTimeout(() => {
+          document
+            .getElementById(clLineAnchorId(issue.lineId!))
+            ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 80);
+        return;
+      }
+      if (issue.anchorId) {
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete("line");
+        params.set("redundant", issue.anchorId);
+        router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+        setHealthOpen(false);
+        window.setTimeout(() => {
+          document
+            .getElementById(issue.anchorId!)
+            ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 80);
+        return;
+      }
+      if (issue.areaId) jumpToClArea(issue.areaId);
+    },
+    [pathname, router, searchParams],
+  );
 
   useLayoutEffect(() => {
     const el = railRef.current;
@@ -274,7 +358,69 @@ export function ClScrollContextRail({ areas, projectTotalLabel }: Props) {
             ))}
           </select>
         </label>
+        {hasHealthIssues ? (
+          <button
+            type="button"
+            className="mt-2 block w-full text-left text-[11px] font-semibold leading-snug text-red-700 underline decoration-red-700/60 underline-offset-2 hover:text-red-900 dark:text-red-400 dark:decoration-red-400/60 dark:hover:text-red-300"
+            aria-expanded={healthOpen}
+            aria-haspopup="dialog"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => setHealthOpen((v) => !v)}
+          >
+            Attention Required
+          </button>
+        ) : (
+          <p className="mt-2 text-[10px] font-medium leading-snug text-emerald-800/80 dark:text-emerald-400/80">
+            Health Okay
+          </p>
+        )}
       </div>
+      {healthOpen && hasHealthIssues ? (
+        <div
+          data-cl-health-report
+          role="dialog"
+          aria-label="Project health report"
+          className="absolute bottom-0 left-full z-[60] ml-2 w-[22rem] max-w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-red-200 bg-white shadow-xl dark:border-red-900/70 dark:bg-zinc-900"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="border-b border-red-100 px-3 py-2 dark:border-red-900/50">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-red-800 dark:text-red-300">
+              Attention required
+            </p>
+            <p className="mt-0.5 text-xs text-sf-text-secondary dark:text-zinc-400">
+              {issueCount} item{issueCount === 1 ? "" : "s"} on this project. Open an item to
+              jump to it. Leftover questions sit at the top of the area — they are not in the
+              object list.
+            </p>
+          </div>
+          <ul className="max-h-72 overflow-y-auto py-1">
+            {healthIssues.map((issue) => (
+              <li key={issue.id}>
+                <button
+                  type="button"
+                  className="block w-full px-3 py-2 text-left hover:bg-red-50 dark:hover:bg-red-950/40"
+                  onClick={() => jumpToIssue(issue)}
+                >
+                  <span className="block text-[10px] font-semibold uppercase tracking-wide text-red-800/80 dark:text-red-300/90">
+                    {HEALTH_KIND_LABEL[issue.kind]}
+                  </span>
+                  {issue.areaName ? (
+                    <span className="mt-0.5 block text-[11px] font-semibold text-sf-text dark:text-zinc-200">
+                      Area: {issue.areaName}
+                    </span>
+                  ) : null}
+                  <span className="mt-0.5 block text-sm font-medium text-sf-text dark:text-zinc-100">
+                    {issue.label}
+                  </span>
+                  <span className="mt-0.5 block text-xs leading-snug text-sf-text-secondary dark:text-zinc-400">
+                    {issue.detail}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className={clScrollContextRailAccentBarClass} aria-hidden />
     </aside>
   );

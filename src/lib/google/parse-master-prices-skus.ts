@@ -2,6 +2,7 @@ import { buildSkuImportFromSheetRows } from "@/lib/google/build-sku-import-from-
 import {
   normalizeSkuSheetHeaderLabel,
   resolveSkuSheetHeaderField,
+  skuSheetHeaderFieldRank,
   SKU_APPEND_FIELD_KEYS,
   type SkuSheetFieldKey,
 } from "@/lib/google/resolve-sku-sheet-header-field";
@@ -281,6 +282,7 @@ export function parseMasterPricesSkuRows(
   const headerMap: Record<string, number> = {};
   /** First column index for each field — duplicate headers (A–F repeated) must not overwrite. */
   const fieldToColIndex = new Map<SheetFieldKey, number>();
+  const fieldHeaderRank = new Map<SheetFieldKey, number>();
   const detectedHeaderLabels: string[] = [];
   const unmappedHeaders: string[] = [];
   const duplicateHeaderFields: string[] = [];
@@ -293,12 +295,15 @@ export function parseMasterPricesSkuRows(
     headerMap[label] = colIndex;
     const field = resolveSkuSheetHeaderField(label);
     if (field) {
-      if (fieldToColIndex.has(field)) {
+      const rank = skuSheetHeaderFieldRank(label, field);
+      const existingRank = fieldHeaderRank.get(field) ?? -1;
+      if (!fieldToColIndex.has(field) || rank > existingRank) {
+        fieldToColIndex.set(field, colIndex);
+        fieldHeaderRank.set(field, rank);
+      } else {
         duplicateHeaderFields.push(
           `${rawLabel} (column ${colIndex + 1}, first at column ${(fieldToColIndex.get(field) ?? 0) + 1})`,
         );
-      } else {
-        fieldToColIndex.set(field, colIndex);
       }
     } else {
       unmappedHeaders.push(`${rawLabel} (column ${colIndex + 1})`);

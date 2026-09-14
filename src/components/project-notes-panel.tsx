@@ -16,6 +16,7 @@ import {
   uniqueProjectNotes,
   type ProjectNoteTarget,
 } from "@/lib/project-note-filters";
+import { useRedirectUnauthorizedTemplate } from "@/lib/client/use-redirect-unauthorized-template";
 import type { AreaPublic } from "@/types/area";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
@@ -45,6 +46,7 @@ export function ProjectNotesPanel() {
   const [error, setError] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectPublic | null>(null);
   const [numericProjectId, setNumericProjectId] = useState<number | null>(null);
+  useRedirectUnauthorizedTemplate(project, !loading && Boolean(projectDocId));
   const [areas, setAreas] = useState<AreaPublic[]>([]);
   const [projectAreas, setProjectAreas] = useState<ProjectAreaPublic[]>([]);
   const [allObjects, setAllObjects] = useState<ProjectAreaObjectPublic[]>([]);

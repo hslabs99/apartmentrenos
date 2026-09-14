@@ -11,23 +11,23 @@ import {
   type ProductKeyLogContext,
 } from "@/lib/sku/format-product-key-log";
 import {
+  EMPTY_SKU_APPEND_FIELDS,
+  skuAppendFieldsFromSource,
+} from "@/lib/sku/data-sku-append-slots";
+import {
   isValidSupplierOption,
   MAX_SUPPLIER_OPTION,
   MIN_SUPPLIER_OPTION,
+  PREFERRED_SUPPLIER_OPTION,
 } from "@/lib/sku/supplier-option";
 import type { ParsedSheetRow } from "@/lib/google/parsed-sheet-row";
 import type { DataSku } from "@/types/data-sku";
 import type { DataSkuSupplier } from "@/types/data-sku-supplier";
 import type { ImportLogDataError, ImportLogRowSample } from "@/types/import-log-types";
 
+/** Product-level text merge. Appends are per supplier row — not merged across P1/P2/P3. */
 const PRODUCT_MERGE_TEXT = [
   "uom",
-  "append1Type",
-  "append1Spec",
-  "append2Type",
-  "append2Spec",
-  "append3Type",
-  "append3Spec",
   "stockAvailable",
   "leadTime",
   "location",
@@ -198,12 +198,7 @@ export function buildSkuImportFromSheetRows(
         style: row.style.trim(),
         colourOptions: row.colourOptions.trim(),
         uom: row.uom.trim(),
-        append1Type: row.append1Type.trim(),
-        append1Spec: row.append1Spec.trim(),
-        append2Type: row.append2Type.trim(),
-        append2Spec: row.append2Spec.trim(),
-        append3Type: row.append3Type.trim(),
-        append3Spec: row.append3Spec.trim(),
+        ...EMPTY_SKU_APPEND_FIELDS,
         sheetWidth: "",
         stockAvailable: row.stockAvailable.trim(),
         leadTime: row.leadTime.trim(),
@@ -267,7 +262,24 @@ export function buildSkuImportFromSheetRows(
       priceIncGst: row.priceIncGst,
       priceExcGst: row.priceExcGst,
       sourceSheetRows: [row.sheetRowNumber],
+      // This sheet row only (P3 append stays on P3; P1/P2 stay empty if the sheet is empty).
+      ...skuAppendFieldsFromSource(row),
     });
+  }
+
+  for (const product of productsByKey.values()) {
+    const p1 = suppliers.find(
+      (s) => s.skuId === product.skuId && s.supplierOption === PREFERRED_SUPPLIER_OPTION,
+    );
+    // Product record / Data tab: P1 row only. Bundled children use the selected
+    // supplier row, so a P3-only sheet append never runs on P1 or P2.
+    const appends = p1 ? skuAppendFieldsFromSource(p1) : EMPTY_SKU_APPEND_FIELDS;
+    product.append1Type = appends.append1Type;
+    product.append1Spec = appends.append1Spec;
+    product.append2Type = appends.append2Type;
+    product.append2Spec = appends.append2Spec;
+    product.append3Type = appends.append3Type;
+    product.append3Spec = appends.append3Spec;
   }
 
   const products = [...productsByKey.values()].sort((a, b) =>

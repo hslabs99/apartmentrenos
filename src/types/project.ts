@@ -38,6 +38,17 @@ export type ProjectPublic = {
   defaultcolour?: string;
   /** Workbench margin % for this project. Null/missing = use the global settings `margin`. */
   marginpct?: number | null;
+  /**
+   * When true, this row is a template: same collections as a live project, hidden from the
+   * Projects tab, listed under Templates. Missing/false = live project.
+   */
+  template?: boolean;
+  /**
+   * When true, this row is in Archives (hidden from Projects and Templates).
+   * Separate from `status: "Archive"`, which is still a working project on the Projects tab.
+   * Missing/false = not archived.
+   */
+  archived?: boolean;
   createdAt?: string | null;
   updatedAt?: string | null;
 };

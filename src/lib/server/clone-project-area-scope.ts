@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { FieldValue, type DocumentData, type Firestore } from "firebase-admin/firestore";
+import { BLINDS_DEFAULT_MEASURE, BLINDS_DEFAULT_UOM } from "@/lib/blinds/blinds-defaults";
 import { matchesScopeInstance } from "@/lib/scope-instance";
 import { cloneLinePayload } from "@/lib/server/clone-project-area-object";
 import { parseScopeAnswersFromFirestore } from "@/lib/server/project-area-scope-answers";
@@ -9,9 +10,25 @@ export type CloneProjectAreaScopeResult = {
   lineIds: string[];
 };
 
+/** Fresh drop/width/style/colour on a cloned blinds line so the new instance can be specified independently. */
+function resetClonedBlindsLine(clone: Record<string, unknown>): void {
+  if (clone.systemObjectKind !== "blinds") return;
+  clone.blindType = null;
+  clone.blindDropMm = null;
+  clone.blindWidthMm = null;
+  clone.blindColour = null;
+  clone.skuId = null;
+  clone.skuProduct = null;
+  clone.customumprice = null;
+  clone.totalprice = null;
+  clone.custommeasure = BLINDS_DEFAULT_MEASURE;
+  clone.customuom = BLINDS_DEFAULT_UOM;
+}
+
 /**
  * Duplicate a scope instance on a project area: copies the saved answer and all scope lines
  * (including bundled children) with the same settings and values.
+ * Blinds system lines keep the answer but reset drop, width, style, and colour.
  */
 export async function cloneProjectAreaScope(
   db: Firestore,
@@ -82,6 +99,7 @@ export async function cloneProjectAreaScope(
   for (const doc of sourceScopeLineDocs) {
     const clone = cloneLinePayload(doc.data());
     clone.scopeInstanceId = newInstanceId;
+    resetClonedBlindsLine(clone);
     const newRef = await db.collection("projectareaobjects").add(clone);
     idMap.set(doc.id, newRef.id);
   }
