@@ -5,6 +5,13 @@ const applyWebpackDevConfig = !process.argv.includes("--turbopack");
 
 const nextConfig: NextConfig = {
   /**
+   * App Hosting Cloud Build OOMs in the Next.js TypeScript worker (~2GB heap on
+   * a ~4GB VM). `apphosting.yaml` sets this for BUILD only; local/CI still typecheck.
+   */
+  typescript: {
+    ignoreBuildErrors: process.env.NEXT_IGNORE_BUILD_TYPE_ERRORS === "1",
+  },
+  /**
    * VirtualBox host-only (and similar) IPs — otherwise HMR WebSocket is blocked when
    * the browser uses http://192.168.56.1:3000 instead of http://localhost:3000.
    */

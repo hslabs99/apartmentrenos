@@ -1,0 +1,14 @@
+# Firebase App Hosting Cloud Build is typically e2-medium (~4GB RAM).
+# Next.js typecheck workers OOM at the default ~2GB Node heap (local builds
+# have more RAM, which is why `npm run build` can pass here and fail on deploy).
+env:
+  - variable: NODE_OPTIONS
+    value: --max-old-space-size=3072
+    availability:
+      - BUILD
+  # Skip the in-build TypeScript worker on App Hosting. GitHub CI still runs
+  # `npm run typecheck` with more memory.
+  - variable: NEXT_IGNORE_BUILD_TYPE_ERRORS
+    value: "1"
+    availability:
+      - BUILD
