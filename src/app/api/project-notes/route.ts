@@ -16,10 +16,11 @@ const createSchema = z.object({
   projectid: z.number().int().positive(),
   areaid: z.number().int().positive().optional().nullable(),
   objectid: z.number().int().positive().optional().nullable(),
+  skuId: z.string().trim().min(1).max(64).optional().nullable(),
   notetype: z.string().min(1).max(255),
   trades: z.array(z.enum(PROJECT_NOTE_TRADE_TAGS)).default([]),
   author: z.string().min(1).max(255),
-  note: z.string().min(1).max(8000),
+  note: z.string().max(8000).optional().default(""),
 });
 
 export async function GET(req: NextRequest) {
@@ -70,11 +71,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { projectid, areaid, objectid, notetype, trades, author, note } = parsed.data;
+    const { projectid, areaid, objectid, skuId, notetype, trades, author, note } = parsed.data;
+    const skuIdValue = skuId?.trim() || null;
 
     if (objectid != null && areaid == null) {
       return NextResponse.json(
         { error: "areaid is required when objectid is set" },
+        { status: 400 },
+      );
+    }
+    if (skuIdValue != null && (objectid == null || areaid == null)) {
+      return NextResponse.json(
+        { error: "areaid and objectid are required when skuId is set" },
         { status: 400 },
       );
     }
@@ -88,6 +96,7 @@ export async function POST(req: NextRequest) {
       projectid,
       areaid: areaid ?? null,
       objectid: objectid ?? null,
+      skuId: skuIdValue,
       notetype: notetype.trim(),
       trades,
       author: author.trim(),

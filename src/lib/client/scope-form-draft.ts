@@ -5,13 +5,15 @@ import {
 import { isInheritMeasureSource, isScopeMetricInheritSource, parseScopeMetricInheritId } from "@/lib/scope-metrics";
 import type { InheritMeasureSource } from "@/types/scope-metric";
 import type { QuoteObjectPublic } from "@/types/quote-object";
+import { parseScopeToolType, type ScopeToolType } from "@/lib/scope-tools";
 import {
-  parseScopeToolType,
-  type ScopeToolType,
-} from "@/lib/scope-tools";import {
   isSystemScopeObjectId,
   systemScopeObjectLabel,
 } from "@/lib/system-scope-types";
+import {
+  quoteObjectCatalogFromRows,
+  resolveAttachedObjectNames,
+} from "@/lib/health-check/orphan-refs";
 import type { ScopeAnswerPublic, ScopeShowAllDefaultQty } from "@/types/scope";
 import { parseScopeShowAllDefaultQty } from "@/types/scope";
 
@@ -19,6 +21,7 @@ export type ScopeFormDraftAnswer = {
   answerid: string;
   label: string;
   attachedQuoteObjectIds: string[];
+  attachedObjectNameById: Partial<Record<string, string>>;
   attachedObjectTools: Partial<Record<string, ScopeToolType>>;
   attachedObjectShowAll: Partial<Record<string, boolean>>;
   attachedObjectShowAllDefault: Partial<Record<string, ScopeShowAllDefaultQty>>;
@@ -128,6 +131,7 @@ export function emptyDraftAnswer(label: string): ScopeFormDraftAnswer {
     answerid: crypto.randomUUID(),
     label,
     attachedQuoteObjectIds: [],
+    attachedObjectNameById: {},
     attachedObjectTools: {},
     attachedObjectShowAll: {},
     attachedObjectShowAllDefault: {},
@@ -151,6 +155,7 @@ export function cloneDraftAnswer(source: ScopeFormDraftAnswer): ScopeFormDraftAn
     label,
     defaultToTrue: false,
     attachedQuoteObjectIds: [...source.attachedQuoteObjectIds],
+    attachedObjectNameById: { ...source.attachedObjectNameById },
     attachedObjectTools: { ...source.attachedObjectTools },
     attachedObjectShowAll: { ...source.attachedObjectShowAll },
     attachedObjectShowAllDefault: { ...source.attachedObjectShowAllDefault },
@@ -193,6 +198,7 @@ export function publicAnswersToDraft(
   answers: ScopeAnswerPublic[],
   quoteById: Map<string, QuoteObjectPublic>,
 ): ScopeFormDraftAnswer[] {
+  const catalog = quoteObjectCatalogFromRows([...quoteById.values()]);
   return answers.map((a) => {
     let ids = [...(a.attachedQuoteObjectIds ?? [])];
     if (ids.length === 0 && (a.attachedObjectNames?.length ?? 0) > 0) {
@@ -215,10 +221,19 @@ export function publicAnswersToDraft(
       }
       ids = [...new Set(ids)];
     }
+    const attachedObjectNameById = resolveAttachedObjectNames(
+      {
+        attachedQuoteObjectIds: ids,
+        attachedObjectNames: a.attachedObjectNames ?? [],
+        attachedObjectNameById: a.attachedObjectNameById,
+      },
+      catalog,
+    );
     return {
       answerid: a.answerid,
       label: a.label,
       attachedQuoteObjectIds: ids,
+      attachedObjectNameById,
       attachedObjectTools: normalizeDraftTools(a.attachedObjectTools, ids),
       attachedObjectShowAll: normalizeDraftFlags(a.attachedObjectShowAll, ids),
       attachedObjectShowAllDefault: normalizeDraftShowAllDefault(
@@ -254,6 +269,7 @@ export function draftToPayload(
   label: string;
   attachedQuoteObjectIds: string[];
   attachedObjectNames: string[];
+  attachedObjectNameById: Record<string, string>;
   attachedObjectTools: Record<string, ScopeToolType>;
   attachedObjectShowAll: Record<string, boolean>;
   attachedObjectShowAllDefault: Record<string, ScopeShowAllDefaultQty>;
@@ -299,18 +315,23 @@ export function draftToPayload(
       attachedObjectInheritM2Source,
       quoteById,
     ) as Record<string, boolean>;
-    const names: string[] = [];    const seenNames = new Set<string>();
+    const names: string[] = [];
+    const seenNames = new Set<string>();
+    const attachedObjectNameById: Record<string, string> = {};
     for (const id of ids) {
       if (isSystemScopeObjectId(id)) {
-        const label = systemScopeObjectLabel(id);
+        const label = a.attachedObjectNameById[id]?.trim() || systemScopeObjectLabel(id);
+        attachedObjectNameById[id] = label;
         const key = label.toLowerCase();
         if (seenNames.has(key)) continue;
         seenNames.add(key);
         names.push(label);
         continue;
       }
-      const q = quoteById.get(id);
-      const n = q?.objectname.trim();
+      const live = quoteById.get(id)?.objectname.trim();
+      const stored = a.attachedObjectNameById[id]?.trim();
+      const n = live || stored;
+      if (n) attachedObjectNameById[id] = n;
       if (!n) continue;
       const key = n.toLowerCase();
       if (seenNames.has(key)) continue;
@@ -322,6 +343,7 @@ export function draftToPayload(
       label: a.label,
       attachedQuoteObjectIds: ids,
       attachedObjectNames: names,
+      attachedObjectNameById,
       attachedObjectTools,
       attachedObjectShowAll,
       attachedObjectShowAllDefault,

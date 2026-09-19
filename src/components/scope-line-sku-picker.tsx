@@ -30,7 +30,6 @@ import type { QuoteObjectPublic } from "@/types/quote-object";
 import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
 import type { SupplierDiscountByKey } from "@/lib/client/supplier-discount-price";
 import type { ColourLookupIndex } from "@/lib/sku/colour-lookup-index";
-import { PREFERRED_SUPPLIER_OPTION } from "@/lib/sku/supplier-option";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ScopeLineSkuMatchDiagnosticModal } from "@/components/scope-line-sku-match-diagnostic-modal";
 import { WbScopeLineSkuPickerModal } from "@/components/wb-scope-line-sku-picker-modal";
@@ -51,11 +50,16 @@ type Props = {
   disabled?: boolean;
   selectClassName: string;
   onSelectSku: (pick: ScopeLineSkuPick) => void;
+  /** Persist clearing the line back to no SKU (Select…). */
+  onClearSku?: () => void;
   /** compact = checklist inline row; block = workbench list */
   variant?: "compact" | "block";
   /** When false, price is shown only on the row unit-price field (workbench table). */
   showSupplierPrice?: boolean;
-  /** Persist SKU (and parent applies unit price) when exactly one pick. */
+  /**
+   * Persist SKU (and parent applies unit price) when exactly one pick.
+   * Never overwrites a SKU the line already has — only fills an empty SKU.
+   */
   autoApplySingleMatch?: boolean;
   /**
    * With autoApplySingleMatch: do not change the line’s SKU when it already has one.
@@ -129,10 +133,11 @@ export function ScopeLineSkuPicker({
   disabled = false,
   selectClassName,
   onSelectSku,
+  onClearSku,
   variant = "compact",
   showSupplierPrice = true,
   autoApplySingleMatch = false,
-  autoApplyOnlyWhenEmptySku = false,
+  autoApplyOnlyWhenEmptySku = true,
   syncUnitPriceFromPick = false,
   shortMatchLabels = false,
   inlineRow = false,
@@ -322,10 +327,38 @@ export function ScopeLineSkuPicker({
     ],
   );
 
-  const value = activeScopeLineSkuPickValue(
+  const committedValue = activeScopeLineSkuPickValue(
     line,
     skuPickerUi === "popup" ? allPriorityPicks : picks,
   );
+  const [pendingValue, setPendingValue] = useState<string | null>(null);
+  const value = pendingValue ?? committedValue;
+  /** Keep the control enabled while a pick is in-flight so the new option can paint. */
+  const selectLocked = disabled && pendingValue == null;
+  const prevDisabledRef = useRef(disabled);
+
+  useEffect(() => {
+    setPendingValue(null);
+  }, [line.id]);
+
+  useEffect(() => {
+    if (pendingValue != null && pendingValue === committedValue) {
+      setPendingValue(null);
+    }
+  }, [pendingValue, committedValue]);
+
+  useEffect(() => {
+    const wasDisabled = prevDisabledRef.current;
+    prevDisabledRef.current = disabled;
+    if (
+      wasDisabled &&
+      !disabled &&
+      pendingValue != null &&
+      pendingValue !== committedValue
+    ) {
+      setPendingValue(null);
+    }
+  }, [disabled, pendingValue, committedValue]);
 
   const autoApplyPick = useMemo(() => {
     const appendSpec = appendProductSpec.trim();
@@ -357,20 +390,26 @@ export function ScopeLineSkuPicker({
   /** One auto-apply per line + match identity (reset when match changes). */
   const autoApplyAttemptRef = useRef<string | null>(null);
   const syncPriceAttemptRef = useRef<string | null>(null);
+  /** After the user picks Select…, do not auto-apply a single match again on this line. */
+  const userClearedSkuRef = useRef(false);
 
   useEffect(() => {
     autoApplyAttemptRef.current = null;
     syncPriceAttemptRef.current = null;
-  }, [line.id, autoApplyPickKey]);
+    userClearedSkuRef.current = false;
+  }, [line.id]);
+
+  useEffect(() => {
+    autoApplyAttemptRef.current = null;
+    syncPriceAttemptRef.current = null;
+  }, [autoApplyPickKey]);
 
   useEffect(() => {
     if (!effectiveAutoApplySingleMatch || disabled || !autoApplyPick) return;
-
+    if (userClearedSkuRef.current) return;
+    // Never overwrite a stored SKU — only fill an empty one.
+    if ((line.skuId ?? "").trim()) return;
     if (scopeLineMatchesSkuPick(line, autoApplyPick)) return;
-
-    if (autoApplyOnlyWhenEmptySku) {
-      if ((line.skuId ?? "").trim()) return;
-    }
 
     const attemptKey = `${line.id}|${autoApplyPickKey}`;
     if (autoApplyAttemptRef.current === attemptKey) return;
@@ -385,42 +424,16 @@ export function ScopeLineSkuPicker({
     autoApplyPickKey,
     line.id,
     line.skuId,
-    line.supplierOption,
-    line.customumprice,
-    line.totalprice,
     effectiveAutoApplySingleMatch,
   ]);
 
-  const bundleSyncAttemptRef = useRef<string | null>(null);
-  useEffect(() => {
-    bundleSyncAttemptRef.current = null;
-  }, [line.id, line.skuId, line.supplierOption]);
-
-  /** Re-sync bundled children for the line’s current SKU + priority (never fall back to P1). */
-  useEffect(() => {
-    if (!effectiveAutoApplySingleMatch || disabled) return;
-    const skuId = line.skuId?.trim();
-    if (!skuId) return;
-    const opt = line.supplierOption ?? PREFERRED_SUPPLIER_OPTION;
-    const pick = allPriorityPicks.find(
-      (p) => p.skuId === skuId && p.supplierOption === opt,
-    );
-    if (!pick) return;
-    const key = `${line.id}|bundle|${pick.skuId}|${pick.supplierOption}`;
-    if (bundleSyncAttemptRef.current === key) return;
-    bundleSyncAttemptRef.current = key;
-    onSelectSkuRef.current(pick);
-  }, [
-    effectiveAutoApplySingleMatch,
-    disabled,
-    line.id,
-    line.skuId,
-    line.supplierOption,
-    allPriorityPicks,
-  ]);
-
+  /**
+   * Fill a missing unit price from the catalog pick. Never overwrite a stored
+   * price — that may be a user edit or a previously saved value.
+   */
   useEffect(() => {
     if (!syncUnitPriceFromPick || disabled || allPriorityPicks.length === 0) return;
+    if (line.customumprice != null) return;
     const encoded = activeScopeLineSkuPickValue(line, allPriorityPicks);
     if (!encoded) return;
     const decoded = decodeScopeLineSkuPickValue(encoded);
@@ -428,17 +441,14 @@ export function ScopeLineSkuPicker({
     const hit = allPriorityPicks.find(
       (p) => p.skuId === decoded.skuId && p.supplierOption === decoded.supplierOption,
     );
-    if (!hit || scopeLineMatchesSkuPick(line, hit)) return;
+    if (!hit || hit.priceExcGst == null) return;
+    if (scopeLineMatchesSkuPick(line, hit)) return;
     const lineSku = line.skuId?.trim();
-    if (
-      lineSku &&
-      line.supplierOption != null &&
-      (hit.skuId !== lineSku || hit.supplierOption !== line.supplierOption)
-    ) {
-      return;
-    }
+    if (!lineSku) return;
+    if (hit.skuId !== lineSku) return;
+    if (line.supplierOption != null && hit.supplierOption !== line.supplierOption) return;
 
-    const attemptKey = `${line.id}|sync|${encoded}|${hit.priceExcGst ?? ""}`;
+    const attemptKey = `${line.id}|sync|${encoded}|${hit.priceExcGst}`;
     if (syncPriceAttemptRef.current === attemptKey) return;
 
     syncPriceAttemptRef.current = attemptKey;
@@ -450,7 +460,6 @@ export function ScopeLineSkuPicker({
     line.skuId,
     line.supplierOption,
     line.customumprice,
-    line.totalprice,
     allPriorityPicks,
   ]);
 
@@ -469,12 +478,23 @@ export function ScopeLineSkuPicker({
       onAddBlankLine?.();
       return;
     }
+    if (!raw) {
+      if (!onClearSku) return;
+      userClearedSkuRef.current = true;
+      setPendingValue("");
+      onClearSku();
+      return;
+    }
     const decoded = decodeScopeLineSkuPickValue(raw);
     if (!decoded) return;
     const hit = (skuPickerUi === "popup" ? allPriorityPicks : picks).find(
       (p) => p.skuId === decoded.skuId && p.supplierOption === decoded.supplierOption,
     );
-    if (hit) onSelectSku(hit);
+    if (hit) {
+      userClearedSkuRef.current = false;
+      setPendingValue(raw);
+      onSelectSku(hit);
+    }
   };
 
   const addBlankLineOption =
@@ -638,7 +658,7 @@ export function ScopeLineSkuPicker({
           >
             <button
               type="button"
-              disabled={disabled}
+              disabled={selectLocked}
               onClick={() => setPopupOpen(true)}
               className={`h-full min-w-0 w-full truncate text-left ${selectClassName}`}
             >
@@ -666,7 +686,12 @@ export function ScopeLineSkuPicker({
           showAllPriorities={popupAllPriorities}
           onShowAllPrioritiesChange={setPopupAllPriorities}
           onClose={() => setPopupOpen(false)}
-          onPick={onSelectSku}
+          onPick={(pick) => {
+            setPendingValue(
+              encodeScopeLineSkuPickValue(pick.skuId, pick.supplierOption),
+            );
+            onSelectSku(pick);
+          }}
           onAddBlankLine={onAddBlankLine}
         />
       </>
@@ -681,12 +706,12 @@ export function ScopeLineSkuPicker({
         <select
           key={selectEpoch}
           className={`h-full min-w-0 flex-1 ${selectClassName}`}
-          disabled={disabled}
+          disabled={selectLocked}
           value={value}
           title={selectedPick ? optionTitle(selectedPick) : objectLabel}
           onChange={(e) => handleSelectChange(e.target.value)}
         >
-          {picks.length > 1 ? <option value="">Select…</option> : null}
+          <option value="">Select…</option>
           {picks.map((pick) => (
             <option
               key={encodeScopeLineSkuPickValue(pick.skuId, pick.supplierOption)}
@@ -729,7 +754,7 @@ export function ScopeLineSkuPicker({
       <select
         key={selectEpoch}
         className={selectClassName}
-        disabled={disabled}
+        disabled={selectLocked}
         value={value}
         title={selectedPick ? optionTitle(selectedPick) : objectLabel}
         onChange={(e) => handleSelectChange(e.target.value)}

@@ -14,6 +14,8 @@ const patchSchema = z.object({
   notetype: z.string().min(1).max(255),
   trades: z.array(z.enum(PROJECT_NOTE_TRADE_TAGS)).default([]),
   note: z.string().min(1).max(8000),
+  objectid: z.number().int().positive().optional().nullable(),
+  skuId: z.string().trim().min(1).max(64).optional().nullable(),
 });
 
 export async function GET(_req: NextRequest, context: RouteContext) {
@@ -56,11 +58,32 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     if (!snap.exists) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-    const { notetype, trades, note } = parsed.data;
+    const { notetype, trades, note, objectid: objectidRaw, skuId: skuIdRaw } = parsed.data;
+    const current = projectNoteDocToPublic(id, snap.data() ?? {});
+    const areaid = current.areaid;
+    const objectid = objectidRaw !== undefined ? objectidRaw : current.objectid;
+    const skuIdValue =
+      skuIdRaw !== undefined ? skuIdRaw?.trim() || null : current.skuId?.trim() || null;
+
+    if (objectid != null && areaid == null) {
+      return NextResponse.json(
+        { error: "areaid is required when objectid is set" },
+        { status: 400 },
+      );
+    }
+    if (skuIdValue != null && (objectid == null || areaid == null)) {
+      return NextResponse.json(
+        { error: "areaid and objectid are required when skuId is set" },
+        { status: 400 },
+      );
+    }
+
     await ref.update({
       notetype: notetype.trim(),
       trades,
       note: note.trim(),
+      objectid,
+      skuId: skuIdValue,
       updatedAt: FieldValue.serverTimestamp(),
     });
     const updated = projectNoteDocToPublic(id, (await ref.get()).data() ?? {});

@@ -177,6 +177,9 @@ async function readApiResponse<T>(res: Response): Promise<T> {
   throw new Error(text.slice(0, 200) || `HTTP ${res.status}`);
 }
 
+/** Only one PATCH batch at a time. */
+let persistMutex: Promise<void> = Promise.resolve();
+
 /**
  * Persist lookup silo hours from the object labour rates table for workbench lines.
  * Product type (= Description); Product only when it matches the line SKU.
@@ -187,35 +190,45 @@ export async function persistWorkbenchLookupLabour(
   objectLabourRates: DataObjectLabourRatePublic[],
   catalogSkus?: DataSkuPublic[],
 ): Promise<ProjectAreaObjectPublic[]> {
-  const updates = lookupLabourUpdatesForLines(
-    lines,
-    quoteObjects,
-    objectLabourRates,
-    catalogSkus,
-  );
-  if (updates.length === 0) return lines;
+  const prev = persistMutex;
+  let release!: () => void;
+  persistMutex = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await prev;
+  try {
+    const updates = lookupLabourUpdatesForLines(
+      lines,
+      quoteObjects,
+      objectLabourRates,
+      catalogSkus,
+    );
+    if (updates.length === 0) return lines;
 
-  let merged = mergeLookupLabourIntoLines(lines, updates);
+    let merged = mergeLookupLabourIntoLines(lines, updates);
 
-  const results = await Promise.all(
-    updates.map(async ({ id, patch }) => {
-      const res = await fetch(`/api/projectareaobjects/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      const data = await readApiResponse<{
-        projectAreaObject?: ProjectAreaObjectPublic;
-        error?: string;
-      }>(res);
-      if (!res.ok) throw new Error(data.error ?? "Failed to sync labour hours");
-      return { id, row: data.projectAreaObject ?? null };
-    }),
-  );
+    const results = await Promise.all(
+      updates.map(async ({ id, patch }) => {
+        const res = await fetch(`/api/projectareaobjects/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        const data = await readApiResponse<{
+          projectAreaObject?: ProjectAreaObjectPublic;
+          error?: string;
+        }>(res);
+        if (!res.ok) throw new Error(data.error ?? "Failed to sync labour hours");
+        return { id, row: data.projectAreaObject ?? null };
+      }),
+    );
 
-  for (const { id, row } of results) {
-    if (row) merged = merged.map((line) => (line.id === id ? row : line));
+    for (const { id, row } of results) {
+      if (row) merged = merged.map((line) => (line.id === id ? row : line));
+    }
+
+    return merged;
+  } finally {
+    release();
   }
-
-  return merged;
 }

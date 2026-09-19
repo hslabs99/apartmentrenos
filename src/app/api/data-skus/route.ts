@@ -15,8 +15,10 @@ import { isValidSupplierOption } from "@/lib/sku/supplier-option";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const includeSuppliers =
+      new URL(request.url).searchParams.get("includeSuppliers") === "1";
     const db = getAdminFirestore();
     const [skuSnap, supplierSnap] = await Promise.all([
       db.collection(DATA_SKUS_COLLECTION).get(),
@@ -49,6 +51,9 @@ export async function GET() {
       })
       .sort((a, b) => a.skuId.localeCompare(b.skuId, undefined, { sensitivity: "base" }));
 
+    if (includeSuppliers) {
+      return NextResponse.json({ items, count: items.length, suppliers: supplierItems });
+    }
     return NextResponse.json({ items, count: items.length });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to load data_skus";

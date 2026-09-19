@@ -3,7 +3,11 @@
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { consumeNdjsonStream } from "@/lib/client/consume-ndjson-stream";
 import { readApiJson } from "@/lib/client/read-api-json";
-import { healthCheckIssueCount } from "@/lib/health-check/orphan-refs";
+import {
+  formatMissingQuoteObjectItem,
+  healthCheckIssueCount,
+  missingQuoteObjectContext,
+} from "@/lib/health-check/orphan-refs";
 import { useViewMode } from "@/lib/view-mode";
 import {
   sfDataSurface,
@@ -25,12 +29,21 @@ const deepScanButtonClass = `${sfPrimaryToolbarButton} min-h-11 px-6 text-base f
 const lineLinkClass =
   "font-medium text-blue-700 underline decoration-blue-700/70 underline-offset-2 hover:text-blue-900 dark:text-blue-400 dark:decoration-blue-400/70 dark:hover:text-blue-300";
 
-function formatMissingList(ids: string[], names: string[]): string {
-  const parts = [
-    ...ids.map((id) => (id.length > 18 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id)),
-    ...names,
-  ];
-  return parts.join(", ");
+function formatMissingList(issue: {
+  missingItems: { id?: string; name?: string; beforeName?: string; afterName?: string }[];
+  missingIds: string[];
+  missingNames: string[];
+}): string {
+  if (issue.missingItems.length > 0) {
+    return issue.missingItems
+      .map((item) => {
+        const title = formatMissingQuoteObjectItem(item);
+        const context = missingQuoteObjectContext(item);
+        return context ? `${title} (${context})` : title;
+      })
+      .join("; ");
+  }
+  return issue.missingNames.join(", ");
 }
 
 function StatCard({
@@ -493,7 +506,7 @@ export function HealthCheckPanel() {
                                 <span className="font-medium text-sf-text dark:text-zinc-200">
                                   {a.answerLabel}:
                                 </span>{" "}
-                                {formatMissingList(a.missingIds, a.missingNames)}
+                                {formatMissingList(a)}
                               </div>
                             ))}
                           </td>

@@ -1,5 +1,6 @@
 import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import { ensureDataLabourratesBootstrap } from "@/lib/firestore/collection-bootstrap";
+import { clearLabourRatesCaches } from "@/lib/server/labour-hours";
 import {
   DATA_LABOURRATES_COLLECTION,
   isDataLabourratesMetaDocument,
@@ -79,6 +80,8 @@ export async function runImportLabourRates(db: Firestore): Promise<ImportLabourR
     await batch.commit();
     written += chunk.length;
   }
+
+  clearLabourRatesCaches();
 
   return {
     tabTitle: fetched.tabTitle,

@@ -28,6 +28,11 @@ import type { InheritMeasureSource, ScopeMetricPublic } from "@/types/scope-metr
 import type { ScopeShowAllDefaultQty } from "@/types/scope";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import { countSkusMatchingBaseProductKey } from "@/lib/sku/match-data-sku-filters";
+import { missingQuoteObjectTitle } from "@/lib/health-check/orphan-refs";
+import {
+  MissingQuoteObjectFacts,
+} from "@/components/missing-scope-objects-dialog";
+import type { HealthCheckMissingObject } from "@/types/health-check";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 
@@ -197,6 +202,7 @@ type PickerItem = {
   label: string;
   uom: string;
   isSystem: boolean;
+  isMissing?: boolean;
 };
 
 function displayObjectType(raw: string): string {
@@ -253,6 +259,9 @@ type Props = {
   ) => void;
   /** Current data_skus catalog — used for per-object SKU count sanity check. */
   catalogSkus?: DataSkuPublic[];
+  /** Last-saved names for attached ids that are no longer in Setup → Quote Objects. */
+  missingObjectLabels?: Record<string, string>;
+  missingObjects?: HealthCheckMissingObject[];
   disabled?: boolean;
   inputClassName: string;
 };
@@ -279,6 +288,8 @@ export function ScopeAnswerObjectPicker({
   onObjectInheritM2SourceChange,
   onObjectInheritMeasureLockedChange,
   catalogSkus = [],
+  missingObjectLabels = {},
+  missingObjects = [],
   disabled = false,
   inputClassName,
 }: Props) {
@@ -418,12 +429,32 @@ export function ScopeAnswerObjectPicker({
     return new Set(filteredGroups.map((g) => g.objecttype));
   }, [expandedTypes, filteredGroups]);
 
-  /** Preserve Setup order from `selectedIds` (drag-and-drop reorder). */
+  const missingById = useMemo(() => {
+    const map = new Map<string, HealthCheckMissingObject>();
+    for (const item of missingObjects) {
+      const id = item.id?.trim();
+      if (id) map.set(id, item);
+    }
+    return map;
+  }, [missingObjects]);
+
+  /** Preserve Setup order from `selectedIds` (drag-and-drop reorder). Missing catalog rows stay visible. */
   const selectedItems = useMemo(() => {
-    return selectedIds
-      .map((id) => byId.get(id))
-      .filter((item): item is PickerItem => item != null);
-  }, [selectedIds, byId]);
+    return selectedIds.map((id) => {
+      const existing = byId.get(id);
+      if (existing) return existing;
+      const missing = missingById.get(id);
+      const hint = missing?.name?.trim() || missingObjectLabels[id]?.trim();
+      return {
+        id,
+        objecttype: "Missing",
+        label: hint || missingQuoteObjectTitle(missing ?? { id }),
+        uom: "—",
+        isSystem: false,
+        isMissing: true,
+      } satisfies PickerItem;
+    });
+  }, [selectedIds, byId, missingObjectLabels, missingById]);
 
   function toggleExpanded(objecttype: string) {
     setExpandedTypes((prev) => {
@@ -640,9 +671,11 @@ export function ScopeAnswerObjectPicker({
                 onDragOver={handleDragOver}
                 onDrop={(e) => handleDrop(e, item.id)}
                 onDragEnd={() => setDragId(null)}
-                className={`flex flex-wrap items-center gap-2 rounded-md bg-sf-surface px-2 py-2 text-sm dark:bg-zinc-800 ${
-                  dragId === item.id ? "opacity-60 ring-2 ring-sf-brand/40" : ""
-                }`}
+                className={`flex flex-wrap items-center gap-2 rounded-md px-2 py-2 text-sm ${
+                  item.isMissing
+                    ? "border border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+                    : "bg-sf-surface dark:bg-zinc-800"
+                } ${dragId === item.id ? "opacity-60 ring-2 ring-sf-brand/40" : ""}`}
               >
                 <span
                   draggable={!disabled}
@@ -655,6 +688,21 @@ export function ScopeAnswerObjectPicker({
                 >
                   ⠿
                 </span>
+                {item.isMissing ? (
+                  <span className="min-w-0 flex-1">
+                    <MissingQuoteObjectFacts
+                      item={
+                        missingById.get(item.id) ?? {
+                          id: item.id,
+                          name: item.label !== "Removed quote object" ? item.label : undefined,
+                        }
+                      }
+                    />
+                    <span className="mt-0.5 block text-xs text-red-800 dark:text-red-300">
+                      Remove it here or attach a replacement, then save.
+                    </span>
+                  </span>
+                ) : (
                 <span className="min-w-0 flex-1 truncate" title={`${item.label} (${item.uom})`}>
                   <span className="text-xs text-sf-text-weak dark:text-zinc-400">
                     {item.objecttype} ·{" "}
@@ -677,7 +725,8 @@ export function ScopeAnswerObjectPicker({
                     </span>
                   ) : null}
                 </span>
-                {!item.isSystem ? (
+                )}
+                {!item.isSystem && !item.isMissing ? (
                   <>
                     <div
                       className="flex shrink-0 items-center gap-1.5 text-xs"

@@ -1,8 +1,19 @@
+export type HealthCheckMissingObject = {
+  id?: string;
+  name?: string;
+  /** Live (or stored) object listed immediately before this attachment. */
+  beforeName?: string;
+  /** Live (or stored) object listed immediately after this attachment. */
+  afterName?: string;
+};
+
 export type HealthCheckAnswerIssue = {
   answerid: string;
   answerLabel: string;
   missingIds: string[];
   missingNames: string[];
+  /** Display rows: name when known, otherwise the stored quote-object id. */
+  missingItems: HealthCheckMissingObject[];
 };
 
 export type HealthCheckScopeIssue = {

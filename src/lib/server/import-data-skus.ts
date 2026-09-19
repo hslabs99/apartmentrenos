@@ -1,4 +1,5 @@
 import { FieldValue, type Firestore } from "firebase-admin/firestore";
+import { clearPrimarySupplierPriceCache } from "@/lib/server/materialize-line-sku";
 import { clearDataSkusResolveCache } from "@/lib/server/resolve-sku-for-quote-object";
 import type { FetchedMasterPricesSkus } from "@/lib/google/fetch-sku-rows-from-sheet";
 import {
@@ -571,6 +572,7 @@ export async function runDataSkusImport(
     });
 
     clearDataSkusResolveCache();
+    clearPrimarySupplierPriceCache();
 
     return {
       importRunId,

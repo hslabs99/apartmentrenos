@@ -38,9 +38,10 @@ function templateAreaIdsSet(ctx: Awaited<ReturnType<typeof loadScopeAreaContext>
 export async function GET() {
   try {
     const db = getAdminFirestore();
-    const ctx = await loadScopeAreaContext(db);
-    await migrateAllLegacyScopeDocs(db, ctx.docIdByAreaid);
-    const snap = await db.collection("scopes").get();
+    const [ctx, snap] = await Promise.all([
+      loadScopeAreaContext(db),
+      db.collection("scopes").get(),
+    ]);
     const filtered = snap.docs.filter((d) => !isScopesMetaDocument(d.id));
     const areasForSort = ctx.areasOrdered.map((a) => ({
       id: a.id,

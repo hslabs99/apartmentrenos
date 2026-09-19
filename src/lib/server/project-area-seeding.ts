@@ -46,6 +46,98 @@ export async function loadQuoteByObjectIdMap(
   return quoteByObjectId;
 }
 
+const QUOTE_OBJECT_IN_CHUNK = 30;
+const QUOTE_OBJECT_GETALL_CHUNK = 100;
+
+function addQuoteSnapToObjectIdMap(
+  map: Map<number, DocumentData>,
+  docs: { id: string; data: () => DocumentData }[],
+): void {
+  for (const d of docs) {
+    if (isQuoteObjectsMetaDocument(d.id)) continue;
+    const data = d.data();
+    const oid = integerObjectId(data.objectid);
+    if (oid !== undefined && !map.has(oid)) map.set(oid, data);
+  }
+}
+
+/**
+ * Quote-object templates for the given numeric objectids. Avoids scanning the full catalog.
+ * Looks up both number and string `objectid` (legacy mixed types). Empty map on query errors.
+ */
+export async function loadQuoteMapForNumericObjectIds(
+  db: Firestore,
+  objectids: Iterable<number | undefined | null>,
+): Promise<Map<number, DocumentData>> {
+  const ids: number[] = [];
+  const seen = new Set<number>();
+  for (const raw of objectids) {
+    if (typeof raw !== "number" || !Number.isInteger(raw) || raw === 0) continue;
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    ids.push(raw);
+  }
+  const map = new Map<number, DocumentData>();
+  if (ids.length === 0) return map;
+
+  const col = db.collection("quote_objects");
+  const queries: Promise<{ docs: { id: string; data: () => DocumentData }[] } | null>[] = [];
+  for (let i = 0; i < ids.length; i += QUOTE_OBJECT_IN_CHUNK) {
+    const chunk = ids.slice(i, i + QUOTE_OBJECT_IN_CHUNK);
+    queries.push(col.where("objectid", "in", chunk).get().catch(() => null));
+    queries.push(col.where("objectid", "in", chunk.map(String)).get().catch(() => null));
+  }
+  const snaps = await Promise.all(queries);
+  for (const snap of snaps) {
+    if (!snap) continue;
+    addQuoteSnapToObjectIdMap(map, snap.docs);
+  }
+  return map;
+}
+
+/**
+ * One quote-object template for a line PATCH/GET. Avoids scanning the full catalog.
+ * Quote lookup must never fail the caller’s write — returns an empty map on error.
+ */
+export async function loadQuoteMapForNumericObjectId(
+  db: Firestore,
+  objectid: number | undefined,
+): Promise<Map<number, DocumentData>> {
+  if (objectid === undefined || !Number.isInteger(objectid) || objectid === 0) {
+    return new Map();
+  }
+  return loadQuoteMapForNumericObjectIds(db, [objectid]);
+}
+
+/** Quote-object documents by Firestore doc id (no catalog scan). */
+export async function loadQuoteDocsByIds(
+  db: Firestore,
+  docIds: Iterable<string>,
+): Promise<Map<string, DocumentData>> {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of docIds) {
+    const id = raw.trim();
+    if (!id || isQuoteObjectsMetaDocument(id) || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  const map = new Map<string, DocumentData>();
+  if (ids.length === 0) return map;
+
+  for (let i = 0; i < ids.length; i += QUOTE_OBJECT_GETALL_CHUNK) {
+    const refs = ids
+      .slice(i, i + QUOTE_OBJECT_GETALL_CHUNK)
+      .map((id) => db.collection("quote_objects").doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const snap of snaps) {
+      if (!snap.exists || isQuoteObjectsMetaDocument(snap.id)) continue;
+      map.set(snap.id, snap.data() as DocumentData);
+    }
+  }
+  return map;
+}
+
 export type ProjectAreaSeedPayload = {
   areanotes1?: string;
   areanotes2?: string;

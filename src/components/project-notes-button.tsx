@@ -6,6 +6,7 @@ import {
   ProjectNotesBrowser,
   type ProjectNoteAreaOption,
   type ProjectNoteObjectOption,
+  type ProjectNoteSkuOption,
   type ProjectNotesBrowserProps,
 } from "@/components/project-notes-browser";
 import {
@@ -17,14 +18,18 @@ import {
   clRowIconGlyphClass,
 } from "@/components/cl-checklist-layout";
 import type { ProjectNoteTarget, ProjectNoteViewFilter } from "@/lib/project-note-filters";
-import type { ProjectNotePublic } from "@/types/project-note";
-import { useState } from "react";
+import type { ProjectNotePublic, ProjectNoteUpdateBody } from "@/types/project-note";
+import { useCallback, useRef, useState } from "react";
 
-export type { ProjectNoteAreaOption, ProjectNoteObjectOption } from "@/components/project-notes-browser";
+export type { ProjectNoteAreaOption, ProjectNoteObjectOption, ProjectNoteSkuOption } from "@/components/project-notes-browser";
 
-/** 70% viewport — works on tablet (sm+) as a centered panel; dvh accounts for browser chrome. */
+/**
+ * Fill the screen minus a 2rem gutter so the dimmed backdrop stays visible
+ * (clearly a pop-up, not a full-page navigation). dvh accounts for browser chrome.
+ */
+const NOTES_MODAL_OVERLAY = "!items-center !p-0";
 const NOTES_MODAL_PANEL =
-  "!h-[70dvh] !max-h-[70dvh] !w-[70vw] !max-w-[70vw] sm:!max-w-[70vw]";
+  "!h-[calc(100dvh-4rem)] !max-h-[calc(100dvh-4rem)] !w-[calc(100vw-4rem)] !max-w-[calc(100vw-4rem)] !rounded-lg";
 
 export type ProjectNotesButtonSize =
   | "default"
@@ -48,8 +53,10 @@ type Props = {
   defaultViewFilter: ProjectNoteViewFilter;
   areaOptions: ProjectNoteAreaOption[];
   objectOptionsForArea: (areaid: number | null) => ProjectNoteObjectOption[];
+  skuOptionsForObject: (areaid: number | null, objectid: number | null) => ProjectNoteSkuOption[];
   areaLabelForNote: (areaid: number | null) => string;
   objectLabelForNote: (areaid: number | null, objectid: number | null) => string;
+  skuLabelForNote: (skuId: string | null) => string;
   noteTypeOptions: string[];
   authorFallback?: string;
   disabled?: boolean;
@@ -70,11 +77,8 @@ type Props = {
       author: string;
       note: string;
     },
-  ) => Promise<void>;
-  onUpdateNote?: (
-    noteId: string,
-    body: { notetype: string; trades: string[]; note: string },
-  ) => Promise<void>;
+  ) => Promise<ProjectNotePublic | void>;
+  onUpdateNote?: (noteId: string, body: ProjectNoteUpdateBody) => Promise<void>;
   onDeleteNote?: (noteId: string) => Promise<void>;
 };
 
@@ -95,8 +99,10 @@ export function ProjectNotesButton({
   defaultViewFilter,
   areaOptions,
   objectOptionsForArea,
+  skuOptionsForObject,
   areaLabelForNote,
   objectLabelForNote,
+  skuLabelForNote,
   noteTypeOptions,
   authorFallback = "",
   disabled = false,
@@ -120,6 +126,10 @@ export function ProjectNotesButton({
   };
 
   const [saving, setSaving] = useState(false);
+  const attemptCloseRef = useRef<() => void>(() => setOpen(false));
+  const bindAttemptClose = useCallback((fn: () => void) => {
+    attemptCloseRef.current = fn;
+  }, []);
   const resolved = resolveSize(size, compact);
 
   const badgeCount = badgeNotes.length;
@@ -167,17 +177,26 @@ export function ProjectNotesButton({
     initialViewFilter: defaultViewFilter,
     areaOptions,
     objectOptionsForArea,
+    skuOptionsForObject,
     areaLabelForNote,
     objectLabelForNote,
+    skuLabelForNote,
     noteTypeOptions,
     authorFallback,
-    disabled: disabled || saving,
+    disabled,
     initialDraftNotetype,
     focusDraftOnMount,
-    onCreateNote: async (_target, body) => {
+    onBindAttemptClose: bindAttemptClose,
+    onCreateNote: async (target, body) => {
       setSaving(true);
       try {
-        await onCreateNote(createTarget, body);
+        return await onCreateNote(
+          {
+            ...createTarget,
+            skuId: createTarget.skuId?.trim() || target.skuId?.trim() || null,
+          },
+          body,
+        );
       } finally {
         setSaving(false);
       }
@@ -219,28 +238,21 @@ export function ProjectNotesButton({
       {open ? (
         <ModalFrame
           title={`Notes — ${label}`}
-          description="Filter by area, object, and trade. Select a note on the left to view details."
+          description="Filter by area, object, SKU, and trade. Select a note on the left to view details."
           onClose={() => {
-            if (saving) return;
-            setOpen(false);
+            attemptCloseRef.current();
           }}
+          overlayClassName={NOTES_MODAL_OVERLAY}
           panelClassName={NOTES_MODAL_PANEL}
-          contentClassName="flex min-h-0 flex-1 flex-col overflow-hidden p-0"
-          footer={
-            <button
-              type="button"
-              onClick={() => {
-                if (saving) return;
-                setOpen(false);
-              }}
-              disabled={saving}
-              className="min-h-12 rounded-lg border border-sf-border-strong px-4 py-3 text-base font-medium dark:border-zinc-600"
-            >
-              Close
-            </button>
-          }
+          contentClassName="flex min-h-0 flex-1 flex-col !overflow-hidden p-0"
+          headerClose
         >
-          <ProjectNotesBrowser {...browserProps} className="min-h-0 flex-1 border-0 rounded-none" />
+          <ProjectNotesBrowser
+            {...browserProps}
+            compactLayout
+            className="min-h-0 flex-1 border-0 rounded-none"
+            onClose={() => setOpen(false)}
+          />
         </ModalFrame>
       ) : null}
     </>

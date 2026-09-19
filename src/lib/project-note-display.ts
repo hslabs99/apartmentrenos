@@ -12,9 +12,18 @@ export function formatProjectNoteDate(iso: string | null | undefined): string {
   }
 }
 
+/** First-line preview for the notes index. CSS truncate clips at the column edge. */
 export function noteIndexPreview(text: string): string {
-  const t = text.trim();
-  if (!t) return "—";
-  if (t.length <= 10) return t;
-  return `${t.slice(0, 10)}....`;
+  const t = text.trim().replace(/\s+/g, " ");
+  return t || "—";
+}
+
+export function formatProjectNoteSkuLabel(
+  skuId: string | null | undefined,
+  labelForSkuId: (skuId: string) => string | undefined,
+): string {
+  const id = skuId?.trim();
+  if (!id) return "—";
+  const label = labelForSkuId(id)?.trim();
+  return label || id;
 }

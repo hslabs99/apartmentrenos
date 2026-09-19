@@ -41,7 +41,7 @@ import { labourLineCatalogFields } from "@/lib/server/labour-checklist-line";
 import { TEMPLATE_LABOUR_SILO_KEYS } from "@/lib/labour-silo";
 import { loadProjectDimensionsByProjectId } from "@/lib/server/project-dimensions";
 import {
-  enrichLinesWithTemplateTooltips,
+  applyTemplateTooltipsFromQuoteMap,
   readTooltipFromQuoteObjectData,
 } from "@/lib/server/area-object-tooltip";
 import { docToProjectAreaObjectPublic } from "@/lib/server/project-area-object-doc";
@@ -49,7 +49,8 @@ import {
   compareProjectAreaLineOrder,
   insertProjectAreaLineAfter,
 } from "@/lib/server/project-area-line-sort";
-import { loadQuoteByObjectIdMap } from "@/lib/server/project-area-seeding";
+import { loadQuoteMapForNumericObjectIds } from "@/lib/server/project-area-seeding";
+import { serverTimingHeader } from "@/lib/server/scope-answer-timings";
 import { materializeSkuForNewProjectLine } from "@/lib/server/materialize-line-sku";
 import { resolveEffectivePriceLevelId } from "@/lib/server/resolve-effective-price-level";
 import { parseScopeMetricValuesFromFirestore } from "@/lib/server/scope-metric-values";
@@ -191,12 +192,8 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    await backfillMissingProjectAreaDocIds(db, projectid);
-
     const areaidParam = req.nextUrl.searchParams.get("areaid");
     const projectAreaDocIdParam = req.nextUrl.searchParams.get("projectAreaDocId");
-
-    const quoteByObjectId = await loadQuoteByObjectIdMap(db);
 
     let q = db.collection("projectareaobjects").where("projectid", "==", projectid);
 
@@ -242,13 +239,58 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const snap = await q.get();
-    let projectAreaObjects: ProjectAreaObjectPublic[] = snap.docs
-      .filter((d) => !isProjectAreaObjectsMetaDocument(d.id))
-      .map((d) => docToProjectAreaObjectPublic(d.id, d.data(), quoteByObjectId))
-      .sort(compareProjectAreaLineOrder);
-    projectAreaObjects = await enrichLinesWithTemplateTooltips(db, projectAreaObjects);
-    return NextResponse.json({ projectAreaObjects });
+    const listT0 = performance.now();
+    const firstSnap = await q.get();
+    const lineMissingProjectAreaDocId = firstSnap.docs.some((d) => {
+      if (isProjectAreaObjectsMetaDocument(d.id)) return false;
+      const raw = d.data().projectAreaDocId;
+      return raw == null || String(raw).trim() === "";
+    });
+    let snap = firstSnap;
+    if (lineMissingProjectAreaDocId) {
+      await backfillMissingProjectAreaDocIds(db, projectid);
+      snap = await q.get();
+    }
+    const listLinesMs = Math.round(performance.now() - listT0);
+
+    const quoteObjectIds: number[] = [];
+    for (const d of snap.docs) {
+      if (isProjectAreaObjectsMetaDocument(d.id)) continue;
+      const rawOid = d.data().objectid;
+      const oid =
+        typeof rawOid === "number"
+          ? rawOid
+          : typeof rawOid === "string" && rawOid.trim()
+            ? Number(rawOid.trim())
+            : NaN;
+      if (Number.isInteger(oid) && oid !== 0) quoteObjectIds.push(oid);
+    }
+    const quotesT0 = performance.now();
+    const quoteByObjectId = await loadQuoteMapForNumericObjectIds(db, quoteObjectIds);
+    const loadQuotesMs = Math.round(performance.now() - quotesT0);
+
+    const projectAreaObjects: ProjectAreaObjectPublic[] = applyTemplateTooltipsFromQuoteMap(
+      snap.docs
+        .filter((d) => !isProjectAreaObjectsMetaDocument(d.id))
+        .map((d) => docToProjectAreaObjectPublic(d.id, d.data(), quoteByObjectId))
+        .sort(compareProjectAreaLineOrder),
+      quoteByObjectId,
+    );
+    const timings = {
+      listLinesMs,
+      loadQuotesMs,
+      totalMs: Math.round(performance.now() - listT0),
+      lineCount: projectAreaObjects.length,
+      quoteIdCount: quoteByObjectId.size,
+    };
+    if (projectAreaDocIdParam) {
+      console.info("[projectareaobjects GET timing]", timings);
+    }
+    const header = serverTimingHeader(timings);
+    return NextResponse.json(
+      { projectAreaObjects },
+      header ? { headers: { "Server-Timing": header } } : undefined,
+    );
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to list project area objects";
     return NextResponse.json({ error: message }, { status: 500 });

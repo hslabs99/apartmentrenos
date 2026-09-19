@@ -14,6 +14,7 @@ type Props = {
   notes: ProjectNotePublic[];
   areaLabelForNote: (areaid: number | null) => string;
   objectLabelForNote: (areaid: number | null, objectid: number | null) => string;
+  skuLabelForNote: (skuId: string | null) => string;
   printedAt?: Date;
 };
 
@@ -23,6 +24,7 @@ export function ProjectNotesPrintReport({
   notes,
   areaLabelForNote,
   objectLabelForNote,
+  skuLabelForNote,
   printedAt = new Date(),
 }: Props) {
   const printedLabel = formatProjectNoteDate(printedAt.toISOString());
@@ -67,6 +69,8 @@ export function ProjectNotesPrintReport({
                 <dd>{areaLabelForNote(n.areaid)}</dd>
                 <dt className="font-medium text-zinc-600">Object</dt>
                 <dd>{objectLabelForNote(n.areaid, n.objectid)}</dd>
+                <dt className="font-medium text-zinc-600">SKU</dt>
+                <dd>{skuLabelForNote(n.skuId)}</dd>
                 <dt className="font-medium text-zinc-600">Type</dt>
                 <dd>{n.notetype || "—"}</dd>
                 <dt className="font-medium text-zinc-600">Trades</dt>
@@ -91,16 +95,20 @@ export function projectNotesFilterLabel(
   filter: ProjectNoteViewFilter,
   areaLabelForId: (areaid: number) => string | undefined,
   objectLabelForId: (objectid: number) => string | undefined,
+  skuLabelForId?: (skuId: string) => string | undefined,
 ): string {
   const areaid = filter.areaid ?? null;
   const objectid = filter.objectid ?? null;
+  const skuId = filter.skuId?.trim() || null;
   let scope: string;
   if (areaid == null && objectid == null) {
     scope = "All areas · all objects";
   } else if (areaid != null && objectid != null) {
     const area = areaLabelForId(areaid) ?? `Area ${areaid}`;
     const obj = objectLabelForId(objectid) ?? `Object ${objectid}`;
-    scope = `${area} · ${obj}`;
+    scope = skuId
+      ? `${area} · ${obj} · ${skuLabelForId?.(skuId) ?? skuId}`
+      : `${area} · ${obj}`;
   } else if (areaid != null) {
     scope = `${areaLabelForId(areaid) ?? `Area ${areaid}`} · all objects`;
   } else {

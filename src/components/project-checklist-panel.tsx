@@ -5,6 +5,7 @@ import {
   CascadeStyleColourFields,
 } from "@/components/cascade-style-colour-fields";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ScopeAnswerProgressDialog, type ScopeAnswerProgress } from "@/components/scope-answer-progress-dialog";
 import {
   ClNonStdTierModal,
   ClNonStdTierOpenButton,
@@ -92,7 +93,7 @@ import {
   ScopeLineBundledChildren,
   type WorkbenchBundledContext,
 } from "@/components/scope-line-bundled-children";
-import { applyScopeLineSkuWithBundledChildren } from "@/lib/client/apply-scope-line-sku-selection";
+import { applyScopeLineSkuWithBundledChildren, clearScopeLineSkuWithBundledChildren } from "@/lib/client/apply-scope-line-sku-selection";
 import {
   buildBuildingElementIndex,
   findBuildingElementForLine,
@@ -142,6 +143,7 @@ import {
   WB_ICON_GLYPH_CLASS,
   type ProjectNoteAreaOption,
   type ProjectNoteObjectOption,
+  type ProjectNoteSkuOption,
 } from "@/components/project-notes-button";
 import { ModalFrame } from "@/components/modal-frame";
 import { CascadeElevateSelect } from "@/components/cascade-elevate-select";
@@ -213,7 +215,7 @@ import type { DataLabourRatePublic } from "@/types/data-labour-rate-public";
 import type { DataObjectLabourRatePublic } from "@/types/data-object-labour-rate-public";
 import { distinctLookupValues } from "@/lib/lookup-list-values";
 import {
-  filterNotesForTarget,
+  filterNotesForView,
   uniqueNoteAreaOptionsByAreaId,
   uniqueProjectNotes,
   type ProjectNoteTarget,
@@ -235,7 +237,11 @@ import {
   formatCurrencyInput,
   parseCurrencyInput,
 } from "@/lib/client/format-money";
+import { collectProjectNoteSkuOptions, noteTargetSkuIdForLine } from "@/lib/client/project-note-sku-options";
+import { formatProjectNoteSkuLabel } from "@/lib/project-note-display";
 import { loadCatalogSkuData } from "@/lib/client/load-catalog-sku-data";
+import { catalogJsonGet } from "@/lib/client/catalog-fetch-cache";
+import { CHECKLIST_FAST_BOOT } from "@/lib/client/checklist-fast-boot";
 import { downloadProjectWorkbenchXls } from "@/lib/project-workbench-export-xls";
 import {
   buildWorkbenchTradeReport,
@@ -260,8 +266,6 @@ import { WorkbenchPurchasingListReportWindow } from "@/components/workbench-purc
 import { supplierDiscountByKeyFromRows } from "@/lib/client/supplier-discount-price";
 import type { DataSupplierDiscountPublic } from "@/types/data-supplier-discount-public";
 import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
-import { scopeAnswerNeedsShowAllLineSync } from "@/lib/client/scope-show-all-sync";
-import { scopeAnswerNeedsZeroSkuRowSync } from "@/lib/client/scope-suppress-zero-sku-rows";
 import {
   isScopeAnswerForceAvailable,
   scopeAnswerForceAvailabilityById,
@@ -276,7 +280,7 @@ import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import type { ProjectAreaPublic, ProjectAreaStatus } from "@/types/project-area";
 import type { ProjectPublic } from "@/types/project";
 import type { ProjectAreaAnswerPublic } from "@/types/project-area-answer";
-import type { ProjectNotePublic } from "@/types/project-note";
+import type { ProjectNotePublic, ProjectNoteUpdateBody } from "@/types/project-note";
 import type { QuoteObjectPublic } from "@/types/quote-object";
 import type { ScopePublic } from "@/types/scope";
 import type { SettingPublic } from "@/types/setting";
@@ -470,6 +474,9 @@ function clScopeObjectRepopulateState(
       : "";
   return { show, expectedCount, actualCount, orphanCount, tooltip };
 }
+
+const SCOPE_FORCE_UNAVAILABLE_TITLE =
+  "This answer’s Force objects have no matching SKUs at the current Elevate, style, and colour (or an object is missing). Existing lines were not changed.";
 
 function lineSourceLabel(row: ProjectAreaObjectPublic): string {
   const s = row.linesource;
@@ -790,9 +797,8 @@ export function ProjectChecklistPanel({
     [supplierDiscounts],
   );
   const [scopeAnswerSaving, setScopeAnswerSaving] = useState<string | null>(null);
+  const [scopeAnswerProgress, setScopeAnswerProgress] = useState<ScopeAnswerProgress | null>(null);
   const [redundantPurgeSaving, setRedundantPurgeSaving] = useState(false);
-  /** Scope questions auto-cleared because Force objects had no SKUs at current filters. */
-  const [forceNaAlertKeys, setForceNaAlertKeys] = useState<Set<string>>(() => new Set());
   const baseStyleOptions = useMemo(() => {
     const out = distinctLookupValues(lookups, LOOKUP_TYPE_STYLE);
     return { out, seen: new Set(out) };
@@ -878,46 +884,58 @@ export function ProjectChecklistPanel({
   }, []);
 
   const loadAreas = useCallback(async () => {
-    const res = await fetch("/api/areas");
-    const data = (await res.json()) as { areas?: AreaPublic[]; error?: string };
-    if (!res.ok) throw new Error(data.error ?? "Failed to load areas");
+    const { ok, data } = await catalogJsonGet<{ areas?: AreaPublic[]; error?: string }>(
+      "/api/areas",
+    );
+    if (!ok) throw new Error(data.error ?? "Failed to load areas");
     setAreas(data.areas ?? []);
   }, []);
 
   const loadQuoteObjects = useCallback(async () => {
-    const res = await fetch("/api/quote-objects");
-    const data = (await res.json()) as { quoteObjects?: QuoteObjectPublic[]; error?: string };
-    if (!res.ok) throw new Error(data.error ?? "Failed to load quote objects");
+    const { ok, data } = await catalogJsonGet<{
+      quoteObjects?: QuoteObjectPublic[];
+      error?: string;
+    }>("/api/quote-objects");
+    if (!ok) throw new Error(data.error ?? "Failed to load quote objects");
     setQuoteObjects(data.quoteObjects ?? []);
   }, []);
 
   const loadScopes = useCallback(async () => {
-    const res = await fetch("/api/scopes");
-    const data = (await res.json()) as { scopes?: ScopePublic[]; error?: string };
-    if (!res.ok) throw new Error(data.error ?? "Failed to load scopes");
+    const { ok, data } = await catalogJsonGet<{ scopes?: ScopePublic[]; error?: string }>(
+      "/api/scopes",
+    );
+    if (!ok) throw new Error(data.error ?? "Failed to load scopes");
     setScopes(data.scopes ?? []);
   }, []);
 
   const loadCascades = useCallback(async () => {
-    const res = await fetch("/api/cascades");
-    const data = (await res.json()) as {
-      items?: { level: string; style: string; colour: string }[];
-      error?: string;
-    };
-    if (!res.ok) throw new Error(data.error ?? "Failed to load cascades");
-    setCascades(
-      (data.items ?? []).map((r) => ({
-        level: r.level,
-        style: r.style,
-        colour: r.colour,
-      })),
-    );
+    try {
+      const { ok, data } = await catalogJsonGet<{
+        items?: { level: string; style: string; colour: string }[];
+        error?: string;
+      }>("/api/cascades");
+      if (!ok) {
+        setCascades([]);
+        return;
+      }
+      setCascades(
+        (data.items ?? []).map((r) => ({
+          level: r.level,
+          style: r.style,
+          colour: r.colour,
+        })),
+      );
+    } catch {
+      setCascades([]);
+    }
   }, []);
 
   const loadPriceLevels = useCallback(async () => {
-    const res = await fetch("/api/price-levels");
-    const data = (await res.json()) as { priceLevels?: PriceLevelPublic[]; error?: string };
-    if (!res.ok) throw new Error(data.error ?? "Failed to load price levels");
+    const { ok, data } = await catalogJsonGet<{
+      priceLevels?: PriceLevelPublic[];
+      error?: string;
+    }>("/api/price-levels");
+    if (!ok) throw new Error(data.error ?? "Failed to load price levels");
     setPriceLevels(data.priceLevels ?? []);
   }, []);
 
@@ -929,9 +947,10 @@ export function ProjectChecklistPanel({
 
   const loadBlindsData = useCallback(async () => {
     try {
-      const res = await fetch("/api/data-blinds");
-      const data = (await res.json()) as { items?: DataBlindPublic[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Failed to load blinds prices");
+      const { ok, data } = await catalogJsonGet<{ items?: DataBlindPublic[]; error?: string }>(
+        "/api/data-blinds",
+      );
+      if (!ok) throw new Error(data.error ?? "Failed to load blinds prices");
       setBlindsData(data.items ?? []);
     } catch {
       setBlindsData([]);
@@ -940,9 +959,11 @@ export function ProjectChecklistPanel({
 
   const loadBuildingElements = useCallback(async () => {
     try {
-      const res = await fetch("/api/building-elements");
-      const data = (await res.json()) as { items?: DataBuildingElementPublic[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Failed to load building elements");
+      const { ok, data } = await catalogJsonGet<{
+        items?: DataBuildingElementPublic[];
+        error?: string;
+      }>("/api/building-elements");
+      if (!ok) throw new Error(data.error ?? "Failed to load building elements");
       setBuildingElements(data.items ?? []);
     } catch {
       setBuildingElements([]);
@@ -951,9 +972,11 @@ export function ProjectChecklistPanel({
 
   const loadPaintingElements = useCallback(async () => {
     try {
-      const res = await fetch("/api/painting-elements");
-      const data = (await res.json()) as { items?: DataPaintingElementPublic[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Failed to load painting elements");
+      const { ok, data } = await catalogJsonGet<{
+        items?: DataPaintingElementPublic[];
+        error?: string;
+      }>("/api/painting-elements");
+      if (!ok) throw new Error(data.error ?? "Failed to load painting elements");
       setPaintingElements(data.items ?? []);
     } catch {
       setPaintingElements([]);
@@ -970,23 +993,46 @@ export function ProjectChecklistPanel({
       error?: string;
     };
     if (!objRes.ok) throw new Error(objData.error ?? "Failed to reload line items");
-    let lines = objData.projectAreaObjects ?? [];
-    if (mode === "workbench" && lines.length > 0) {
-      try {
-        lines = await persistWorkbenchLookupLabour(
-          lines,
-          quoteObjects,
-          objectLabourRates,
-          catalogSkus,
-        );
-      } catch (e) {
-        setError(
-          e instanceof Error ? e.message : "Failed to sync labour hours from rates table",
-        );
-      }
+    setAllObjects(objData.projectAreaObjects ?? []);
+  }, [projectDocId]);
+
+  const reloadLineItemsForArea = useCallback(
+    async (projectAreaDocId: string) => {
+      if (!projectDocId) return;
+      const objRes = await fetch(
+        `/api/projectareaobjects?projectDocId=${encodeURIComponent(projectDocId)}&projectAreaDocId=${encodeURIComponent(projectAreaDocId)}`,
+      );
+      const objData = (await objRes.json()) as {
+        projectAreaObjects?: ProjectAreaObjectPublic[];
+        error?: string;
+      };
+      if (!objRes.ok) throw new Error(objData.error ?? "Failed to reload line items");
+      const areaLines = objData.projectAreaObjects ?? [];
+      setAllObjects((prev) => {
+        const rest = prev.filter((o) => o.projectAreaDocId !== projectAreaDocId);
+        return [...rest, ...areaLines];
+      });
+    },
+    [projectDocId],
+  );
+
+  /** Restore one saved row from the server without replacing sibling lines. */
+  const reloadLineItemById = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/projectareaobjects/${id}`);
+      const data = await readApiResponse<{
+        projectAreaObject?: ProjectAreaObjectPublic;
+        error?: string;
+      }>(res);
+      if (!res.ok || !data.projectAreaObject) return false;
+      setAllObjects((prev) =>
+        prev.map((o) => (o.id === id ? data.projectAreaObject! : o)),
+      );
+      return true;
+    } catch {
+      return false;
     }
-    setAllObjects(lines);
-  }, [projectDocId, mode, quoteObjects, objectLabourRates, catalogSkus]);
+  }, []);
 
   const reloadProjectAreas = useCallback(async () => {
     if (!projectDocId) return;
@@ -1013,7 +1059,9 @@ export function ProjectChecklistPanel({
 
   const reloadProjectNotes = useCallback(async () => {
     if (!projectDocId) return;
-    await fetch("/api/project-notes/init", { method: "POST" });
+    if (!CHECKLIST_FAST_BOOT) {
+      await fetch("/api/project-notes/init", { method: "POST" });
+    }
     const res = await fetch(
       `/api/project-notes?projectDocId=${encodeURIComponent(projectDocId)}`,
     );
@@ -1038,6 +1086,7 @@ export function ProjectChecklistPanel({
           projectid: numericProjectId,
           areaid: target.areaid ?? null,
           objectid: target.objectid ?? null,
+          skuId: target.skuId?.trim() || null,
           ...body,
         }),
       });
@@ -1049,6 +1098,7 @@ export function ProjectChecklistPanel({
         throw new Error(data.error ?? "Failed to save note");
       }
       setProjectNotes((prev) => uniqueProjectNotes([data.projectNote!, ...prev]));
+      return data.projectNote;
     },
     [numericProjectId],
   );
@@ -1056,7 +1106,7 @@ export function ProjectChecklistPanel({
   const updateProjectNote = useCallback(
     async (
       noteId: string,
-      body: { notetype: string; trades: string[]; note: string },
+      body: ProjectNoteUpdateBody,
     ) => {
       const res = await fetch(`/api/project-notes/${encodeURIComponent(noteId)}`, {
         method: "PATCH",
@@ -1186,15 +1236,25 @@ export function ProjectChecklistPanel({
     [patchProjectArea],
   );
 
+  /** Dropdown / checkbox, or Default-to-true on an unanswered scope. Never call from load-time line-count sync — that deletes lines and resets measures. */
   const applyScopeAnswer = useCallback(
     async (
       pa: ProjectAreaPublic,
       scopeDocId: string,
       answerid: string | null,
       scopeInstanceId?: string | null,
+      progress?: { question: string; answerLabel: string | null } | null,
     ) => {
       setScopeAnswerSaving(scopeAnswerSavingKey(scopeDocId, scopeInstanceId));
+      if (progress) {
+        setScopeAnswerProgress({
+          question: progress.question,
+          answerLabel: progress.answerLabel,
+          phase: "saving",
+        });
+      }
       setError(null);
+      const started = performance.now();
       try {
         const res = await fetch(
           `/api/projectareas/${encodeURIComponent(pa.id)}/scope-answer`,
@@ -1212,15 +1272,19 @@ export function ProjectChecklistPanel({
           projectArea?: ProjectAreaPublic;
           linesAdded?: number;
           linesRemoved?: number;
+          removedLineIds?: string[];
+          addedLines?: ProjectAreaObjectPublic[];
           diagnostics?: {
             effectivePriceLevelId: number | null;
             noLinesReason?: string;
             attachedCategories?: string[];
             answerTierIds?: number[];
+            timings?: Record<string, number | boolean | string>;
           };
           error?: string;
         }>(res);
         if (!res.ok) throw new Error(data.error ?? "Failed to update scope answer");
+        const saveMs = Math.round(performance.now() - started);
         if (typeof data.linesAdded === "number") {
           console.debug("[scope-answer]", {
             linesAdded: data.linesAdded,
@@ -1232,7 +1296,8 @@ export function ProjectChecklistPanel({
             answerid != null &&
             data.diagnostics?.noLinesReason &&
             data.diagnostics.noLinesReason !== "answer_cleared" &&
-            data.diagnostics.noLinesReason !== "zero_sku_rows_suppressed"
+            data.diagnostics.noLinesReason !== "zero_sku_rows_suppressed" &&
+            data.diagnostics.noLinesReason !== "no_objects_configured"
           ) {
             console.warn(
               "[scope-answer] No lines were added. Check diagnostics (often: no categories on the answer, no matching quote objects, or re-save scopes under Setup → Scopes).",
@@ -1245,156 +1310,76 @@ export function ProjectChecklistPanel({
             prev.map((p) => (p.id === data.projectArea!.id ? data.projectArea! : p)),
           );
         }
-        await reloadLineItems();
+        if (progress) {
+          setScopeAnswerProgress({
+            question: progress.question,
+            answerLabel: progress.answerLabel,
+            phase: "refreshing",
+          });
+        }
+        const refreshStarted = performance.now();
+        const addedLines = data.addedLines;
+        const removedLineIds = data.removedLineIds;
+        const canPatchLines =
+          Array.isArray(removedLineIds) &&
+          Array.isArray(addedLines) &&
+          (data.linesAdded ?? 0) === addedLines.length;
+        if (canPatchLines) {
+          const gone = new Set(removedLineIds);
+          setAllObjects((prev) => {
+            const rest = prev.filter((o) => !gone.has(o.id));
+            return [...rest, ...addedLines];
+          });
+        } else {
+          await reloadLineItemsForArea(pa.id);
+        }
+        const refreshMs = Math.round(performance.now() - refreshStarted);
+        const totalMs = Math.round(performance.now() - started);
+        console.info("[scope-answer timing]", {
+          question: progress?.question,
+          answerLabel: progress?.answerLabel ?? "(cleared)",
+          saveMs,
+          refreshMs,
+          totalMs,
+          patchedLines: canPatchLines,
+          linesAdded: data.linesAdded,
+          linesRemoved: data.linesRemoved,
+          server: data.diagnostics?.timings,
+        });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Scope answer update failed");
         await reloadProjectAreas();
       } finally {
         setScopeAnswerSaving(null);
+        setScopeAnswerProgress(null);
       }
     },
-    [reloadLineItems, reloadProjectAreas],
+    [reloadLineItemsForArea, reloadProjectAreas],
   );
 
-  const showAllSyncInFlightRef = useRef(new Set<string>());
-  const showAllSyncDoneRef = useRef(new Set<string>());
-  const forceClearInFlightRef = useRef(new Set<string>());
+  const applyScopeAnswerFromUi = useCallback(
+    (
+      pa: ProjectAreaPublic,
+      scope: ScopePublic,
+      answerid: string | null,
+      scopeInstanceId?: string | null,
+    ) => {
+      const answerLabel = answerid
+        ? scope.answers.find((a) => a.answerid === answerid)?.label.trim() || "this answer"
+        : null;
+      return applyScopeAnswer(pa, scope.id, answerid, scopeInstanceId, {
+        question: scope.question.trim() || "this question",
+        answerLabel,
+      });
+    },
+    [applyScopeAnswer],
+  );
+
   const defaultTrueApplyInFlightRef = useRef(new Set<string>());
-  const zeroSkuSyncDoneRef = useRef(new Set<string>());
-
-  const clearForceNaAlert = useCallback((paId: string, scopeDocId: string) => {
-    const key = `${paId}:${scopeDocId}`;
-    setForceNaAlertKeys((prev) => {
-      if (!prev.has(key)) return prev;
-      const next = new Set(prev);
-      next.delete(key);
-      return next;
-    });
-  }, []);
-
-  /** Re-apply scope answers when Show All was configured in Setup but lines are still a single SKU dropdown row. */
-  useEffect(() => {
-    if (!projectDocId || scopes.length === 0 || quoteObjects.length === 0) return;
-
-    for (const pa of projectAreas) {
-      for (const entry of pa.scopeAnswers ?? []) {
-        if (!entry.answerid) continue;
-        const scope = scopes.find((s) => s.id === entry.scopeDocId);
-        if (!scope) continue;
-        const scopeLines = allObjects.filter(
-          (o) =>
-            o.projectAreaDocId === pa.id &&
-            o.linesource === "scope" &&
-            o.scopeDocId === entry.scopeDocId &&
-            matchesScopeInstance(o.scopeInstanceId, entry.scopeInstanceId),
-        );
-        if (
-          !scopeAnswerNeedsShowAllLineSync(scope, entry.answerid, scopeLines, quoteObjects)
-        ) {
-          continue;
-        }
-        const key = `${pa.id}:${scopeAnswerSavingKey(entry.scopeDocId, entry.scopeInstanceId)}`;
-        if (showAllSyncDoneRef.current.has(key)) continue;
-        if (showAllSyncInFlightRef.current.has(key)) continue;
-        if (
-          scopeAnswerSaving ===
-          scopeAnswerSavingKey(entry.scopeDocId, entry.scopeInstanceId)
-        ) {
-          continue;
-        }
-        showAllSyncDoneRef.current.add(key);
-        showAllSyncInFlightRef.current.add(key);
-        void applyScopeAnswer(
-          pa,
-          entry.scopeDocId,
-          entry.answerid,
-          entry.scopeInstanceId,
-        ).finally(() => {
-          showAllSyncInFlightRef.current.delete(key);
-        });
-      }
-    }
-  }, [
-    projectDocId,
-    projectAreas,
-    scopes,
-    quoteObjects,
-    allObjects,
-    applyScopeAnswer,
-    scopeAnswerSaving,
-  ]);
-
-  /** Clear scope answers when Force objects no longer have matching SKUs at tier/style/colour. */
-  useEffect(() => {
-    if (
-      !projectDocId ||
-      scopes.length === 0 ||
-      quoteObjects.length === 0 ||
-      catalogSkus.length === 0
-    ) {
-      return;
-    }
-
-    for (const pa of projectAreas) {
-      const filters = scopeSkuFiltersForProjectArea(pa, project, priceLevels, cascades);
-      for (const entry of pa.scopeAnswers ?? []) {
-        if (!entry.answerid) continue;
-        const scope = scopes.find((s) => s.id === entry.scopeDocId);
-        if (!scope) continue;
-        if (
-          !scopeAnswerNeedsForceClear(
-            scope,
-            entry.answerid,
-            quoteObjects,
-            catalogSkus,
-            filters,
-            skuMatchOptions,
-          )
-        ) {
-          continue;
-        }
-        const key = `${pa.id}:${entry.scopeDocId}`;
-        if (forceClearInFlightRef.current.has(key)) continue;
-        if (
-          scopeAnswerSaving ===
-          scopeAnswerSavingKey(entry.scopeDocId, entry.scopeInstanceId)
-        ) {
-          continue;
-        }
-        forceClearInFlightRef.current.add(key);
-        setForceNaAlertKeys((prev) => {
-          if (prev.has(key)) return prev;
-          const next = new Set(prev);
-          next.add(key);
-          return next;
-        });
-        void applyScopeAnswer(
-          pa,
-          entry.scopeDocId,
-          null,
-          entry.scopeInstanceId,
-        ).finally(() => {
-          forceClearInFlightRef.current.delete(key);
-        });
-      }
-    }
-  }, [
-    projectDocId,
-    projectAreas,
-    scopes,
-    quoteObjects,
-    catalogSkus,
-    project,
-    priceLevels,
-    cascades,
-    applyScopeAnswer,
-    scopeAnswerSaving,
-    skuMatchOptions,
-  ]);
 
   /** Auto-select the answer marked Default to true when the scope is still unanswered. */
   useEffect(() => {
-    if (!projectDocId || scopes.length === 0 || areas.length === 0) return;
+    if (loading || !projectDocId || scopes.length === 0 || areas.length === 0) return;
 
     for (const pa of projectAreas) {
       const filters = scopeSkuFiltersForProjectArea(pa, project, priceLevels, cascades);
@@ -1428,6 +1413,13 @@ export function ProjectChecklistPanel({
               matchesScopeInstance(e.scopeInstanceId, scopeInstanceId),
           );
           if (saved?.answerid) continue;
+          const hasExistingLines = rows.some(
+            (r) =>
+              r.linesource === "scope" &&
+              r.scopeDocId === scope.id &&
+              matchesScopeInstance(r.scopeInstanceId, scopeInstanceId),
+          );
+          if (hasExistingLines) continue;
           const key = scopeAnswerSavingKey(`${pa.id}:${scope.id}`, scopeInstanceId);
           if (defaultTrueApplyInFlightRef.current.has(key)) continue;
           if (
@@ -1457,83 +1449,7 @@ export function ProjectChecklistPanel({
     applyScopeAnswer,
     scopeAnswerSaving,
     skuMatchOptions,
-  ]);
-
-  /** Re-apply answers so Suppress 0 SKU Rows tracks tier/style/colour SKU availability. */
-  useEffect(() => {
-    if (
-      !projectDocId ||
-      scopes.length === 0 ||
-      quoteObjects.length === 0 ||
-      catalogSkus.length === 0
-    ) {
-      return;
-    }
-
-    for (const pa of projectAreas) {
-      const filters = scopeSkuFiltersForProjectArea(pa, project, priceLevels, cascades);
-      for (const entry of pa.scopeAnswers ?? []) {
-        if (!entry.answerid) continue;
-        const scope = scopes.find((s) => s.id === entry.scopeDocId);
-        if (!scope) continue;
-        const scopeLines = allObjects.filter(
-          (o) =>
-            o.projectAreaDocId === pa.id &&
-            o.linesource === "scope" &&
-            o.scopeDocId === entry.scopeDocId &&
-            matchesScopeInstance(o.scopeInstanceId, entry.scopeInstanceId),
-        );
-        if (
-          !scopeAnswerNeedsZeroSkuRowSync(
-            scope,
-            entry.answerid,
-            scopeLines,
-            quoteObjects,
-            catalogSkus,
-            filters,
-            skuMatchOptions,
-          )
-        ) {
-          continue;
-        }
-        const syncKey = [
-          pa.id,
-          entry.scopeDocId,
-          entry.scopeInstanceId ?? "",
-          entry.answerid,
-          filters.elevateLevel,
-          filters.style,
-          filters.colour,
-        ].join(":");
-        if (zeroSkuSyncDoneRef.current.has(syncKey)) continue;
-        if (
-          scopeAnswerSaving ===
-          scopeAnswerSavingKey(entry.scopeDocId, entry.scopeInstanceId)
-        ) {
-          continue;
-        }
-        zeroSkuSyncDoneRef.current.add(syncKey);
-        void applyScopeAnswer(
-          pa,
-          entry.scopeDocId,
-          entry.answerid,
-          entry.scopeInstanceId,
-        );
-      }
-    }
-  }, [
-    projectDocId,
-    projectAreas,
-    scopes,
-    quoteObjects,
-    catalogSkus,
-    allObjects,
-    project,
-    priceLevels,
-    cascades,
-    applyScopeAnswer,
-    scopeAnswerSaving,
-    skuMatchOptions,
+    loading,
   ]);
 
   const addExtraScopeToArea = useCallback(
@@ -1626,6 +1542,17 @@ export function ProjectChecklistPanel({
     async (id: string, body: Record<string, unknown>) => {
       const shouldRecalcLookupLabour =
         body.custommeasure !== undefined || body.customuom !== undefined;
+      const areaDocId =
+        allObjects.find((o) => o.id === id)?.projectAreaDocId?.trim() || "";
+
+      const restoreAfterWriteGap = async () => {
+        if (await reloadLineItemById(id)) return;
+        if (areaDocId) {
+          await reloadLineItemsForArea(areaDocId);
+          return;
+        }
+        await reloadLineItems();
+      };
 
       setRowSavingId(id);
       setError(null);
@@ -1635,6 +1562,30 @@ export function ProjectChecklistPanel({
           prev.map((o) =>
             o.id === id ? { ...o, included: body.included as boolean } : o,
           ),
+        );
+      }
+
+      if (
+        body.skuId !== undefined ||
+        body.skuProduct !== undefined ||
+        body.supplierOption !== undefined
+      ) {
+        setAllObjects((prev) =>
+          prev.map((o) => {
+            if (o.id !== id) return o;
+            return {
+              ...o,
+              ...(body.skuId !== undefined
+                ? { skuId: body.skuId as string | null }
+                : {}),
+              ...(body.skuProduct !== undefined
+                ? { skuProduct: body.skuProduct as string | null }
+                : {}),
+              ...(body.supplierOption !== undefined
+                ? { supplierOption: body.supplierOption as number | null }
+                : {}),
+            };
+          }),
         );
       }
 
@@ -1679,17 +1630,25 @@ export function ProjectChecklistPanel({
           setAllObjects((prev) =>
             prev.map((o) => (o.id === id ? data.projectAreaObject! : o)),
           );
-        } else if (shouldRecalcLookupLabour) {
-          await reloadLineItems();
+        } else {
+          await restoreAfterWriteGap();
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Save failed");
-        await reloadLineItems();
+        await restoreAfterWriteGap();
       } finally {
         setRowSavingId(null);
       }
     },
-    [reloadLineItems, mode, quoteObjects, objectLabourRates],
+    [
+      allObjects,
+      reloadLineItemById,
+      reloadLineItems,
+      reloadLineItemsForArea,
+      mode,
+      quoteObjects,
+      objectLabourRates,
+    ],
   );
 
   const applyLineSkuSelection = useCallback(
@@ -1707,7 +1666,22 @@ export function ProjectChecklistPanel({
 
       setRowSavingId(parentLine.id);
       setError(null);
+      setAllObjects((prev) =>
+        prev.map((o) =>
+          o.id !== parentLine.id
+            ? o
+            : {
+                ...o,
+                skuId: resolvedPick.skuId,
+                skuProduct: resolvedPick.product,
+                supplierOption: resolvedPick.supplierOption,
+              },
+        ),
+      );
       try {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 0);
+        });
         const scopeForLine = parentLine.scopeDocId?.trim()
           ? scopes.find((s) => s.id === parentLine.scopeDocId?.trim())
           : undefined;
@@ -1759,14 +1733,14 @@ export function ProjectChecklistPanel({
           project,
           allObjects,
           onObjectsChange: setAllObjects,
-          reloadLineItems,
+          reloadAreaLines: () => reloadLineItemsForArea(pa.id),
           setError,
           measureForPricing,
           colourLookupIndex,
         });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Save failed");
-        await reloadLineItems();
+        await reloadLineItemsForArea(pa.id);
       } finally {
         setRowSavingId(null);
       }
@@ -1782,10 +1756,37 @@ export function ProjectChecklistPanel({
       cascades,
       supplierDiscountByKey,
       project,
-      reloadLineItems,
+      reloadLineItemsForArea,
       scopes,
       colourLookupIndex,
     ],
+  );
+
+  const clearLineSkuSelection = useCallback(
+    async (parentLine: ProjectAreaObjectPublic) => {
+      const areaId = parentLine.projectAreaDocId?.trim();
+      const reloadArea = () =>
+        areaId
+          ? reloadLineItemsForArea(areaId)
+          : reloadLineItems();
+      setRowSavingId(parentLine.id);
+      setError(null);
+      try {
+        await clearScopeLineSkuWithBundledChildren({
+          parentLine,
+          allObjects,
+          onObjectsChange: setAllObjects,
+          reloadAreaLines: reloadArea,
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Save failed");
+        if (areaId) await reloadLineItemsForArea(areaId);
+        else await reloadLineItems();
+      } finally {
+        setRowSavingId(null);
+      }
+    },
+    [allObjects, reloadLineItems, reloadLineItemsForArea],
   );
 
   useEffect(() => {
@@ -1802,7 +1803,9 @@ export function ProjectChecklistPanel({
       setLoading(true);
       setError(null);
       try {
-        await Promise.all([
+        const loadWorkbenchExtras = mode === "workbench" || !CHECKLIST_FAST_BOOT;
+
+        const catalogWave: Promise<void>[] = [
           loadAreas(),
           loadQuoteObjects(),
           loadScopes(),
@@ -1810,8 +1813,6 @@ export function ProjectChecklistPanel({
           loadPriceLevels(),
           loadCatalogSkus(),
           loadBlindsData(),
-          loadBuildingElements(),
-          loadPaintingElements(),
           (async () => {
             const res = await fetch(`/api/projects/${projectDocId}`);
             const data = await readApiResponse<{ project?: ProjectPublic; error?: string }>(res);
@@ -1823,54 +1824,74 @@ export function ProjectChecklistPanel({
                 : null,
             );
           })(),
-        ]);
+        ];
+        if (loadWorkbenchExtras) {
+          catalogWave.push(loadBuildingElements(), loadPaintingElements());
+        } else {
+          setBuildingElements([]);
+          setPaintingElements([]);
+        }
 
-        const [paRes, objRes, settingsRes, labourRatesRes, objectLabourRes, supplierDiscRes] =
-          await Promise.all([
-          fetch(`/api/projectareas?projectDocId=${encodeURIComponent(projectDocId)}`),
-          fetch(`/api/projectareaobjects?projectDocId=${encodeURIComponent(projectDocId)}`),
-          fetch("/api/settings"),
-          fetch("/api/labour-rates"),
-          fetch("/api/object-labour-rates"),
-          fetch("/api/supplier-discounts"),
-        ]);
-        const paData = (await paRes.json()) as { projectAreas?: ProjectAreaPublic[]; error?: string };
-        if (!paRes.ok) throw new Error(paData.error ?? "Failed to load project areas");
-        setProjectAreas(paData.projectAreas ?? []);
+        const projectWave = (async () => {
+          const objectLabourTask = loadWorkbenchExtras
+            ? catalogJsonGet<{ items?: DataObjectLabourRatePublic[] }>("/api/object-labour-rates")
+            : Promise.resolve({
+                ok: true as const,
+                status: 200,
+                data: { items: [] as DataObjectLabourRatePublic[] },
+              });
 
-        const objData = (await objRes.json()) as {
-          projectAreaObjects?: ProjectAreaObjectPublic[];
-          error?: string;
-        };
-        if (!objRes.ok) throw new Error(objData.error ?? "Failed to load line items");
-        setAllObjects(objData.projectAreaObjects ?? []);
+          const [paRes, objRes, settingsResult, labourRatesResult, objectLabourResult, supplierDiscResult] =
+            await Promise.all([
+              fetch(`/api/projectareas?projectDocId=${encodeURIComponent(projectDocId)}`),
+              fetch(`/api/projectareaobjects?projectDocId=${encodeURIComponent(projectDocId)}`),
+              catalogJsonGet<{ settings?: SettingPublic[]; error?: string }>("/api/settings"),
+              catalogJsonGet<{ items?: DataLabourRatePublic[] }>("/api/labour-rates"),
+              objectLabourTask,
+              catalogJsonGet<{ items?: DataSupplierDiscountPublic[] }>("/api/supplier-discounts"),
+            ]);
+          const paData = (await paRes.json()) as {
+            projectAreas?: ProjectAreaPublic[];
+            error?: string;
+          };
+          if (!paRes.ok) throw new Error(paData.error ?? "Failed to load project areas");
+          setProjectAreas(paData.projectAreas ?? []);
 
-        const settingsData = (await settingsRes.json()) as {
-          settings?: SettingPublic[];
-          error?: string;
-        };
-        if (settingsRes.ok) setSettings(settingsData.settings ?? []);
-        else setSettings([]);
+          const objData = (await objRes.json()) as {
+            projectAreaObjects?: ProjectAreaObjectPublic[];
+            error?: string;
+          };
+          if (!objRes.ok) throw new Error(objData.error ?? "Failed to load line items");
+          setAllObjects(objData.projectAreaObjects ?? []);
 
-        const labourRatesData = (await labourRatesRes.json()) as {
-          items?: DataLabourRatePublic[];
-        };
-        if (labourRatesRes.ok) setContractLabourRates(labourRatesData.items ?? []);
-        else setContractLabourRates([]);
+          if (settingsResult.ok) setSettings(settingsResult.data.settings ?? []);
+          else setSettings([]);
 
-        const objectLabourData = (await objectLabourRes.json()) as {
-          items?: DataObjectLabourRatePublic[];
-        };
-        if (objectLabourRes.ok) setObjectLabourRates(objectLabourData.items ?? []);
-        else setObjectLabourRates([]);
+          if (labourRatesResult.ok) setContractLabourRates(labourRatesResult.data.items ?? []);
+          else setContractLabourRates([]);
 
-        const supplierDiscData = (await supplierDiscRes.json()) as {
-          items?: DataSupplierDiscountPublic[];
-        };
-        if (supplierDiscRes.ok) setSupplierDiscounts(supplierDiscData.items ?? []);
-        else setSupplierDiscounts([]);
+          if (objectLabourResult.ok) {
+            setObjectLabourRates(objectLabourResult.data.items ?? []);
+          } else {
+            setObjectLabourRates([]);
+          }
 
-        await Promise.all([reloadProjectAreaAnswers(), reloadProjectNotes()]);
+          if (supplierDiscResult.ok) {
+            setSupplierDiscounts(supplierDiscResult.data.items ?? []);
+          } else {
+            setSupplierDiscounts([]);
+          }
+        })();
+
+        const notesAnswersWave = Promise.all([reloadProjectAreaAnswers(), reloadProjectNotes()]);
+
+        if (CHECKLIST_FAST_BOOT) {
+          await Promise.all([...catalogWave, projectWave, notesAnswersWave]);
+        } else {
+          await Promise.all(catalogWave);
+          await projectWave;
+          await notesAnswersWave;
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load");
       } finally {
@@ -1915,48 +1936,72 @@ export function ProjectChecklistPanel({
   }, [loading, healthFocusLineId, allObjects.length, projectAreas.length, mode]);
 
   const workbenchLookupLabourSyncingRef = useRef(false);
+  const workbenchLookupLabourQueuedRef = useRef(false);
+  const allObjectsRef = useRef(allObjects);
+  const quoteObjectsRef = useRef(quoteObjects);
+  const objectLabourRatesRef = useRef(objectLabourRates);
+  const catalogSkusRef = useRef(catalogSkus);
+  allObjectsRef.current = allObjects;
+  quoteObjectsRef.current = quoteObjects;
+  objectLabourRatesRef.current = objectLabourRates;
+  catalogSkusRef.current = catalogSkus;
 
-  /** Workbench: apply object labour rates table to lookup silos on load and when rates/lines change. */
+  /**
+   * Workbench: apply object labour rates to lookup silos on load and when rates/lines change.
+   * One persist at a time — reloads do not PATCH. Queue a follow-up instead of overlapping.
+   */
   useEffect(() => {
     if (mode !== "workbench" || loading || !projectDocId) return;
     if (objectLabourRates.length === 0) return;
+    if (
+      lookupLabourUpdatesForLines(
+        allObjects,
+        quoteObjects,
+        objectLabourRates,
+        catalogSkus,
+      ).length === 0
+    ) {
+      return;
+    }
 
-    const updates = lookupLabourUpdatesForLines(
-      allObjects,
-      quoteObjects,
-      objectLabourRates,
-      catalogSkus,
-    );
-    if (updates.length === 0) return;
-    if (workbenchLookupLabourSyncingRef.current) return;
+    if (workbenchLookupLabourSyncingRef.current) {
+      workbenchLookupLabourQueuedRef.current = true;
+      return;
+    }
 
     workbenchLookupLabourSyncingRef.current = true;
-    let cancelled = false;
+    workbenchLookupLabourQueuedRef.current = false;
 
-    void (async () => {
+    void (async function persistLookupLabourOnce() {
       try {
-        const merged = await persistWorkbenchLookupLabour(
-          allObjects,
-          quoteObjects,
-          objectLabourRates,
-          catalogSkus,
-        );
-        if (!cancelled) setAllObjects(merged);
+        let passes = 0;
+        do {
+          if (++passes > 3) break;
+          workbenchLookupLabourQueuedRef.current = false;
+          const lines = allObjectsRef.current;
+          const qo = quoteObjectsRef.current;
+          const rates = objectLabourRatesRef.current;
+          const skus = catalogSkusRef.current;
+          if (rates.length === 0) break;
+          const more = lookupLabourUpdatesForLines(lines, qo, rates, skus);
+          if (more.length === 0) break;
+          const merged = await persistWorkbenchLookupLabour(lines, qo, rates, skus);
+          allObjectsRef.current = merged;
+          setAllObjects(merged);
+        } while (workbenchLookupLabourQueuedRef.current);
       } catch (e) {
-        if (!cancelled) {
-          setError(
-            e instanceof Error ? e.message : "Failed to sync labour hours from rates table",
-          );
-        }
+        setError(
+          e instanceof Error ? e.message : "Failed to sync labour hours from rates table",
+        );
       } finally {
-        if (!cancelled) workbenchLookupLabourSyncingRef.current = false;
+        workbenchLookupLabourSyncingRef.current = false;
+        if (workbenchLookupLabourQueuedRef.current) {
+          workbenchLookupLabourQueuedRef.current = false;
+          workbenchLookupLabourSyncingRef.current = true;
+          void persistLookupLabourOnce();
+        }
       }
     })();
-
-    return () => {
-      cancelled = true;
-      workbenchLookupLabourSyncingRef.current = false;
-    };
   }, [mode, loading, projectDocId, allObjects, quoteObjects, objectLabourRates, catalogSkus]);
 
   const objectsByProjectAreaDocId = useMemo(() => {
@@ -2826,10 +2871,79 @@ export function ProjectChecklistPanel({
     [projectNoteObjectLabelByArea],
   );
 
+  const projectNoteSkuOptionsForObject = useCallback(
+    (areaid: number | null, objectid: number | null): ProjectNoteSkuOption[] => {
+      if (objectid == null) return [];
+      const lines = allObjects.filter(
+        (row) =>
+          row.objectid === objectid && (areaid == null || row.areaid === areaid),
+      );
+      const extraSkuIds = projectNotes
+        .filter(
+          (n) =>
+            n.objectid === objectid &&
+            (areaid == null || n.areaid === areaid) &&
+            Boolean(n.skuId?.trim()),
+        )
+        .map((n) => n.skuId!.trim());
+      return collectProjectNoteSkuOptions({
+        lines,
+        catalogSkus,
+        extraSkuIds,
+        quoteObjects,
+        projectAreas,
+        project,
+        priceLevels,
+        cascades,
+        colourLookupIndex,
+        scopes,
+      });
+    },
+    [
+      allObjects,
+      catalogSkus,
+      cascades,
+      colourLookupIndex,
+      priceLevels,
+      project,
+      projectAreas,
+      projectNotes,
+      quoteObjects,
+      scopes,
+    ],
+  );
+
+  const projectNoteSkuLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const sku of catalogSkus) {
+      const id = sku.skuId.trim();
+      if (!id || map.has(id)) continue;
+      const product = sku.product?.trim();
+      map.set(id, product ? `${id} · ${product}` : id);
+    }
+    for (const row of allObjects) {
+      const id = row.skuId?.trim();
+      if (!id || map.has(id)) continue;
+      const product = row.skuProduct?.trim();
+      map.set(id, product ? `${id} · ${product}` : id);
+    }
+    return map;
+  }, [allObjects, catalogSkus]);
+
+  const projectNoteSkuLabelForNote = useCallback(
+    (skuId: string | null) =>
+      formatProjectNoteSkuLabel(skuId, (id) => projectNoteSkuLabelById.get(id)),
+    [projectNoteSkuLabelById],
+  );
+
   const defaultViewFilterForTarget = useCallback(
     (target: ProjectNoteTarget): ProjectNoteViewFilter => {
       if (target.objectid != null && target.areaid != null) {
-        return { areaid: target.areaid, objectid: target.objectid };
+        return {
+          areaid: target.areaid,
+          objectid: target.objectid,
+          skuId: target.skuId?.trim() || null,
+        };
       }
       if (target.areaid != null) {
         return { areaid: target.areaid, objectid: null };
@@ -2925,11 +3039,10 @@ export function ProjectChecklistPanel({
       },
     ) => {
       if (numericProjectId == null) return null;
-      const badgeNotes = filterNotesForTarget(projectNotes, {
-        projectid: numericProjectId,
-        areaid: target.areaid,
-        objectid: target.objectid,
-      });
+      const viewFilter = defaultViewFilterForTarget(target);
+      const badgeNotes = uniqueProjectNotes(
+        filterNotesForView(projectNotes, numericProjectId, viewFilter),
+      );
       const notesModalOpen =
         opts?.projectAreaDocId != null && areaNotesOpenPaId === opts.projectAreaDocId;
       const escalationDraft =
@@ -2942,11 +3055,13 @@ export function ProjectChecklistPanel({
           allProjectNotes={projectNotes}
           projectid={numericProjectId}
           createTarget={target}
-          defaultViewFilter={defaultViewFilterForTarget(target)}
+          defaultViewFilter={viewFilter}
           areaOptions={projectNoteAreaOptions}
           objectOptionsForArea={projectNoteObjectOptionsForArea}
+          skuOptionsForObject={projectNoteSkuOptionsForObject}
           areaLabelForNote={projectNoteAreaLabelForNote}
           objectLabelForNote={projectNoteObjectLabelForNote}
+          skuLabelForNote={projectNoteSkuLabelForNote}
           noteTypeOptions={noteTypeOptions}
           authorFallback={authorFallback}
           disabled={opts?.disabled}
@@ -2990,8 +3105,10 @@ export function ProjectChecklistPanel({
       defaultViewFilterForTarget,
       projectNoteAreaOptions,
       projectNoteObjectOptionsForArea,
+      projectNoteSkuOptionsForObject,
       projectNoteAreaLabelForNote,
       projectNoteObjectLabelForNote,
+      projectNoteSkuLabelForNote,
     ],
   );
 
@@ -3027,8 +3144,13 @@ export function ProjectChecklistPanel({
       formatMoney,
       renderObjectNotesButton: (row, label) =>
         renderProjectNotesButton(
-          { projectid: row.projectid, areaid: row.areaid, objectid: row.objectid },
-          label,
+          {
+            projectid: row.projectid,
+            areaid: row.areaid,
+            objectid: row.objectid,
+            skuId: noteTargetSkuIdForLine(row),
+          },
+          row.skuProduct?.trim() ? `${label} · ${row.skuProduct.trim()}` : label,
           { size: "workbench", disabled: rowSavingId === row.id || paoDeleting },
         ),
       onDeleteLine: (lineId) => setPaoDeleteId(lineId),
@@ -3932,7 +4054,19 @@ export function ProjectChecklistPanel({
                                 const yesAvailable = yesOnlyId
                                   ? (answerAvailability.get(yesOnlyId) ?? true)
                                   : true;
-                                const showForceNaTag = forceNaAlertKeys.has(`${pa.id}:${scope.id}`);
+                                const showForceNaTag = Boolean(
+                                  value &&
+                                    catalogSkus.length > 0 &&
+                                    quoteObjects.length > 0 &&
+                                    scopeAnswerNeedsForceClear(
+                                      scope,
+                                      value,
+                                      quoteObjects,
+                                      catalogSkus,
+                                      scopeSkuFilters,
+                                      skuMatchOptions,
+                                    ),
+                                );
                                 const activeScopeMetrics = value
                                   ? scopeMetricsForAnswer(scope, value)
                                   : [];
@@ -4007,10 +4141,9 @@ export function ProjectChecklistPanel({
                                                     disabled={busy || !yesAvailable}
                                                     checked={value === yesOnlyId}
                                                     onChange={(e) => {
-                                                      clearForceNaAlert(pa.id, scope.id);
-                                                      void applyScopeAnswer(
+                                                      void applyScopeAnswerFromUi(
                                                         pa,
-                                                        scope.id,
+                                                        scope,
                                                         e.target.checked ? yesOnlyId : null,
                                                         scopeInstanceId,
                                                       );
@@ -4020,7 +4153,7 @@ export function ProjectChecklistPanel({
                                                   {showForceNaTag ? (
                                                     <span
                                                       className="rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-semibold text-red-900 dark:bg-red-900/60 dark:text-red-100"
-                                                      title="Previous answer cleared — no matching SKUs at current tier/style/colour"
+                                                      title={SCOPE_FORCE_UNAVAILABLE_TITLE}
                                                     >
                                                       N/A
                                                     </span>
@@ -4035,11 +4168,10 @@ export function ProjectChecklistPanel({
                                                     disabled={busy}
                                                     value={value}
                                                     onChange={(e) => {
-                                                      clearForceNaAlert(pa.id, scope.id);
                                                       const v = e.target.value;
-                                                      void applyScopeAnswer(
+                                                      void applyScopeAnswerFromUi(
                                                         pa,
-                                                        scope.id,
+                                                        scope,
                                                         v === "" ? null : v,
                                                         scopeInstanceId,
                                                       );
@@ -4063,7 +4195,7 @@ export function ProjectChecklistPanel({
                                                   {showForceNaTag ? (
                                                     <span
                                                       className="shrink-0 rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-semibold text-red-900 dark:bg-red-900/60 dark:text-red-100"
-                                                      title="Previous answer cleared — no matching SKUs at current tier/style/colour"
+                                                      title={SCOPE_FORCE_UNAVAILABLE_TITLE}
                                                     >
                                                       N/A
                                                     </span>
@@ -4319,10 +4451,9 @@ export function ProjectChecklistPanel({
                                                           disabled={busy || !yesAvailable}
                                                           checked={value === yesOnlyId}
                                                           onChange={(e) => {
-                                                            clearForceNaAlert(pa.id, scope.id);
-                                                            void applyScopeAnswer(
+                                                            void applyScopeAnswerFromUi(
                                                               pa,
-                                                              scope.id,
+                                                              scope,
                                                               e.target.checked ? yesOnlyId : null,
                                                               scopeInstanceId,
                                                             );
@@ -4332,7 +4463,7 @@ export function ProjectChecklistPanel({
                                                         {showForceNaTag ? (
                                                           <span
                                                             className="rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-semibold text-red-900 dark:bg-red-900/60 dark:text-red-100"
-                                                            title="Previous answer cleared — no matching SKUs at current tier/style/colour"
+                                                            title={SCOPE_FORCE_UNAVAILABLE_TITLE}
                                                           >
                                                             N/A
                                                           </span>
@@ -4347,11 +4478,10 @@ export function ProjectChecklistPanel({
                                                           disabled={busy}
                                                           value={value}
                                                           onChange={(e) => {
-                                                            clearForceNaAlert(pa.id, scope.id);
                                                             const v = e.target.value;
-                                                            void applyScopeAnswer(
+                                                            void applyScopeAnswerFromUi(
                                                               pa,
-                                                              scope.id,
+                                                              scope,
                                                               v === "" ? null : v,
                                                               scopeInstanceId,
                                                             );
@@ -4376,7 +4506,7 @@ export function ProjectChecklistPanel({
                                                         {showForceNaTag ? (
                                                           <span
                                                             className="shrink-0 rounded bg-red-200 px-1.5 py-0.5 text-[10px] font-semibold text-red-900 dark:bg-red-900/60 dark:text-red-100"
-                                                            title="Previous answer cleared — no matching SKUs at current tier/style/colour"
+                                                            title={SCOPE_FORCE_UNAVAILABLE_TITLE}
                                                           >
                                                             N/A
                                                           </span>
@@ -4558,6 +4688,9 @@ export function ProjectChecklistPanel({
                                                 onSelectSku={(pick) => {
                                                   void applyLineSkuSelection(lineRow, pa, pick);
                                                 }}
+                                                onClearSku={() => {
+                                                  void clearLineSkuSelection(lineRow);
+                                                }}
                                               />
                                                 )}
                                               </ClSkuPickerSlot>
@@ -4634,8 +4767,11 @@ export function ProjectChecklistPanel({
                                                   projectid: lineRow.projectid,
                                                   areaid: lineRow.areaid,
                                                   objectid: lineRow.objectid,
+                                                  skuId: noteTargetSkuIdForLine(lineRow),
                                                 },
-                                                objectLabel(lineRow, quoteObjects),
+                                                lineRow.skuProduct?.trim()
+                                                  ? `${objectLabel(lineRow, quoteObjects)} · ${lineRow.skuProduct.trim()}`
+                                                  : objectLabel(lineRow, quoteObjects),
                                                 { compact: true, disabled: lineSaving },
                                               )}
                                             </div>
@@ -4849,6 +4985,9 @@ export function ProjectChecklistPanel({
                                               onSelectSku={(pick) => {
                                                 void applyLineSkuSelection(lineRow, pa, pick);
                                               }}
+                                              onClearSku={() => {
+                                                void clearLineSkuSelection(lineRow);
+                                              }}
                                             />
                                             )}
                                           </ClSkuPickerSlot>
@@ -4904,8 +5043,11 @@ export function ProjectChecklistPanel({
                                               projectid: lineRow.projectid,
                                               areaid: lineRow.areaid,
                                               objectid: lineRow.objectid,
+                                              skuId: noteTargetSkuIdForLine(lineRow),
                                             },
-                                            objectLabel(lineRow, quoteObjects),
+                                            lineRow.skuProduct?.trim()
+                                              ? `${objectLabel(lineRow, quoteObjects)} · ${lineRow.skuProduct.trim()}`
+                                              : objectLabel(lineRow, quoteObjects),
                                             { compact: true, disabled: lineSaving || paoDeleting },
                                           )}
                                         </div>
@@ -5844,8 +5986,11 @@ export function ProjectChecklistPanel({
                                     projectid: row.projectid,
                                     areaid: row.areaid,
                                     objectid: row.objectid,
+                                    skuId: noteTargetSkuIdForLine(row),
                                   },
-                                  objectLabel(row, quoteObjects),
+                                  row.skuProduct?.trim()
+                                    ? `${objectLabel(row, quoteObjects)} · ${row.skuProduct.trim()}`
+                                    : objectLabel(row, quoteObjects),
                                   { size: "workbench", disabled: saving || paoDeleting },
                                 )}
                                 <WbLineRowMenu
@@ -6230,6 +6375,8 @@ export function ProjectChecklistPanel({
         onClose={closePickScopeModal}
         onPick={(id) => void addScopeToAreaFromPicker(id)}
       />
+
+      <ScopeAnswerProgressDialog progress={scopeAnswerProgress} />
 
       <ConfirmDialog
         open={Boolean(escalationNotePrompt)}

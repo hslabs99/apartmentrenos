@@ -32,10 +32,32 @@ export function clearCascadeRowsCache(): void {
   cachedCascadeRows = null;
 }
 
+export function projectFinishFromData(projectData: { projectfinish?: unknown } | undefined): string {
+  return typeof projectData?.projectfinish === "string" ? projectData.projectfinish.trim() : "";
+}
+
+/**
+ * Elevate / cascade level from an already-resolved price level and project finish.
+ * Loads cascades + price-level names (in-process cached after the first call).
+ */
+export async function resolveElevateLevelFromPriceLevelAndFinish(
+  db: Firestore,
+  priceLevelId: number | null,
+  projectFinish: string,
+): Promise<string> {
+  const [cascades, fromPl] = await Promise.all([
+    loadCascadeRows(db),
+    resolveElevateLevelFromPriceLevelId(db, priceLevelId),
+  ]);
+  const raw = fromPl || projectFinish;
+  if (!raw) return "";
+  if (cascades.length > 0) return resolveCascadeLevelName(raw, cascades);
+  return raw;
+}
+
 async function loadProjectFinish(db: Firestore, projectid: number): Promise<string> {
   const projQ = await db.collection("projects").where("projectid", "==", projectid).limit(1).get();
-  const pd = projQ.docs[0]?.data();
-  return typeof pd?.projectfinish === "string" ? pd.projectfinish.trim() : "";
+  return projectFinishFromData(projQ.docs[0]?.data());
 }
 
 /**
@@ -47,15 +69,9 @@ export async function resolveEffectiveElevateLevel(
   projectAreaDocId: string,
   projectid: number,
 ): Promise<string> {
-  const [priceLevelId, cascades, projectFinish] = await Promise.all([
+  const [priceLevelId, projectFinish] = await Promise.all([
     resolveEffectivePriceLevelId(db, projectAreaDocId, projectid),
-    loadCascadeRows(db),
     loadProjectFinish(db, projectid),
   ]);
-
-  const fromPl = await resolveElevateLevelFromPriceLevelId(db, priceLevelId);
-  const raw = fromPl || projectFinish;
-  if (!raw) return "";
-  if (cascades.length > 0) return resolveCascadeLevelName(raw, cascades);
-  return raw;
+  return resolveElevateLevelFromPriceLevelAndFinish(db, priceLevelId, projectFinish);
 }

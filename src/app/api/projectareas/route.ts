@@ -5,7 +5,6 @@ import { ensureProjectAreasBootstrap } from "@/lib/firestore/collection-bootstra
 import { isProjectAreasMetaDocument } from "@/lib/firestore/projectareas-collection";
 import { ensureProjectNumericId } from "@/lib/server/resolve-ids";
 import { addProjectAreaWithSeed } from "@/lib/server/project-area-seeding";
-import { backfillMissingProjectAreaDocIds } from "@/lib/server/project-area-line-backfill";
 import { compareProjectAreasDisplayOrder } from "@/lib/project-area-display-order";
 import { projectAreaDocToPublic } from "@/lib/server/project-area-to-public";
 import type { ProjectAreaPublic } from "@/types/project-area";
@@ -38,7 +37,6 @@ export async function GET(req: NextRequest) {
     let projectid: number;
     if (projectDocId) {
       projectid = await ensureProjectNumericId(db, projectDocId);
-      await backfillMissingProjectAreaDocIds(db, projectid);
     } else if (projectidParam) {
       projectid = Number(projectidParam);
       if (!Number.isInteger(projectid)) {
@@ -47,7 +45,6 @@ export async function GET(req: NextRequest) {
           { status: 400 },
         );
       }
-      await backfillMissingProjectAreaDocIds(db, projectid);
     } else {
       return NextResponse.json(
         { error: "projectDocId or projectid is required" },

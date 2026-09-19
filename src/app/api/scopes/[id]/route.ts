@@ -49,10 +49,8 @@ export async function GET(_req: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const ctx = await loadScopeAreaContext(db);
-    await migrateAllLegacyScopeDocs(db, ctx.docIdByAreaid);
-    const fresh = await ref.get();
     return NextResponse.json({
-      scope: publicFromData(id, fresh.data()!, ctx.docIdByAreaid, ctx.nameByAreaid, ctx.areasOrdered),
+      scope: publicFromData(id, snap.data()!, ctx.docIdByAreaid, ctx.nameByAreaid, ctx.areasOrdered),
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to load scope";

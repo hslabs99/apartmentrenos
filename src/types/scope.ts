@@ -38,6 +38,11 @@ export type ScopeAnswerPublic = {
    */
   attachedObjectNames: string[];
   /**
+   * Last-known `objectname` keyed by quote-object document id. Survives deletion of the
+   * quote object so Setup can still show which object was attached.
+   */
+  attachedObjectNameById?: Partial<Record<string, string>>;
+  /**
    * @deprecated Prefer `attachedObjectNames`. Legacy: ObjectCategory lookup values.
    */
   attachedCategories: string[];

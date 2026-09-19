@@ -12,6 +12,12 @@ function intOrNull(v: unknown): number | null {
   return null;
 }
 
+function skuIdOrNull(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t || null;
+}
+
 function readTrades(data: DocumentData): string[] {
   const raw = data.trades;
   if (Array.isArray(raw)) {
@@ -35,6 +41,7 @@ export function projectNoteDocToPublic(id: string, data: DocumentData): ProjectN
     projectid: Number(data.projectid ?? 0),
     areaid: intOrNull(data.areaid),
     objectid: intOrNull(data.objectid),
+    skuId: skuIdOrNull(data.skuId),
     notetype: String(data.notetype ?? ""),
     trades: readTrades(data),
     author: String(data.author ?? ""),

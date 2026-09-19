@@ -46,3 +46,14 @@ export function patchBodyForScopeLineSku(
   return body;
 }
 
+/** PATCH body to return a scope line to no SKU selected. */
+export function patchBodyClearScopeLineSku(): Record<string, unknown> {
+  return {
+    skuId: null,
+    skuProduct: null,
+    supplierOption: null,
+    customumprice: null,
+    totalprice: null,
+  };
+}
+

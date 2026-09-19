@@ -1,3 +1,4 @@
+import { catalogJsonGet } from "@/lib/client/catalog-fetch-cache";
 import {
   buildPrimarySupplierBySkuId,
   buildSuppliersBySkuId,
@@ -13,20 +14,27 @@ export type CatalogSkuData = {
 };
 
 export async function loadCatalogSkuData(): Promise<CatalogSkuData> {
-  const [skuRes, supRes] = await Promise.all([
-    fetch("/api/data-skus"),
-    fetch("/api/data-sku-suppliers"),
-  ]);
-  const skuData = (await skuRes.json()) as { items?: DataSkuPublic[]; error?: string };
-  const supData = (await supRes.json()) as {
-    items?: DataSkuSupplierPublic[];
+  const skuResult = await catalogJsonGet<{
+    items?: DataSkuPublic[];
+    suppliers?: DataSkuSupplierPublic[];
     error?: string;
-  };
-  if (!skuRes.ok) throw new Error(skuData.error ?? "Failed to load data_skus");
-  if (!supRes.ok) throw new Error(supData.error ?? "Failed to load data_sku_suppliers");
-  const supplierItems = supData.items ?? [];
+  }>("/api/data-skus?includeSuppliers=1");
+  if (!skuResult.ok) throw new Error(skuResult.data.error ?? "Failed to load data_skus");
+
+  let supplierItems = skuResult.data.suppliers;
+  if (!supplierItems) {
+    const supResult = await catalogJsonGet<{
+      items?: DataSkuSupplierPublic[];
+      error?: string;
+    }>("/api/data-sku-suppliers");
+    if (!supResult.ok) {
+      throw new Error(supResult.data.error ?? "Failed to load data_sku_suppliers");
+    }
+    supplierItems = supResult.data.items ?? [];
+  }
+
   return {
-    skus: skuData.items ?? [],
+    skus: skuResult.data.items ?? [],
     primarySupplierBySkuId: buildPrimarySupplierBySkuId(supplierItems),
     suppliersBySkuId: buildSuppliersBySkuId(supplierItems),
   };

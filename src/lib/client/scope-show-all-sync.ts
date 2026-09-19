@@ -5,6 +5,7 @@ import type { ScopePublic } from "@/types/scope";
 /**
  * True when the scope answer has Show All on attached objects but project lines
  * were not expanded (single row with SKU dropdown instead of one row per SKU).
+ * Detection only — do not auto-apply the answer; highlight / Repopulate SKUs instead.
  */
 export function scopeAnswerNeedsShowAllLineSync(
   scope: ScopePublic,

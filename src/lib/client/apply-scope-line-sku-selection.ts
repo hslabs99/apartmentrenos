@@ -1,12 +1,13 @@
-import { patchBodyForScopeLineSku, customUomFromSkuPick } from "@/lib/client/scope-line-sku-patch";
+import {
+  patchBodyForScopeLineSku,
+  patchBodyClearScopeLineSku,
+  customUomFromSkuPick,
+} from "@/lib/client/scope-line-sku-patch";
 import {
   resolveAppendChildSkuPicks,
   type ResolvedAppendChild,
 } from "@/lib/client/resolve-append-child-sku-picks";
-import {
-  scopeLineMatchesSkuPick,
-  type ScopeLineSkuPick,
-} from "@/lib/client/scope-line-sku-match";
+import { type ScopeLineSkuPick } from "@/lib/client/scope-line-sku-match";
 import { quoteObjectCategory } from "@/lib/client/quote-object-category";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { DataSkuSupplierPublic } from "@/types/data-sku-supplier-public";
@@ -51,19 +52,79 @@ function patchBodyForBundledChild(
 }
 
 function patchBodyClearBundledSku(): Record<string, unknown> {
-  return {
-    skuId: null,
-    skuProduct: null,
-    supplierOption: null,
-    customumprice: null,
-    totalprice: null,
-  };
+  return patchBodyClearScopeLineSku();
 }
 
 function patchBodySyncBundledMeasure(parentLine: ProjectAreaObjectPublic): Record<string, unknown> {
   return {
     custommeasure: parentLine.custommeasure ?? null,
   };
+}
+
+function skuIdentityMatches(
+  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption" | "customumprice">,
+  pick: ScopeLineSkuPick,
+): boolean {
+  return (
+    (line.skuId ?? "").trim() === pick.skuId &&
+    line.supplierOption === pick.supplierOption
+  );
+}
+
+/** Let the SKU dropdown paint before pricing / bundled-child work. */
+function yieldToPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+/** Show the chosen SKU immediately; leave unit/total price for the server round-trip. */
+function applyOptimisticSkuIdentity(
+  onObjectsChange: (updater: (prev: ProjectAreaObjectPublic[]) => ProjectAreaObjectPublic[]) => void,
+  lineId: string,
+  pick: Pick<ScopeLineSkuPick, "skuId" | "product" | "supplierOption"> | null,
+) {
+  onObjectsChange((prev) =>
+    prev.map((o) =>
+      o.id !== lineId
+        ? o
+        : {
+            ...o,
+            skuId: pick ? pick.skuId : null,
+            skuProduct: pick ? pick.product : null,
+            supplierOption: pick ? pick.supplierOption : null,
+          },
+    ),
+  );
+}
+
+/** Skip PATCH when SKU is already stored. Never overwrite a saved unit price. */
+function shouldSkipSkuPatch(
+  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption" | "customumprice">,
+  pick: ScopeLineSkuPick,
+): boolean {
+  if (!skuIdentityMatches(line, pick)) return false;
+  if (line.customumprice != null) return true;
+  return pick.priceExcGst == null;
+}
+
+function mergeReturnedLine(
+  onObjectsChange: (updater: (prev: ProjectAreaObjectPublic[]) => ProjectAreaObjectPublic[]) => void,
+  line: ProjectAreaObjectPublic | undefined,
+  id: string,
+): boolean {
+  if (!line) return false;
+  onObjectsChange((prev) => prev.map((o) => (o.id === id ? line : o)));
+  return true;
+}
+
+function mergeCreatedLine(
+  onObjectsChange: (updater: (prev: ProjectAreaObjectPublic[]) => ProjectAreaObjectPublic[]) => void,
+  line: ProjectAreaObjectPublic | undefined,
+): boolean {
+  if (!line) return false;
+  onObjectsChange((prev) => (prev.some((o) => o.id === line.id) ? prev : [...prev, line]));
+  return true;
 }
 
 function createBundledLineBody(
@@ -116,11 +177,20 @@ export async function applyScopeLineSkuWithBundledChildren(args: {
   project: ProjectPublic | null;
   allObjects: ProjectAreaObjectPublic[];
   onObjectsChange: (updater: (prev: ProjectAreaObjectPublic[]) => ProjectAreaObjectPublic[]) => void;
-  reloadLineItems: () => Promise<void>;
+  /**
+   * Reload only this project area when a write succeeded but the response body
+   * was missing — never used to throw away a successful merge.
+   */
+  reloadAreaLines: () => Promise<void>;
   setError: (msg: string | null) => void;
   measureForPricing?: number | null;
   colourLookupIndex?: ColourLookupIndex | null;
 }): Promise<void> {
+  if (!skuIdentityMatches(args.parentLine, args.pick)) {
+    applyOptimisticSkuIdentity(args.onObjectsChange, args.parentLine.id, args.pick);
+  }
+  await yieldToPaint();
+
   const parentSku = args.catalogSkus.find((s) => s.skuId === args.pick.skuId);
   const category = quoteObjectCategory(args.parentLine, args.quoteObjects);
 
@@ -164,10 +234,13 @@ export async function applyScopeLineSkuWithBundledChildren(args: {
   );
   const catalogUom = customUomFromSkuPick(parentSku?.uom);
   if (catalogUom) parentPatch.customuom = catalogUom;
-  const skipParentPatch = scopeLineMatchesSkuPick(args.parentLine, args.pick);
+  const skipParentPatch = shouldSkipSkuPatch(args.parentLine, args.pick);
   if (skipParentPatch && slotsAlreadyMatch) {
     return;
   }
+
+  let needsAreaRefresh = false;
+
   if (!skipParentPatch) {
     const parentRes = await fetch(`/api/projectareaobjects/${args.parentLine.id}`, {
       method: "PATCH",
@@ -179,10 +252,10 @@ export async function applyScopeLineSkuWithBundledChildren(args: {
       error?: string;
     }>(parentRes);
     if (!parentRes.ok) throw new Error(parentData.error ?? "Save failed");
-    if (parentData.projectAreaObject) {
-      args.onObjectsChange((prev) =>
-        prev.map((o) => (o.id === args.parentLine.id ? parentData.projectAreaObject! : o)),
-      );
+    if (
+      !mergeReturnedLine(args.onObjectsChange, parentData.projectAreaObject, args.parentLine.id)
+    ) {
+      needsAreaRefresh = true;
     }
   }
 
@@ -202,6 +275,7 @@ export async function applyScopeLineSkuWithBundledChildren(args: {
     const existing = existingChildren.find((c) => c.bundledAppendSlot === item.slot);
     if (item.pick) {
       if (existing) {
+        if (shouldSkipSkuPatch(existing, item.pick)) continue;
         const patch = patchBodyForBundledChild(
           args.parentLine,
           item.pick,
@@ -218,30 +292,17 @@ export async function applyScopeLineSkuWithBundledChildren(args: {
           error?: string;
         }>(res);
         if (!res.ok) throw new Error(data.error ?? "Failed to update bundled line");
-        if (data.projectAreaObject) {
-          args.onObjectsChange((prev) =>
-            prev.map((o) => (o.id === existing.id ? data.projectAreaObject! : o)),
-          );
+        if (!mergeReturnedLine(args.onObjectsChange, data.projectAreaObject, existing.id)) {
+          needsAreaRefresh = true;
         }
       } else {
-        const createBody = createBundledLineBody(args.parentLine, args.projectAreaDocId, item);
-        if (!createBody) continue;
-        const res = await fetch("/api/projectareaobjects", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(createBody),
-        });
-        const data = await readApiResponse<{ id?: string; error?: string }>(res);
-        if (!res.ok) throw new Error(data.error ?? "Failed to add bundled line");
-        if (data.id) {
-          const getRes = await fetch(`/api/projectareaobjects/${data.id}`);
-          const getData = await readApiResponse<{
-            projectAreaObject?: ProjectAreaObjectPublic;
-            error?: string;
-          }>(getRes);
-          if (getRes.ok && getData.projectAreaObject) {
-            args.onObjectsChange((prev) => [...prev, getData.projectAreaObject!]);
-          }
+        const created = await createBundledChildLine(
+          args.parentLine,
+          args.projectAreaDocId,
+          item,
+        );
+        if (created.wrote && !mergeCreatedLine(args.onObjectsChange, created.line)) {
+          needsAreaRefresh = true;
         }
       }
     } else if (item.resolveError) {
@@ -260,72 +321,116 @@ export async function applyScopeLineSkuWithBundledChildren(args: {
           error?: string;
         }>(res);
         if (!res.ok) throw new Error(data.error ?? "Failed to update bundled line");
-        if (data.projectAreaObject) {
-          args.onObjectsChange((prev) =>
-            prev.map((o) => (o.id === existing.id ? data.projectAreaObject! : o)),
-          );
+        if (!mergeReturnedLine(args.onObjectsChange, data.projectAreaObject, existing.id)) {
+          needsAreaRefresh = true;
         }
       } else {
-        const createBody = createBundledLineBody(args.parentLine, args.projectAreaDocId, item);
-        if (!createBody) continue;
-        const res = await fetch("/api/projectareaobjects", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(createBody),
-        });
-        const data = await readApiResponse<{ id?: string; error?: string }>(res);
-        if (!res.ok) throw new Error(data.error ?? "Failed to add bundled line");
-        if (data.id) {
-          const getRes = await fetch(`/api/projectareaobjects/${data.id}`);
-          const getData = await readApiResponse<{
-            projectAreaObject?: ProjectAreaObjectPublic;
-            error?: string;
-          }>(getRes);
-          if (getRes.ok && getData.projectAreaObject) {
-            args.onObjectsChange((prev) => [...prev, getData.projectAreaObject!]);
-          }
+        const created = await createBundledChildLine(
+          args.parentLine,
+          args.projectAreaDocId,
+          item,
+        );
+        if (created.wrote && !mergeCreatedLine(args.onObjectsChange, created.line)) {
+          needsAreaRefresh = true;
         }
       }
+    } else if (existing) {
+      const parentMeasure = args.parentLine.custommeasure ?? null;
+      if (existing.custommeasure === parentMeasure) continue;
+      const res = await fetch(`/api/projectareaobjects/${existing.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patchBodySyncBundledMeasure(args.parentLine)),
+      });
+      const data = await readApiResponse<{
+        projectAreaObject?: ProjectAreaObjectPublic;
+        error?: string;
+      }>(res);
+      if (!res.ok) throw new Error(data.error ?? "Failed to update bundled line");
+      if (!mergeReturnedLine(args.onObjectsChange, data.projectAreaObject, existing.id)) {
+        needsAreaRefresh = true;
+      }
     } else {
-      if (existing) {
-        const res = await fetch(`/api/projectareaobjects/${existing.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(patchBodySyncBundledMeasure(args.parentLine)),
-        });
-        const data = await readApiResponse<{
-          projectAreaObject?: ProjectAreaObjectPublic;
-          error?: string;
-        }>(res);
-        if (!res.ok) throw new Error(data.error ?? "Failed to update bundled line");
-        if (data.projectAreaObject) {
-          args.onObjectsChange((prev) =>
-            prev.map((o) => (o.id === existing.id ? data.projectAreaObject! : o)),
-          );
-        }
-      } else {
-        const createBody = createBundledLineBody(args.parentLine, args.projectAreaDocId, item);
-        if (!createBody) continue;
-        const res = await fetch("/api/projectareaobjects", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(createBody),
-        });
-        const data = await readApiResponse<{ id?: string; error?: string }>(res);
-        if (!res.ok) throw new Error(data.error ?? "Failed to add bundled line");
-        if (data.id) {
-          const getRes = await fetch(`/api/projectareaobjects/${data.id}`);
-          const getData = await readApiResponse<{
-            projectAreaObject?: ProjectAreaObjectPublic;
-            error?: string;
-          }>(getRes);
-          if (getRes.ok && getData.projectAreaObject) {
-            args.onObjectsChange((prev) => [...prev, getData.projectAreaObject!]);
-          }
-        }
+      const created = await createBundledChildLine(
+        args.parentLine,
+        args.projectAreaDocId,
+        item,
+      );
+      if (created.wrote && !mergeCreatedLine(args.onObjectsChange, created.line)) {
+        needsAreaRefresh = true;
       }
     }
   }
 
-  await args.reloadLineItems();
+  if (needsAreaRefresh) {
+    await args.reloadAreaLines();
+  }
+}
+
+async function createBundledChildLine(
+  parentLine: ProjectAreaObjectPublic,
+  projectAreaDocId: string,
+  item: ResolvedAppendChild,
+): Promise<{ wrote: boolean; line?: ProjectAreaObjectPublic }> {
+  const createBody = createBundledLineBody(parentLine, projectAreaDocId, item);
+  if (!createBody) return { wrote: false };
+  const res = await fetch("/api/projectareaobjects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(createBody),
+  });
+  const data = await readApiResponse<{ id?: string; error?: string }>(res);
+  if (!res.ok) throw new Error(data.error ?? "Failed to add bundled line");
+  if (!data.id) return { wrote: true };
+  const getRes = await fetch(`/api/projectareaobjects/${data.id}`);
+  const getData = await readApiResponse<{
+    projectAreaObject?: ProjectAreaObjectPublic;
+    error?: string;
+  }>(getRes);
+  if (getRes.ok && getData.projectAreaObject) {
+    return { wrote: true, line: getData.projectAreaObject };
+  }
+  return { wrote: true };
+}
+
+/**
+ * Clear the line’s SKU (back to “Select…”) and remove bundled children that came from it.
+ */
+export async function clearScopeLineSkuWithBundledChildren(args: {
+  parentLine: ProjectAreaObjectPublic;
+  allObjects: ProjectAreaObjectPublic[];
+  onObjectsChange: (updater: (prev: ProjectAreaObjectPublic[]) => ProjectAreaObjectPublic[]) => void;
+  reloadAreaLines: () => Promise<void>;
+}): Promise<void> {
+  applyOptimisticSkuIdentity(args.onObjectsChange, args.parentLine.id, null);
+  await yieldToPaint();
+
+  let needsAreaRefresh = false;
+  const parentRes = await fetch(`/api/projectareaobjects/${args.parentLine.id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patchBodyClearScopeLineSku()),
+  });
+  const parentData = await readApiResponse<{
+    projectAreaObject?: ProjectAreaObjectPublic;
+    error?: string;
+  }>(parentRes);
+  if (!parentRes.ok) throw new Error(parentData.error ?? "Save failed");
+  if (
+    !mergeReturnedLine(args.onObjectsChange, parentData.projectAreaObject, args.parentLine.id)
+  ) {
+    needsAreaRefresh = true;
+  }
+
+  const existingChildren = bundledChildrenForParent(args.allObjects, args.parentLine.id);
+  for (const child of existingChildren) {
+    const delRes = await fetch(`/api/projectareaobjects/${child.id}`, { method: "DELETE" });
+    const delData = await readApiResponse<{ error?: string }>(delRes);
+    if (!delRes.ok) throw new Error(delData.error ?? "Failed to remove bundled line");
+    args.onObjectsChange((prev) => prev.filter((o) => o.id !== child.id));
+  }
+
+  if (needsAreaRefresh) {
+    await args.reloadAreaLines();
+  }
 }

@@ -80,7 +80,7 @@ export function scopeAnswerForceAvailabilityById(
   return out;
 }
 
-/** Selected scope answer became unavailable under Force rules — clear it. */
+/** Selected scope answer became unavailable under Force rules — highlight only, do not clear. */
 export function scopeAnswerNeedsForceClear(
   scope: ScopePublic,
   answerid: string,

@@ -10,6 +10,7 @@ import type { ScopeSkuFilterContext } from "@/lib/client/scope-answer-force-avai
 /**
  * True when this answer has Suppress 0 SKU Rows on and current scope lines
  * do not match which attached objects have catalog SKUs at the active filters.
+ * Detection only — do not auto-apply the answer; highlight / Repopulate SKUs instead.
  */
 export function scopeAnswerNeedsZeroSkuRowSync(
   scope: ScopePublic,

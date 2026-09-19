@@ -16,6 +16,7 @@ import {
 } from "@/components/icons/lightning-icons";
 import { ViewModeToggle } from "@/components/view-mode-toggle";
 import { clearAuthSession, getAuthSession } from "@/lib/client/auth-session";
+import { clearCatalogCacheAfterLeavingEditor } from "@/lib/client/catalog-fetch-cache";
 import { useViewMode } from "@/lib/view-mode";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -162,6 +163,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setSidebarOnProject(readSidebarOnProjectPref());
   }, []);
+
+  useEffect(() => clearCatalogCacheAfterLeavingEditor(pathname), [pathname]);
 
   const toggleSidebarOnProject = useCallback(() => {
     setSidebarOnProject((prev) => {

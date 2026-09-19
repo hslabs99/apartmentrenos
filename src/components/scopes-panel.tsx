@@ -21,8 +21,12 @@ import {
 } from "@/lib/sf-layout";
 import { sfRowIconBtn, sfRowIconBtnDanger } from "@/lib/sf-row-actions";
 import {
+  MissingObjectBadge,
+  MissingScopeObjectsDialog,
+} from "@/components/missing-scope-objects-dialog";
+import {
   quoteObjectCatalogFromRows,
-  scopeHasMissingQuoteObjects,
+  scopeMissingObjectFindings,
 } from "@/lib/health-check/orphan-refs";
 import { sortOrderInArea } from "@/lib/scope-areas";
 import type { ScopePublic } from "@/types/scope";
@@ -77,6 +81,7 @@ export function ScopesPanel({
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
   const [selectedScopeRowId, setSelectedScopeRowId] = useState<string | null>(null);
   const [areaFilterAreaDocId, setAreaFilterAreaDocId] = useState("");
+  const [missingObjectsScopeId, setMissingObjectsScopeId] = useState<string | null>(null);
   const areaFilterHydrated = useRef(false);
   const consumedInitialScopeRef = useRef(false);
 
@@ -120,13 +125,31 @@ export function ScopesPanel({
     [quoteObjects],
   );
 
-  const brokenScopeIds = useMemo(() => {
-    const ids = new Set<string>();
+  const missingFindingsByScopeId = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof scopeMissingObjectFindings>>();
     for (const s of scopes) {
-      if (scopeHasMissingQuoteObjects(s, quoteObjectCatalog)) ids.add(s.id);
+      const findings = scopeMissingObjectFindings(s, quoteObjectCatalog);
+      if (findings.length > 0) map.set(s.id, findings);
     }
-    return ids;
+    return map;
   }, [scopes, quoteObjectCatalog]);
+
+  const brokenScopeIds = useMemo(
+    () => new Set(missingFindingsByScopeId.keys()),
+    [missingFindingsByScopeId],
+  );
+
+  const missingObjectsScope = useMemo(
+    () =>
+      missingObjectsScopeId
+        ? scopes.find((s) => s.id === missingObjectsScopeId) ?? null
+        : null,
+    [missingObjectsScopeId, scopes],
+  );
+
+  const missingObjectsFindings = missingObjectsScopeId
+    ? missingFindingsByScopeId.get(missingObjectsScopeId) ?? []
+    : [];
 
   const allVisibleSelected =
     filteredScopes.length > 0 && filteredScopes.every((s) => selectedDeleteIds.has(s.id));
@@ -465,6 +488,10 @@ export function ScopesPanel({
                   );
                   const checkedForDelete = selectedDeleteIds.has(s.id);
                   const hasBrokenObjects = brokenScopeIds.has(s.id);
+                  const missingCount =
+                    missingFindingsByScopeId
+                      .get(s.id)
+                      ?.reduce((n, a) => n + a.missingItems.length, 0) ?? 0;
                   return (
                   <tr
                     key={s.id}
@@ -525,9 +552,13 @@ export function ScopesPanel({
                           {s.question || "—"}
                         </button>
                         {hasBrokenObjects ? (
-                          <span className="rounded border border-red-300 bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-900 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200">
-                            Missing object
-                          </span>
+                          <MissingObjectBadge
+                            count={missingCount || 1}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMissingObjectsScopeId(s.id);
+                            }}
+                          />
                         ) : null}
                       </div>
                     </td>
@@ -594,6 +625,29 @@ export function ScopesPanel({
         }}
         />
       ) : null}
+
+      <MissingScopeObjectsDialog
+        open={Boolean(missingObjectsScope)}
+        title={
+          missingObjectsScope
+            ? `Missing objects — ${
+                (missingObjectsScope.question ?? "").trim() ||
+                `Scope ${missingObjectsScope.scopeid ?? ""}`
+              }`
+            : "Missing objects"
+        }
+        answers={missingObjectsFindings}
+        onClose={() => setMissingObjectsScopeId(null)}
+        onEdit={
+          missingObjectsScope
+            ? () => {
+                const scope = missingObjectsScope;
+                setMissingObjectsScopeId(null);
+                openEdit(scope);
+              }
+            : undefined
+        }
+      />
 
       <ConfirmDialog
         open={Boolean(pendingDeleteIds?.length)}

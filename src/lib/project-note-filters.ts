@@ -5,7 +5,14 @@ export type ProjectNoteTarget = {
   projectid: number;
   areaid?: number | null;
   objectid?: number | null;
+  /** Catalog SKU id when the note is attached to a specific SKU under the object. */
+  skuId?: string | null;
 };
+
+export function noteSkuId(note: Pick<ProjectNotePublic, "skuId">): string | null {
+  const id = note.skuId?.trim();
+  return id || null;
+}
 
 function isProjectLevelNote(note: ProjectNotePublic): boolean {
   return note.areaid == null && note.objectid == null;
@@ -15,20 +22,60 @@ function isAreaLevelNote(note: ProjectNotePublic): boolean {
   return note.areaid != null && note.objectid == null;
 }
 
-function isObjectLevelNote(note: ProjectNotePublic): boolean {
+function isObjectScopedNote(note: ProjectNotePublic): boolean {
   return note.areaid != null && note.objectid != null;
 }
 
-/** Notes matching a project, area, or object target. */
+function isSkuLevelNote(note: ProjectNotePublic): boolean {
+  return isObjectScopedNote(note) && noteSkuId(note) != null;
+}
+
+function isObjectLevelNote(note: ProjectNotePublic): boolean {
+  return isObjectScopedNote(note) && noteSkuId(note) == null;
+}
+
+/** Counts notes attached to the object itself vs a SKU under that object. */
+export function countObjectAndSkuNotes(
+  notes: ProjectNotePublic[],
+  projectid: number,
+  filter: { areaid: number | null; objectid: number | null; skuId: string | null },
+): { objectLevel: number; skuLevel: number } {
+  const areaid = filter.areaid;
+  const objectid = filter.objectid;
+  if (areaid == null || objectid == null) {
+    return { objectLevel: 0, skuLevel: 0 };
+  }
+  const pool = uniqueProjectNotes(
+    notes.filter(
+      (n) =>
+        n.projectid === projectid &&
+        isObjectScopedNote(n) &&
+        n.areaid === areaid &&
+        n.objectid === objectid,
+    ),
+  );
+  const objectLevel = pool.filter((n) => isObjectLevelNote(n)).length;
+  const skuId = filter.skuId?.trim() || null;
+  const skuLevel = skuId
+    ? pool.filter((n) => noteSkuId(n) === skuId).length
+    : pool.filter((n) => isSkuLevelNote(n)).length;
+  return { objectLevel, skuLevel };
+}
+
+/** Notes matching a project, area, object, or SKU target. */
 export function filterNotesForTarget(
   notes: ProjectNotePublic[],
   target: ProjectNoteTarget,
 ): ProjectNotePublic[] {
   const { projectid, areaid, objectid } = target;
+  const skuId = target.skuId?.trim() || null;
   return notes.filter((n) => {
     if (n.projectid !== projectid) return false;
+    if (skuId != null && objectid != null && areaid != null) {
+      return isSkuLevelNote(n) && n.areaid === areaid && n.objectid === objectid && noteSkuId(n) === skuId;
+    }
     if (objectid != null && areaid != null) {
-      return isObjectLevelNote(n) && n.areaid === areaid && n.objectid === objectid;
+      return isObjectScopedNote(n) && n.areaid === areaid && n.objectid === objectid;
     }
     if (areaid != null) {
       return isAreaLevelNote(n) && n.areaid === areaid;
@@ -45,10 +92,11 @@ export function sortNotesNewestFirst(notes: ProjectNotePublic[]): ProjectNotePub
   });
 }
 
-/** Popup view filter: null areaid/objectid = all (within parent scope). */
+/** Popup view filter: null areaid/objectid/skuId = all (within parent scope). */
 export type ProjectNoteViewFilter = {
   areaid?: number | null;
   objectid?: number | null;
+  skuId?: string | null;
   /** When non-empty, notes must include at least one of these trade tags. */
   trades?: string[];
   /** When non-empty, notes must match at least one of these note types. */
@@ -75,7 +123,7 @@ function noteMatchesNotetypeFilter(note: ProjectNotePublic, filterNotetypes: rea
   return types.includes(noteType);
 }
 
-/** Filter notes for the popup table (broader than a single button target). */
+/** Filter notes for the popup list and matching badge counts (broader than a single attach target). */
 export function filterNotesForView(
   notes: ProjectNotePublic[],
   projectid: number,
@@ -84,20 +132,29 @@ export function filterNotesForView(
   const pool = notes.filter((n) => n.projectid === projectid);
   const areaid = filter.areaid ?? null;
   const objectid = filter.objectid ?? null;
+  const skuId = filter.skuId?.trim() || null;
 
   let scoped: ProjectNotePublic[];
   if (areaid == null && objectid == null) {
     scoped = pool;
+  } else if (areaid != null && objectid != null && skuId != null) {
+    scoped = pool.filter(
+      (n) =>
+        isSkuLevelNote(n) &&
+        n.areaid === areaid &&
+        n.objectid === objectid &&
+        noteSkuId(n) === skuId,
+    );
   } else if (areaid != null && objectid != null) {
     scoped = pool.filter(
-      (n) => isObjectLevelNote(n) && n.areaid === areaid && n.objectid === objectid,
+      (n) => isObjectScopedNote(n) && n.areaid === areaid && n.objectid === objectid,
     );
   } else if (areaid != null) {
     scoped = pool.filter(
-      (n) => n.areaid === areaid && (isAreaLevelNote(n) || isObjectLevelNote(n)),
+      (n) => n.areaid === areaid && (isAreaLevelNote(n) || isObjectScopedNote(n)),
     );
   } else if (objectid != null) {
-    scoped = pool.filter((n) => isObjectLevelNote(n) && n.objectid === objectid);
+    scoped = pool.filter((n) => isObjectScopedNote(n) && n.objectid === objectid);
   } else {
     scoped = pool;
   }
@@ -136,6 +193,23 @@ export function uniqueNoteObjectOptionsByObjectId<T extends { objectid: number }
     if (seen.has(opt.objectid)) continue;
     seen.add(opt.objectid);
     out.push(opt);
+  }
+  return out;
+}
+
+/** Keep first label per skuId. */
+export function uniqueNoteSkuOptionsBySkuId<T extends { skuId: string }>(
+  options: T[],
+): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const opt of options) {
+    const id = opt.skuId.trim();
+    if (!id) continue;
+    const key = id.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...opt, skuId: id });
   }
   return out;
 }

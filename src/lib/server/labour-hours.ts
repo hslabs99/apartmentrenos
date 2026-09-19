@@ -171,23 +171,35 @@ export function recalcLookupLabourHoursOnLine(
   return { patch, objectLabourDuplicate: duplicateMatch };
 }
 
+let objectLabourRatesCache: DataObjectLabourRatePublic[] | null = null;
+let contractLabourRatesCache: DataLabourRatePublic[] | null = null;
+
+export function clearLabourRatesCaches(): void {
+  objectLabourRatesCache = null;
+  contractLabourRatesCache = null;
+}
+
 export async function loadAllObjectLabourRates(
   db: Firestore,
 ): Promise<DataObjectLabourRatePublic[]> {
+  if (objectLabourRatesCache) return objectLabourRatesCache;
   const snap = await db.collection(DATA_OBJECTLABOURRATES_COLLECTION).get();
-  return snap.docs
+  objectLabourRatesCache = snap.docs
     .filter((d) => !isDataObjectlabourratesMetaDocument(d.id))
     .map((d) => dataObjectLabourRateDocToPublic(d.id, d.data()))
     .sort((a, b) => a.productType.localeCompare(b.productType));
+  return objectLabourRatesCache;
 }
 
 export async function loadAllContractLabourRates(
   db: Firestore,
 ): Promise<DataLabourRatePublic[]> {
+  if (contractLabourRatesCache) return contractLabourRatesCache;
   const snap = await db.collection(DATA_LABOURRATES_COLLECTION).get();
-  return snap.docs
+  contractLabourRatesCache = snap.docs
     .filter((d) => !isDataLabourratesMetaDocument(d.id))
     .map((d) => dataLabourRateDocToPublic(d.id, d.data()));
+  return contractLabourRatesCache;
 }
 
 export function labourHoursToFirestore(hours: LabourHours): Record<string, number | null> {

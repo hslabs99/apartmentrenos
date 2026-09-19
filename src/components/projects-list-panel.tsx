@@ -52,17 +52,33 @@ async function readApiResponse<T>(res: Response): Promise<ApiResponse<T>> {
   return { ok: res.ok, status: res.status, contentType, text };
 }
 
+function isAbortError(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  const name = "name" in e ? String((e as { name: unknown }).name) : "";
+  const msg = "message" in e ? String((e as { message: unknown }).message) : "";
+  return name === "AbortError" || name === "TimeoutError" || /aborted/i.test(msg);
+}
+
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init?: RequestInit & { timeoutMs?: number },
 ): Promise<Response> {
-  const timeoutMs = init?.timeoutMs ?? 15000;
+  const { timeoutMs = 15000, signal, ...rest } = init ?? {};
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
+  const onOuterAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) {
+      clearTimeout(t);
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }
+    signal.addEventListener("abort", onOuterAbort);
+  }
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await fetch(input, { ...rest, signal: controller.signal });
   } finally {
     clearTimeout(t);
+    signal?.removeEventListener("abort", onOuterAbort);
   }
 }
 
@@ -314,10 +330,17 @@ export function ProjectsListPanel({
   } | null>(null);
   const [cloneSaving, setCloneSaving] = useState(false);
   const [cloneError, setCloneError] = useState<string | null>(null);
+  const loadGenRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   const listLabel = isArchives ? "archives" : isTemplates ? "templates" : "projects";
 
   const load = useCallback(async () => {
+    loadAbortRef.current?.abort();
+    const ac = new AbortController();
+    loadAbortRef.current = ac;
+    const gen = ++loadGenRef.current;
+
     setLoading(true);
     setError(null);
     try {
@@ -333,8 +356,9 @@ export function ProjectsListPanel({
       };
       debugLastRef.current = initialDebug;
       setDebugLast(initialDebug);
-      const res = await fetchWithTimeout(endpoint, { timeoutMs: 15000 });
+      const res = await fetchWithTimeout(endpoint, { timeoutMs: 45000, signal: ac.signal });
       const parsed = await readApiResponse<{ projects?: ProjectListItem[]; error?: string }>(res);
+      if (gen !== loadGenRef.current) return;
       const json = parsed.json;
       const bodySnippet =
         typeof json === "object" && json && "error" in (json as Record<string, unknown>)
@@ -364,8 +388,12 @@ export function ProjectsListPanel({
       }
       setProjects(json?.projects ?? []);
     } catch (e) {
-      const msg =
-        e instanceof Error
+      if (gen !== loadGenRef.current) return;
+      if (isAbortError(e) && ac.signal.aborted) return;
+      const timedOut = isAbortError(e);
+      const msg = timedOut
+        ? `Timed out loading ${listLabel}. The server is busy — try again.`
+        : e instanceof Error
           ? e.message
           : `Failed to load ${listLabel}`;
       console.error("[Projects] load failed", {
@@ -374,14 +402,16 @@ export function ProjectsListPanel({
         online: typeof navigator !== "undefined" ? navigator.onLine : undefined,
       });
       setError(msg);
-      setProjects([]);
     } finally {
-      setLoading(false);
+      if (gen === loadGenRef.current) setLoading(false);
     }
   }, [isArchives, isTemplates, listLabel]);
 
   useEffect(() => {
     void load();
+    return () => {
+      loadAbortRef.current?.abort();
+    };
   }, [load]);
 
   async function confirmClone(projectname: string) {
@@ -593,6 +623,13 @@ export function ProjectsListPanel({
           role="alert"
         >
           {error}
+          <button
+            type="button"
+            className="ml-3 inline-flex rounded-md border border-red-400/80 bg-white/70 px-2 py-0.5 text-xs font-medium text-red-950 hover:bg-white dark:border-red-800 dark:bg-red-950/60 dark:text-red-100 dark:hover:bg-red-900/80"
+            onClick={() => void load()}
+          >
+            Retry
+          </button>
           {debugLast ? (
             <details className="mt-2">
               <summary className="cursor-pointer select-none text-xs text-red-900/80 dark:text-red-100/80">

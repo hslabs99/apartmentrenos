@@ -89,6 +89,7 @@ export const scopeAnswerSchema = z.object({
   label: z.string().min(1).max(200),
   attachedQuoteObjectIds: z.array(z.string().min(1).max(128)).optional().default([]),
   attachedObjectNames: z.array(z.string().min(1).max(255)).optional().default([]),
+  attachedObjectNameById: z.record(z.string().min(1).max(128), z.string().min(1).max(255)).optional(),
   attachedCategories: z.array(z.string().min(1).max(120)).optional().default([]),
   attachedObjectTools: z.record(z.string().min(1).max(128), z.string().min(1).max(64)).optional(),
   attachedObjectShowAll: z.record(z.string().min(1).max(128), z.boolean()).optional(),
@@ -253,6 +254,22 @@ function normalizeCategoryList(categories: string[]): string[] {
   return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 }
 
+function normalizeAttachedObjectNameById(
+  raw: Record<string, string> | undefined,
+  attachedIds: string[],
+): Record<string, string> {
+  if (!raw || typeof raw !== "object") return {};
+  const allowed = new Set(attachedIds);
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const id = key.trim();
+    const name = typeof value === "string" ? value.trim() : "";
+    if (!id || !allowed.has(id) || !name) continue;
+    out[id] = name.slice(0, 255);
+  }
+  return out;
+}
+
 function normalizeIdList(ids: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -385,6 +402,7 @@ export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
   label: string;
   attachedQuoteObjectIds: string[];
   attachedObjectNames: string[];
+  attachedObjectNameById: Record<string, string>;
   attachedCategories: string[];
   attachedObjectTools: Record<string, ScopeToolType>;
   attachedObjectShowAll: Record<string, boolean>;
@@ -435,6 +453,10 @@ export function normalizeScopeAnswers(answers: ScopeAnswerInput[]): {
       label: a.label,
       attachedQuoteObjectIds,
       attachedObjectNames: normalizeObjectNameList(a.attachedObjectNames ?? []),
+      attachedObjectNameById: normalizeAttachedObjectNameById(
+        a.attachedObjectNameById,
+        attachedQuoteObjectIds,
+      ),
       attachedCategories: normalizeCategoryList(a.attachedCategories ?? []),
       attachedObjectTools,
       attachedObjectShowAll,

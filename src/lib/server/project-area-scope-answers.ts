@@ -4,13 +4,24 @@ import { isProjectAreasMetaDocument } from "@/lib/firestore/projectareas-collect
 import { isQuoteObjectsMetaDocument } from "@/lib/firestore/quote-objects-collection";
 import { isScopesMetaDocument } from "@/lib/firestore/scopes-collection";
 import { readTooltipFromQuoteObjectData } from "@/lib/server/area-object-tooltip";
-import { resolveEffectivePriceLevelId } from "@/lib/server/resolve-effective-price-level";
-import { resolveEffectiveStyleColour } from "@/lib/server/resolve-effective-style-colour";
-import { resolveEffectiveElevateLevel } from "@/lib/server/resolve-effective-elevate-level";
-import { primarySupplierPriceExcGst } from "@/lib/server/materialize-line-sku";
+import { resolveEffectivePriceLevelId, effectivePriceLevelIdFromData } from "@/lib/server/resolve-effective-price-level";
+import { resolveEffectiveStyleColour, effectiveStyleColourFromData } from "@/lib/server/resolve-effective-style-colour";
+import {
+  resolveEffectiveElevateLevel,
+  resolveElevateLevelFromPriceLevelAndFinish,
+  projectFinishFromData,
+} from "@/lib/server/resolve-effective-elevate-level";
+import {
+  isPrimarySupplierPriceCacheWarm,
+  primarySupplierPriceExcGst,
+  primePrimarySupplierPriceCache,
+} from "@/lib/server/materialize-line-sku";
 import {
   clearDataSkusResolveCache,
+  dataSkusResolveCacheCount,
+  isDataSkusResolveCacheWarm,
   loadSkuUomBySkuId,
+  primeDataSkusResolveCache,
   resolveAllSkusForQuoteObject,
   resolveShowAllSkusForQuoteObject,
   resolveSkuForQuoteObject,
@@ -41,9 +52,23 @@ import {
   numOrNull,
   quoteTemplatePricingForPriceLevel,
 } from "@/lib/server/quote-object-doc";
-import { clearColourLookupIndexCache } from "@/lib/server/load-colour-lookup-index";
+import {
+  clearColourLookupIndexCache,
+  isColourLookupIndexCacheWarm,
+  loadColourLookupIndex,
+} from "@/lib/server/load-colour-lookup-index";
+import {
+  type ScopeAnswerTimings,
+  timedValue,
+} from "@/lib/server/scope-answer-timings";
 import { loadSkuCalcM2Fields } from "@/lib/server/sku-calc-m2-fields";
-import { loadProjectDimensionsByProjectId } from "@/lib/server/project-dimensions";
+import {
+  loadProjectDataByNumericId,
+  projectDimensionsFromData,
+  type ProjectDimensions,
+} from "@/lib/server/project-dimensions";
+import { docToProjectAreaObjectPublic } from "@/lib/server/project-area-object-doc";
+import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import {
   applyProjectLineLabourHours,
   labourHoursToFirestore,
@@ -65,6 +90,10 @@ import {
   nextProjectAreaLineSortOrder,
   PROJECT_AREA_LINE_SORT_STEP,
 } from "@/lib/server/project-area-line-sort";
+import {
+  loadQuoteDocsByIds,
+  loadQuoteMapForNumericObjectIds,
+} from "@/lib/server/project-area-seeding";
 import { matchesScopeInstance } from "@/lib/scope-instance";
 import type { ProjectAreaScopeAnswerPublic } from "@/types/project-area";
 import type { QuoteObjectInheritM2Source } from "@/types/quote-object";
@@ -106,20 +135,6 @@ function integerObjectId(v: unknown): number | undefined {
     if (Number.isInteger(n)) return n;
   }
   return undefined;
-}
-
-async function loadQuoteByObjectIdMap(
-  db: Firestore,
-): Promise<Map<number, DocumentData>> {
-  const quoteObjectsSnap = await db.collection("quote_objects").get();
-  const quoteByObjectId = new Map<number, DocumentData>();
-  quoteObjectsSnap.docs.forEach((d) => {
-    if (isQuoteObjectsMetaDocument(d.id)) return;
-    const data = d.data();
-    const oid = integerObjectId(data.objectid);
-    if (oid !== undefined) quoteByObjectId.set(oid, data);
-  });
-  return quoteByObjectId;
 }
 
 /** Legacy: only the row matching effective PL; no fallback. */
@@ -230,12 +245,16 @@ async function deleteScopeLinesForScope(
   projectAreaDocId: string,
   scopeDocId: string,
   scopeInstanceId?: string | null,
-): Promise<number> {
-  const snap = await db
-    .collection("projectareaobjects")
-    .where("projectid", "==", projectid)
-    .where("projectAreaDocId", "==", projectAreaDocId)
-    .get();
+  timings?: ScopeAnswerTimings,
+): Promise<{ removed: number; ids: string[]; nextLineSortOrder: number }> {
+  const snap = await timedValue(timings, "deleteLinesQueryMs", () =>
+    db
+      .collection("projectareaobjects")
+      .where("projectid", "==", projectid)
+      .where("projectAreaDocId", "==", projectAreaDocId)
+      .get(),
+  );
+  if (timings) timings.deleteLinesScanned = snap.docs.length;
   let removed = 0;
   const BATCH_MAX = 400;
   const scopeLineIds = new Set<string>();
@@ -255,16 +274,32 @@ async function deleteScopeLinesForScope(
     const parentId = String(x.bundledFromLineId ?? "").trim();
     return x.linesource === "bundled" && parentId && scopeLineIds.has(parentId);
   });
-  for (let i = 0; i < toDelete.length; i += BATCH_MAX) {
-    const slice = toDelete.slice(i, i + BATCH_MAX);
-    const batch = db.batch();
-    for (const d of slice) {
-      batch.delete(d.ref);
-      removed += 1;
-    }
-    await batch.commit();
+  const deleteIds = new Set(toDelete.map((d) => d.id));
+  let maxKeptSort = 0;
+  for (const d of snap.docs) {
+    if (deleteIds.has(d.id) || isProjectAreaObjectsMetaDocument(d.id)) continue;
+    const order = readLineSortOrder(d.data().lineSortOrder);
+    if (order != null && order > maxKeptSort) maxKeptSort = order;
   }
-  return removed;
+  const ids: string[] = [];
+  await timedValue(timings, "deleteLinesWriteMs", async () => {
+    for (let i = 0; i < toDelete.length; i += BATCH_MAX) {
+      const slice = toDelete.slice(i, i + BATCH_MAX);
+      const batch = db.batch();
+      for (const d of slice) {
+        batch.delete(d.ref);
+        removed += 1;
+        ids.push(d.id);
+      }
+      await batch.commit();
+    }
+  });
+  if (timings) timings.deleteLinesRemoved = removed;
+  return {
+    removed,
+    ids,
+    nextLineSortOrder: maxKeptSort + PROJECT_AREA_LINE_SORT_STEP,
+  };
 }
 
 /** Why scope lines were not materialized (when answer was chosen but linesAdded is 0). */
@@ -287,6 +322,8 @@ export type ScopeAnswerDiagnostics = {
   attachedObjectNames?: string[];
   /** Legacy price-level rows on the answer (pre-category scopes). */
   answerTierIds?: number[];
+  /** Wall-clock breakdown (ms). Open DevTools console / Network Server-Timing. */
+  timings?: ScopeAnswerTimings;
 };
 
 export type ApplyScopeAnswerResult = {
@@ -294,6 +331,9 @@ export type ApplyScopeAnswerResult = {
   linesAdded: number;
   scopeAnswers: ProjectAreaScopeAnswerPublic[];
   diagnostics: ScopeAnswerDiagnostics;
+  removedLineIds: string[];
+  addedLines: ProjectAreaObjectPublic[];
+  paDataForPublic: DocumentData;
 };
 
 export type RepopulateScopeObjectResult = {
@@ -336,6 +376,14 @@ async function collectScopeLineSpecsForAnswer(
     scopeData: DocumentData;
     answerid: string;
     answer: ScopeAnswerPublic;
+    timings?: ScopeAnswerTimings;
+    /** When set, skip re-reading area/project for price level / SKU filters. */
+    loadedFilters?: {
+      effectivePl: number | null;
+      style: string;
+      colour: string;
+      elevateLevel: string;
+    };
   },
 ): Promise<CollectedScopeLineSpecs> {
   const {
@@ -346,8 +394,14 @@ async function collectScopeLineSpecsForAnswer(
     scopeData,
     answerid,
     answer,
+    timings,
+    loadedFilters,
   } = args;
-  const effectivePl = await resolveEffectivePriceLevelId(db, projectAreaDocId, projectid);
+  const effectivePl = loadedFilters
+    ? loadedFilters.effectivePl
+    : await timedValue(timings, "collectEffectivePlMs", () =>
+        resolveEffectivePriceLevelId(db, projectAreaDocId, projectid),
+      );
   const attachedQuoteObjectIds = answer.attachedQuoteObjectIds ?? [];
   const attachedObjectNames = answer.attachedObjectNames ?? [];
   const attachedCategories = answer.attachedCategories ?? [];
@@ -358,6 +412,13 @@ async function collectScopeLineSpecsForAnswer(
     (id) => !isSystemScopeObjectId(id),
   );
   const suppressZeroSkuRows = answer.suppressZeroSkuRows === true;
+
+  let quoteByDocId: Map<string, DocumentData> | null = null;
+  const quoteDocById = async (): Promise<Map<string, DocumentData>> => {
+    if (quoteByDocId) return quoteByDocId;
+    quoteByDocId = await loadQuoteDocsByIds(db, catalogQuoteObjectIds);
+    return quoteByDocId;
+  };
 
   const blindsLineSpec = (): ScopeLineCreateSpec => ({
     objectid: 0,
@@ -383,7 +444,20 @@ async function collectScopeLineSpecsForAnswer(
   };
 
   if (catalogQuoteObjectIds.length > 0 || hasBlindsSystem) {
-    const filters = catalogQuoteObjectIds.length > 0 ? await skuFilters() : null;
+    const filters =
+      catalogQuoteObjectIds.length > 0
+        ? loadedFilters
+          ? {
+              elevateLevel: loadedFilters.elevateLevel,
+              style: loadedFilters.style,
+              colour: loadedFilters.colour,
+            }
+          : await timedValue(timings, "collectSkuFiltersMs", skuFilters)
+        : null;
+    if (catalogQuoteObjectIds.length > 0) {
+      const quotes = await timedValue(timings, "collectQuoteDocsMs", () => quoteDocById());
+      if (timings) timings.quoteDocsLoaded = quotes.size;
+    }
     const attachedShowAll = answer.attachedObjectShowAll ?? {};
     const attachedShowAllDefault = answer.attachedObjectShowAllDefault ?? {};
     const attachedNoCharge = answer.attachedObjectNoCharge ?? {};
@@ -394,9 +468,9 @@ async function collectScopeLineSpecsForAnswer(
 
     const appendCatalogObject = async (trimmed: string) => {
       if (!filters) return;
-      const snap = await db.collection("quote_objects").doc(trimmed).get();
-      if (!snap.exists || isQuoteObjectsMetaDocument(snap.id)) return;
-      const data = snap.data() as DocumentData;
+      const quotes = await quoteDocById();
+      const data = quotes.get(trimmed);
+      if (!data) return;
       const areaTagIds = data.areaTagIds;
       const areaTags = Array.isArray(areaTagIds)
         ? areaTagIds.filter((x): x is string => typeof x === "string" && x.length > 0)
@@ -459,28 +533,28 @@ async function collectScopeLineSpecsForAnswer(
       }
     };
 
-    for (const docId of attachedQuoteObjectIds) {
-      const trimmed = docId.trim();
-      if (!trimmed) continue;
-      if (trimmed === systemScopeObjectId("Blinds")) {
-        if (!blindsQueued) {
-          lineSpecs.push(blindsLineSpec());
-          blindsQueued = true;
+    await timedValue(timings, "collectSkuResolveMs", async () => {
+      for (const docId of attachedQuoteObjectIds) {
+        const trimmed = docId.trim();
+        if (!trimmed) continue;
+        if (trimmed === systemScopeObjectId("Blinds")) {
+          if (!blindsQueued) {
+            lineSpecs.push(blindsLineSpec());
+            blindsQueued = true;
+          }
+          continue;
         }
-        continue;
+        if (isSystemScopeObjectId(trimmed)) continue;
+        await appendCatalogObject(trimmed);
       }
-      if (isSystemScopeObjectId(trimmed)) continue;
-      await appendCatalogObject(trimmed);
-    }
+    });
 
     if (lineSpecs.length === 0 && !hasBlindsSystem) {
       noLinesReason = suppressZeroSkuRows ? "zero_sku_rows_suppressed" : "no_objects_for_ids";
     }
   } else if (!hasBlindsSystem && attachedObjectNames.length > 0) {
-    const linePayloads = await resolveQuoteObjectLinesForObjectNames(
-      db,
-      attachedObjectNames,
-      templateAreaDocId,
+    const linePayloads = await timedValue(timings, "collectSkuResolveMs", () =>
+      resolveQuoteObjectLinesForObjectNames(db, attachedObjectNames, templateAreaDocId),
     );
     lineSpecs = linePayloads.map((pl) => ({
       ...pl,
@@ -492,10 +566,8 @@ async function collectScopeLineSpecsForAnswer(
       noLinesReason = "no_objects_for_names";
     }
   } else if (!hasBlindsSystem && attachedCategories.length > 0) {
-    const linePayloads = await resolveQuoteObjectLinesForCategories(
-      db,
-      attachedCategories,
-      templateAreaDocId,
+    const linePayloads = await timedValue(timings, "collectSkuResolveMs", () =>
+      resolveQuoteObjectLinesForCategories(db, attachedCategories, templateAreaDocId),
     );
     lineSpecs = linePayloads.map((pl) => ({
       ...pl,
@@ -521,11 +593,8 @@ async function collectScopeLineSpecsForAnswer(
     if (legacyBpl.length === 0) {
       noLinesReason = "no_objects_configured";
     } else {
-      const legacy = await resolveLinePayloadsFromLegacyPicks(
-        db,
-        legacyBpl,
-        effectivePl,
-        areaid,
+      const legacy = await timedValue(timings, "collectSkuResolveMs", () =>
+        resolveLinePayloadsFromLegacyPicks(db, legacyBpl, effectivePl, areaid),
       );
       lineSpecs = legacy.linePayloads.map((pl) => ({
         ...pl,
@@ -574,6 +643,13 @@ async function materializeScopeLineSpecs(
     scopeMetrics: ReturnType<typeof firestoreScopeMetricsToPublic>;
     startingLineSortOrder: number;
     effectivePl: number | null;
+    timings?: ScopeAnswerTimings;
+    loadedPricing?: {
+      style: string;
+      colour: string;
+      elevateLevel: string;
+      projDims: ProjectDimensions;
+    };
   },
 ): Promise<{ linesAdded: number; newLineDocIds: string[] }> {
   const {
@@ -591,27 +667,71 @@ async function materializeScopeLineSpecs(
     metricMap,
     scopeMetrics,
     effectivePl,
+    timings,
+    loadedPricing,
   } = args;
   const inst = args.scopeInstanceId?.trim();
-  const quoteByObjectId = await loadQuoteByObjectIdMap(db);
-  const { style: effectiveStyle, colour: effectiveColour } = await resolveEffectiveStyleColour(
-    db,
-    projectAreaDocId,
-    projectid,
-  );
-  const elevateLevel = await resolveEffectiveElevateLevel(db, projectAreaDocId, projectid);
+  const quoteByObjectId = new Map<number, DocumentData>();
+  const missingQuoteObjectIds: number[] = [];
+  const seenMissing = new Set<number>();
+  for (const pl of lineSpecs) {
+    if (pl.systemObjectKind) continue;
+    if (pl.quoteData) {
+      quoteByObjectId.set(pl.objectid, pl.quoteData);
+      continue;
+    }
+    if (pl.objectid && !quoteByObjectId.has(pl.objectid) && !seenMissing.has(pl.objectid)) {
+      seenMissing.add(pl.objectid);
+      missingQuoteObjectIds.push(pl.objectid);
+    }
+  }
+  const catalogsWallT0 = performance.now();
+  const [
+    extraQuotes,
+    styleColour,
+    elevateLevel,
+    projDims,
+    objectLabourRates,
+    contractLabourRates,
+  ] = await Promise.all([
+    timedValue(timings, "matExtraQuotesMs", () =>
+      loadQuoteMapForNumericObjectIds(db, missingQuoteObjectIds),
+    ),
+    loadedPricing
+      ? Promise.resolve({ style: loadedPricing.style, colour: loadedPricing.colour })
+      : timedValue(timings, "matStyleColourMs", () =>
+          resolveEffectiveStyleColour(db, projectAreaDocId, projectid),
+        ),
+    loadedPricing
+      ? Promise.resolve(loadedPricing.elevateLevel)
+      : timedValue(timings, "matElevateMs", () =>
+          resolveEffectiveElevateLevel(db, projectAreaDocId, projectid),
+        ),
+    loadedPricing
+      ? Promise.resolve(loadedPricing.projDims)
+      : timedValue(timings, "matDimsMs", () =>
+          loadProjectDataByNumericId(db, projectid).then((d) => projectDimensionsFromData(d ?? undefined)),
+        ),
+    timedValue(timings, "matObjectLabourMs", () => loadAllObjectLabourRates(db)),
+    timedValue(timings, "matContractLabourMs", () => loadAllContractLabourRates(db)),
+    timedValue(timings, "matSkuPrimeMs", () => primeDataSkusResolveCache(db)),
+    timedValue(timings, "matSupplierPrimeMs", () => primePrimarySupplierPriceCache(db)),
+  ]);
+  if (timings) timings.matCatalogsWallMs = Math.round(performance.now() - catalogsWallT0);
+  for (const [oid, data] of extraQuotes) {
+    if (!quoteByObjectId.has(oid)) quoteByObjectId.set(oid, data);
+  }
+  const { style: effectiveStyle, colour: effectiveColour } = styleColour;
   const areaM2 = numOrNull(paData.aream2);
-  const projDims = await loadProjectDimensionsByProjectId(db, projectid);
-  const objectLabourRates = await loadAllObjectLabourRates(db);
-  const contractLabourRates = await loadAllContractLabourRates(db);
   let lineSortOrder = args.startingLineSortOrder;
   let linesAdded = 0;
   const newLineDocIds: string[] = [];
   const BATCH_MAX = 400;
-  for (let i = 0; i < lineSpecs.length; i += BATCH_MAX) {
-    const slice = lineSpecs.slice(i, i + BATCH_MAX);
-    const batch = db.batch();
-    for (const pl of slice) {
+  await timedValue(timings, "matWriteMs", async () => {
+    for (let i = 0; i < lineSpecs.length; i += BATCH_MAX) {
+      const slice = lineSpecs.slice(i, i + BATCH_MAX);
+      const batch = db.batch();
+      for (const pl of slice) {
       if (pl.systemObjectKind === "blinds") {
         const newRef = db.collection("projectareaobjects").doc();
         batch.set(newRef, {
@@ -789,7 +909,8 @@ async function materializeScopeLineSpecs(
       lineSortOrder += PROJECT_AREA_LINE_SORT_STEP;
     }
     await batch.commit();
-  }
+    }
+  });
   return { linesAdded, newLineDocIds };
 }
 
@@ -857,7 +978,7 @@ async function findQuoteObjectForObjectId(
     if (!fallback) fallback = hit;
   }
   if (fallback) return fallback;
-  const byId = await loadQuoteByObjectIdMap(db);
+  const byId = await loadQuoteMapForNumericObjectIds(db, [objectid]);
   const data = byId.get(objectid);
   if (!data) return null;
   return { docId: "", data };
@@ -1216,6 +1337,12 @@ export async function repopulateScopeObjectOnProjectArea(
   };
 }
 
+function answerNeedsSkuCatalog(answer: ScopeAnswerPublic): boolean {
+  return (answer.attachedQuoteObjectIds ?? []).some(
+    (id) => id.trim().length > 0 && !isSystemScopeObjectId(id.trim()),
+  );
+}
+
 /**
  * Removes existing lines for this scope on the project area, updates stored answers,
  * then inserts lines from attached quote object categories (pricing uses effective price level).
@@ -1227,6 +1354,30 @@ export async function applyScopeAnswerToProjectArea(
   answerid: string | null,
   scopeInstanceId?: string | null,
 ): Promise<ApplyScopeAnswerResult> {
+  const timings: ScopeAnswerTimings = {
+    skuCacheWasWarm: isDataSkusResolveCacheWarm(),
+    supplierCacheWasWarm: isPrimarySupplierPriceCacheWarm(),
+    colourLookupCacheWasWarm: isColourLookupIndexCacheWarm(),
+    skuCacheCount: dataSkusResolveCacheCount(),
+  };
+  const applyT0 = performance.now();
+  const finish = (
+    result: ApplyScopeAnswerResult,
+  ): ApplyScopeAnswerResult => {
+    timings.applyTotalMs = Math.round(performance.now() - applyT0);
+    timings.skuCacheCount = dataSkusResolveCacheCount();
+    result.diagnostics = { ...result.diagnostics, timings };
+    console.info("[scope-answer timing]", {
+      projectAreaDocId,
+      scopeDocId,
+      answerid,
+      linesAdded: result.linesAdded,
+      linesRemoved: result.linesRemoved,
+      timings,
+    });
+    return result;
+  };
+
   if (isProjectAreasMetaDocument(projectAreaDocId)) {
     throw new Error("Invalid project area");
   }
@@ -1235,7 +1386,11 @@ export async function applyScopeAnswerToProjectArea(
   }
 
   const paRef = db.collection("projectareas").doc(projectAreaDocId);
-  const paSnap = await paRef.get();
+  const scopeRef = db.collection("scopes").doc(scopeDocId);
+  const [paSnap, scopeSnap] = await Promise.all([
+    timedValue(timings, "loadProjectAreaMs", () => paRef.get()),
+    timedValue(timings, "loadScopeMs", () => scopeRef.get()),
+  ]);
   if (!paSnap.exists) throw new Error("Project area not found");
   const paData = paSnap.data() as DocumentData;
   const projectid = Number(paData.projectid);
@@ -1243,15 +1398,17 @@ export async function applyScopeAnswerToProjectArea(
   if (!Number.isInteger(projectid) || !Number.isInteger(areaid)) {
     throw new Error("Invalid project area data");
   }
-
-  const scopeRef = db.collection("scopes").doc(scopeDocId);
-  const scopeSnap = await scopeRef.get();
   if (!scopeSnap.exists) throw new Error("Scope not found");
   const scopeData = scopeSnap.data() as DocumentData;
   if (scopeData.kind === "header" || scopeData.kind === "footer") {
     throw new Error("Section markers have no answers to apply");
   }
-  const tmplSnap = await db.collection("areas").where("areaid", "==", areaid).limit(1).get();
+  const [tmplSnap, projectData] = await Promise.all([
+    timedValue(timings, "loadTemplateAreaMs", () =>
+      db.collection("areas").where("areaid", "==", areaid).limit(1).get(),
+    ),
+    timedValue(timings, "loadProjectMs", () => loadProjectDataByNumericId(db, projectid)),
+  ]);
   const templateAreaDocId = tmplSnap.docs[0]?.id ?? "";
   const extraRaw = paData.extraScopeDocIds;
   const isManualExtra =
@@ -1278,14 +1435,24 @@ export async function applyScopeAnswerToProjectArea(
   const answers = firestoreAnswersToPublic(scopeData.answers);
   const scopeMetrics = firestoreScopeMetricsToPublic(scopeData.scopeMetrics);
   let scopeMetricValues = parseScopeMetricValuesFromFirestore(paData.scopeMetricValues);
+  const effectivePl = effectivePriceLevelIdFromData(paData, projectData ?? undefined);
+  const { style, colour } = effectiveStyleColourFromData(paData, projectData ?? undefined);
+  const projDims = projectDimensionsFromData(projectData ?? undefined);
+  const paForPublic = () =>
+    ({
+      ...paData,
+      scopeAnswers: current,
+      scopeMetricValues,
+    }) as DocumentData;
 
   if (answerid === null || answerid === "") {
-    const linesRemoved = await deleteScopeLinesForScope(
+    const deleted = await deleteScopeLinesForScope(
       db,
       projectid,
       projectAreaDocId,
       scopeDocId,
       scopeInstanceId,
+      timings,
     );
     current = current.filter(
       (e) =>
@@ -1301,35 +1468,66 @@ export async function applyScopeAnswerToProjectArea(
       scopeMetrics,
       null,
     );
-    await paRef.update({
-      scopeAnswers: current,
-      scopeMetricValues,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-    const clearedPl = await resolveEffectivePriceLevelId(db, projectAreaDocId, projectid);
-    return {
-      linesRemoved,
+    await timedValue(timings, "updateAnswersMs", () =>
+      paRef.update({
+        scopeAnswers: current,
+        scopeMetricValues,
+        updatedAt: FieldValue.serverTimestamp(),
+      }),
+    );
+    return finish({
+      linesRemoved: deleted.removed,
       linesAdded: 0,
       scopeAnswers: current,
       diagnostics: {
-        effectivePriceLevelId: clearedPl,
+        effectivePriceLevelId: effectivePl,
         noLinesReason: "answer_cleared",
       },
-    };
+      removedLineIds: deleted.ids,
+      addedLines: [],
+      paDataForPublic: paForPublic(),
+    });
   }
 
   const answer = answers.find((a) => a.answerid === answerid);
   if (!answer) {
     throw new Error("Unknown scope answer");
   }
+  const needsSkuCatalog = answerNeedsSkuCatalog(answer);
 
-  const linesRemoved = await deleteScopeLinesForScope(
-    db,
-    projectid,
-    projectAreaDocId,
-    scopeDocId,
-    scopeInstanceId,
-  );
+  const catalogPrime = needsSkuCatalog
+    ? timedValue(timings, "primeCatalogsWallMs", () =>
+        Promise.all([
+          primeDataSkusResolveCache(db),
+          primePrimarySupplierPriceCache(db),
+          loadAllObjectLabourRates(db),
+          loadAllContractLabourRates(db),
+          loadColourLookupIndex(db),
+        ]),
+      )
+    : Promise.resolve();
+
+  const [deleted, elevateLevel] = await Promise.all([
+    deleteScopeLinesForScope(
+      db,
+      projectid,
+      projectAreaDocId,
+      scopeDocId,
+      scopeInstanceId,
+      timings,
+    ),
+    needsSkuCatalog
+      ? timedValue(timings, "elevateMs", () =>
+          resolveElevateLevelFromPriceLevelAndFinish(
+            db,
+            effectivePl,
+            projectFinishFromData(projectData ?? undefined),
+          ),
+        )
+      : Promise.resolve(""),
+    catalogPrime,
+  ]);
+  const linesRemoved = deleted.removed;
 
   current = current.filter(
     (e) =>
@@ -1349,21 +1547,29 @@ export async function applyScopeAnswerToProjectArea(
     scopeMetrics,
     answerid,
   );
-  await paRef.update({
-    scopeAnswers: current,
-    scopeMetricValues,
-    updatedAt: FieldValue.serverTimestamp(),
-  });
-
-  const collected = await collectScopeLineSpecsForAnswer(db, {
-    projectAreaDocId,
-    projectid,
-    areaid,
-    templateAreaDocId,
-    scopeData,
-    answerid,
-    answer,
-  });
+  const [collected] = await Promise.all([
+    timedValue(timings, "collectMs", () =>
+      collectScopeLineSpecsForAnswer(db, {
+        projectAreaDocId,
+        projectid,
+        areaid,
+        templateAreaDocId,
+        scopeData,
+        answerid,
+        answer,
+        timings,
+        loadedFilters: { effectivePl, style, colour, elevateLevel },
+      }),
+    ),
+    timedValue(timings, "updateAnswersMs", () =>
+      paRef.update({
+        scopeAnswers: current,
+        scopeMetricValues,
+        updatedAt: FieldValue.serverTimestamp(),
+      }),
+    ),
+  ]);
+  if (timings) timings.lineSpecs = collected.lineSpecs.length;
   if (collected.lineSpecs.length === 0) {
     const diag: ScopeAnswerDiagnostics = {
       effectivePriceLevelId: collected.effectivePl,
@@ -1374,43 +1580,66 @@ export async function applyScopeAnswerToProjectArea(
         collected.attachedCategories.length > 0 ? collected.attachedCategories : undefined,
       answerTierIds: collected.answerTierIds,
     };
-    console.warn("[applyScopeAnswerToProjectArea] no scope lines materialized", {
-      projectAreaDocId,
-      scopeDocId,
-      answerid,
-      ...diag,
+    if (collected.noLinesReason !== "no_objects_configured") {
+      console.warn("[applyScopeAnswerToProjectArea] no scope lines materialized", {
+        projectAreaDocId,
+        scopeDocId,
+        answerid,
+        ...diag,
+      });
+    }
+    return finish({
+      linesRemoved,
+      linesAdded: 0,
+      scopeAnswers: current,
+      diagnostics: diag,
+      removedLineIds: deleted.ids,
+      addedLines: [],
+      paDataForPublic: paForPublic(),
     });
-    return { linesRemoved, linesAdded: 0, scopeAnswers: current, diagnostics: diag };
   }
 
   const metricMap = scopeMetricValuesMap(scopeMetricValues);
-  const startingLineSortOrder = await nextProjectAreaLineSortOrder(
-    db,
-    projectAreaDocId,
-    projectid,
+  const startingLineSortOrder = deleted.nextLineSortOrder;
+  const materialized = await timedValue(timings, "materializeMs", () =>
+    materializeScopeLineSpecs(db, {
+      paData,
+      projectAreaDocId,
+      projectid,
+      areaid,
+      scopeDocId,
+      scopeInstanceId,
+      answerid,
+      scopeNumericId,
+      lineSpecs: collected.lineSpecs,
+      scopeInheritByObjectId: collected.scopeInheritByObjectId,
+      scopeInheritMeasureLockedByObjectId: collected.scopeInheritMeasureLockedByObjectId,
+      showAllDefaultByObjectId: collected.showAllDefaultByObjectId,
+      metricMap,
+      scopeMetrics,
+      startingLineSortOrder,
+      effectivePl: collected.effectivePl,
+      timings,
+      loadedPricing: { style, colour, elevateLevel, projDims },
+    }),
   );
-  const { linesAdded } = await materializeScopeLineSpecs(db, {
-    paData,
-    projectAreaDocId,
-    projectid,
-    areaid,
-    scopeDocId,
-    scopeInstanceId,
-    answerid,
-    scopeNumericId,
-    lineSpecs: collected.lineSpecs,
-    scopeInheritByObjectId: collected.scopeInheritByObjectId,
-    scopeInheritMeasureLockedByObjectId: collected.scopeInheritMeasureLockedByObjectId,
-    showAllDefaultByObjectId: collected.showAllDefaultByObjectId,
-    metricMap,
-    scopeMetrics,
-    startingLineSortOrder,
-    effectivePl: collected.effectivePl,
+  const quoteByObjectId = new Map<number, DocumentData>();
+  for (const spec of collected.lineSpecs) {
+    if (spec.quoteData) quoteByObjectId.set(spec.objectid, spec.quoteData);
+  }
+  const addedLines = await timedValue(timings, "readAddedLinesMs", async () => {
+    if (materialized.newLineDocIds.length === 0) return [] as ProjectAreaObjectPublic[];
+    const snaps = await db.getAll(
+      ...materialized.newLineDocIds.map((id) => db.collection("projectareaobjects").doc(id)),
+    );
+    return snaps
+      .filter((s) => s.exists)
+      .map((s) => docToProjectAreaObjectPublic(s.id, s.data()!, quoteByObjectId));
   });
 
-  return {
+  return finish({
     linesRemoved,
-    linesAdded,
+    linesAdded: materialized.linesAdded,
     scopeAnswers: current,
     diagnostics: {
       effectivePriceLevelId: collected.effectivePl,
@@ -1420,7 +1649,10 @@ export async function applyScopeAnswerToProjectArea(
         collected.attachedCategories.length > 0 ? collected.attachedCategories : undefined,
       answerTierIds: collected.answerTierIds,
     },
-  };
+    removedLineIds: deleted.ids,
+    addedLines,
+    paDataForPublic: paForPublic(),
+  });
 }
 
 async function deleteAllScopeLinesForScopeDoc(

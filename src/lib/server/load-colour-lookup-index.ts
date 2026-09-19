@@ -33,3 +33,7 @@ export async function loadColourLookupIndex(db: Firestore): Promise<ColourLookup
 export function clearColourLookupIndexCache(): void {
   cachedIndex = null;
 }
+
+export function isColourLookupIndexCacheWarm(): boolean {
+  return cachedIndex != null;
+}

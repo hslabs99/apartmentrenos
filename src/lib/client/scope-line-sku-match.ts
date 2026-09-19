@@ -858,14 +858,6 @@ export function activeScopeLineSkuPickValue(
 
   }
 
-  if (picks.length === 1) {
-
-    const only = picks[0]!;
-
-    return encodeScopeLineSkuPickValue(only.skuId, only.supplierOption);
-
-  }
-
   return "";
 
 }

@@ -15,16 +15,45 @@ export type MaterializedLineSku = {
   supplierPriceExcGst: number | null;
 };
 
+let primaryPriceBySkuId: Map<string, number | null> | null = null;
+
+export function clearPrimarySupplierPriceCache(): void {
+  primaryPriceBySkuId = null;
+}
+
+export function isPrimarySupplierPriceCacheWarm(): boolean {
+  return primaryPriceBySkuId != null;
+}
+
+async function loadPrimaryPriceBySkuId(
+  db: Firestore,
+): Promise<Map<string, number | null>> {
+  if (primaryPriceBySkuId) return primaryPriceBySkuId;
+  const snap = await db.collection(DATA_SKU_SUPPLIERS_COLLECTION).get();
+  const items = snap.docs
+    .filter((d) => !isDataSkuSuppliersMetaDocument(d.id))
+    .map((d) => dataSkuSupplierDocToPublic(d.id, d.data()));
+  const primary = buildPrimarySupplierBySkuId(items);
+  const map = new Map<string, number | null>();
+  for (const [skuId, row] of Object.entries(primary)) {
+    map.set(skuId, row?.priceExcGst ?? null);
+  }
+  primaryPriceBySkuId = map;
+  return map;
+}
+
+export async function primePrimarySupplierPriceCache(db: Firestore): Promise<void> {
+  await loadPrimaryPriceBySkuId(db);
+}
+
 export async function primarySupplierPriceExcGst(
   db: Firestore,
   skuId: string,
 ): Promise<number | null> {
-  const snap = await db.collection(DATA_SKU_SUPPLIERS_COLLECTION).where("skuId", "==", skuId).get();
-  const items = snap.docs
-    .filter((d) => !isDataSkuSuppliersMetaDocument(d.id))
-    .map((d) => dataSkuSupplierDocToPublic(d.id, d.data()));
-  const primary = buildPrimarySupplierBySkuId(items)[skuId];
-  return primary?.priceExcGst ?? null;
+  const id = skuId.trim();
+  if (!id) return null;
+  const map = await loadPrimaryPriceBySkuId(db);
+  return map.get(id) ?? null;
 }
 
 /**

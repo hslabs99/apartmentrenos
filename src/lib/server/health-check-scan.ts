@@ -68,18 +68,21 @@ function loadQuoteCatalog(qoSnap: QuerySnapshot): {
   const ids = new Set<string>();
   const namesLower = new Set<string>();
   const numericIds = new Set<number>();
+  const nameById = new Map<string, string>();
   let count = 0;
   for (const d of qoSnap.docs) {
     if (isQuoteObjectsMetaDocument(d.id)) continue;
     count += 1;
     ids.add(d.id);
     const data = d.data();
-    const name = normalizeQuoteObjectName(String(data.objectname ?? ""));
+    const objectname = String(data.objectname ?? "").trim();
+    if (objectname) nameById.set(d.id, objectname);
+    const name = normalizeQuoteObjectName(objectname);
     if (name) namesLower.add(name);
     const oid = integerObjectId(data.objectid);
     if (oid !== undefined) numericIds.add(oid);
   }
-  return { catalog: { ids, namesLower, numericIds }, count };
+  return { catalog: { ids, namesLower, numericIds, nameById }, count };
 }
 
 function loadSkuIdSet(skuSnap: QuerySnapshot): { ids: Set<string>; count: number } {

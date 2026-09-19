@@ -36,8 +36,11 @@ async function loadAreaLineRows(
   db: Firestore,
   projectAreaDocId: string,
   projectid: number,
+  opts?: { backfill?: boolean },
 ): Promise<AreaLineRow[]> {
-  await backfillMissingProjectAreaDocIds(db, projectid);
+  if (opts?.backfill !== false) {
+    await backfillMissingProjectAreaDocIds(db, projectid);
+  }
 
   const snap = await db
     .collection("projectareaobjects")
@@ -86,7 +89,9 @@ export async function nextProjectAreaLineSortOrder(
   projectAreaDocId: string,
   projectid: number,
 ): Promise<number> {
-  const rows = await loadAreaLineRows(db, projectAreaDocId, projectid);
+  const rows = await loadAreaLineRows(db, projectAreaDocId, projectid, {
+    backfill: false,
+  });
   let max = 0;
   for (const r of rows) {
     if (typeof r.lineSortOrder === "number" && r.lineSortOrder > max) {

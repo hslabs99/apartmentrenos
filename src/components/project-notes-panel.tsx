@@ -7,6 +7,8 @@ import {
 import type { ProjectNoteAreaOption, ProjectNoteObjectOption } from "@/components/project-notes-browser";
 import { ProjectsTabs } from "@/components/projects-tabs";
 import { projectLineObjectLabel } from "@/lib/client/project-line-quote-object";
+import { collectProjectNoteSkuOptions } from "@/lib/client/project-note-sku-options";
+import { formatProjectNoteSkuLabel } from "@/lib/project-note-display";
 import { useLookups } from "@/lib/client/use-lookups";
 import { distinctLookupValues } from "@/lib/lookup-list-values";
 import { LOOKUP_TYPE_NOTE_TYPES } from "@/lib/lookup-types";
@@ -21,7 +23,7 @@ import type { AreaPublic } from "@/types/area";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import type { ProjectAreaPublic } from "@/types/project-area";
-import type { ProjectNotePublic } from "@/types/project-note";
+import type { ProjectNotePublic, ProjectNoteUpdateBody } from "@/types/project-note";
 import type { ProjectPublic } from "@/types/project";
 import type { QuoteObjectPublic } from "@/types/quote-object";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -236,6 +238,53 @@ export function ProjectNotesPanel() {
     [projectNoteObjectLabelByArea],
   );
 
+  const projectNoteSkuOptionsForObject = useCallback(
+    (areaid: number | null, objectid: number | null) => {
+      if (objectid == null) return [];
+      const lines = allObjects.filter(
+        (row) =>
+          row.objectid === objectid && (areaid == null || row.areaid === areaid),
+      );
+      const extraSkuIds = projectNotes
+        .filter(
+          (n) =>
+            n.objectid === objectid &&
+            (areaid == null || n.areaid === areaid) &&
+            Boolean(n.skuId?.trim()),
+        )
+        .map((n) => n.skuId!.trim());
+      return collectProjectNoteSkuOptions({
+        lines,
+        catalogSkus,
+        extraSkuIds,
+      });
+    },
+    [allObjects, catalogSkus, projectNotes],
+  );
+
+  const projectNoteSkuLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const sku of catalogSkus) {
+      const id = sku.skuId.trim();
+      if (!id || map.has(id)) continue;
+      const product = sku.product?.trim();
+      map.set(id, product ? `${id} · ${product}` : id);
+    }
+    for (const row of allObjects) {
+      const id = row.skuId?.trim();
+      if (!id || map.has(id)) continue;
+      const product = row.skuProduct?.trim();
+      map.set(id, product ? `${id} · ${product}` : id);
+    }
+    return map;
+  }, [allObjects, catalogSkus]);
+
+  const projectNoteSkuLabelForNote = useCallback(
+    (skuId: string | null) =>
+      formatProjectNoteSkuLabel(skuId, (id) => projectNoteSkuLabelById.get(id)),
+    [projectNoteSkuLabelById],
+  );
+
   const createProjectNote = useCallback(
     async (
       target: ProjectNoteTarget,
@@ -249,6 +298,7 @@ export function ProjectNotesPanel() {
           projectid: numericProjectId,
           areaid: target.areaid ?? null,
           objectid: target.objectid ?? null,
+          skuId: target.skuId?.trim() || null,
           ...body,
         }),
       });
@@ -262,6 +312,7 @@ export function ProjectNotesPanel() {
       setProjectNotes((prev) =>
         uniqueProjectNotes([data.projectNote!, ...prev]),
       );
+      return data.projectNote;
     },
     [numericProjectId],
   );
@@ -269,7 +320,7 @@ export function ProjectNotesPanel() {
   const updateProjectNote = useCallback(
     async (
       noteId: string,
-      body: { notetype: string; trades: string[]; note: string },
+      body: ProjectNoteUpdateBody,
     ) => {
       const res = await fetch(`/api/project-notes/${encodeURIComponent(noteId)}`, {
         method: "PATCH",
@@ -309,8 +360,10 @@ export function ProjectNotesPanel() {
       initialViewFilter: { areaid: null, objectid: null },
       areaOptions: projectNoteAreaOptions,
       objectOptionsForArea: projectNoteObjectOptionsForArea,
+      skuOptionsForObject: projectNoteSkuOptionsForObject,
       areaLabelForNote: projectNoteAreaLabelForNote,
       objectLabelForNote: projectNoteObjectLabelForNote,
+      skuLabelForNote: projectNoteSkuLabelForNote,
       noteTypeOptions,
       authorFallback,
       showPrintReport: true,
@@ -324,8 +377,10 @@ export function ProjectNotesPanel() {
     projectNotes,
     projectNoteAreaOptions,
     projectNoteObjectOptionsForArea,
+    projectNoteSkuOptionsForObject,
     projectNoteAreaLabelForNote,
     projectNoteObjectLabelForNote,
+    projectNoteSkuLabelForNote,
     noteTypeOptions,
     authorFallback,
     createProjectNote,

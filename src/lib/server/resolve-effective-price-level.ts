@@ -1,6 +1,20 @@
-import type { Firestore } from "firebase-admin/firestore";
+import type { DocumentData, Firestore } from "firebase-admin/firestore";
 import { isProjectAreasMetaDocument } from "@/lib/firestore/projectareas-collection";
 import { numOrNull } from "@/lib/server/quote-object-doc";
+
+/**
+ * Area override (`projectareas.pricelevelid`) wins; else project default (`projects.defaultpricelevelid`).
+ * Same rules as `resolveEffectivePriceLevelId`, from already-loaded docs (no extra reads).
+ */
+export function effectivePriceLevelIdFromData(
+  paData: DocumentData | undefined,
+  projectData: DocumentData | undefined,
+): number | null {
+  const areaPl = numOrNull(paData?.pricelevelid);
+  if (areaPl != null && Number.isInteger(areaPl)) return areaPl;
+  const defPl = numOrNull(projectData?.defaultpricelevelid);
+  return defPl != null && Number.isInteger(defPl) ? defPl : null;
+}
 
 /**
  * Area override (`projectareas.pricelevelid`) wins; else project default (`projects.defaultpricelevelid`).
@@ -15,9 +29,7 @@ export async function resolveEffectivePriceLevelId(
   if (areaPl != null && Number.isInteger(areaPl)) return areaPl;
 
   const projQ = await db.collection("projects").where("projectid", "==", projectid).limit(1).get();
-  const pd = projQ.docs[0]?.data();
-  const defPl = numOrNull(pd?.defaultpricelevelid);
-  return defPl != null && Number.isInteger(defPl) ? defPl : null;
+  return effectivePriceLevelIdFromData(paSnap.data(), projQ.docs[0]?.data());
 }
 
 /**

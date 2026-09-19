@@ -1,11 +1,16 @@
 import { isSystemScopeObjectId } from "@/lib/system-scope-types";
-import type { HealthCheckAnswerIssue, HealthCheckReport } from "@/types/health-check";
+import type {
+  HealthCheckAnswerIssue,
+  HealthCheckMissingObject,
+  HealthCheckReport,
+} from "@/types/health-check";
 import type { ScopeAnswerPublic, ScopePublic } from "@/types/scope";
 
 export type QuoteObjectCatalogIndex = {
   ids: ReadonlySet<string>;
   namesLower: ReadonlySet<string>;
   numericIds: ReadonlySet<number>;
+  nameById: ReadonlyMap<string, string>;
 };
 
 export function integerObjectId(value: unknown): number | undefined {
@@ -76,37 +81,155 @@ export function projectLineHasOrphanSku(
   return !currentSkuIds.has(skuId);
 }
 
+export function formatMissingQuoteObjectItem(item: HealthCheckMissingObject): string {
+  return missingQuoteObjectTitle(item);
+}
+
+export function missingQuoteObjectTitle(item: HealthCheckMissingObject): string {
+  const name = item.name?.trim();
+  if (name) return name;
+  return "Removed quote object";
+}
+
+export function missingQuoteObjectContext(item: HealthCheckMissingObject): string | null {
+  const before = item.beforeName?.trim();
+  const after = item.afterName?.trim();
+  if (before && after) return `Previously listed between “${before}” and “${after}”`;
+  if (before) return `Previously listed after “${before}”`;
+  if (after) return `Previously listed before “${after}”`;
+  return null;
+}
+
+type AnswerNameFields = Pick<
+  ScopeAnswerPublic,
+  "attachedQuoteObjectIds" | "attachedObjectNames" | "attachedObjectNameById"
+>;
+
+function consumeMatchingName(remaining: string[], name: string): void {
+  const key = normalizeQuoteObjectName(name);
+  if (!key) return;
+  const idx = remaining.findIndex((n) => normalizeQuoteObjectName(n) === key);
+  if (idx >= 0) remaining.splice(idx, 1);
+}
+
+/** Best-effort names for attached ids: live catalog, stored map, then leftover denormalized names. */
+export function resolveAttachedObjectNames(
+  answer: AnswerNameFields,
+  catalog: QuoteObjectCatalogIndex,
+): Record<string, string> {
+  const ids = (answer.attachedQuoteObjectIds ?? []).map((id) => id.trim()).filter(Boolean);
+  const stored = answer.attachedObjectNameById ?? {};
+  const remaining = (answer.attachedObjectNames ?? []).map((n) => n.trim()).filter(Boolean);
+  const out: Record<string, string> = {};
+
+  for (const id of ids) {
+    if (isSystemScopeObjectId(id)) {
+      const storedName = stored[id]?.trim();
+      if (storedName) out[id] = storedName;
+      continue;
+    }
+    const live = catalog.nameById.get(id)?.trim();
+    if (live) {
+      out[id] = live;
+      consumeMatchingName(remaining, live);
+      continue;
+    }
+    const storedName = stored[id]?.trim();
+    if (storedName) out[id] = storedName;
+  }
+
+  const unnamedMissing = ids.filter(
+    (id) => !isSystemScopeObjectId(id) && !catalog.ids.has(id) && !out[id],
+  );
+  const canAssign =
+    remaining.length > 0 &&
+    (remaining.length === unnamedMissing.length ||
+      (remaining.length === 1 && unnamedMissing.length === 1));
+  if (canAssign) {
+    const take = Math.min(remaining.length, unnamedMissing.length);
+    for (let i = 0; i < take; i++) {
+      const id = unnamedMissing[i]!;
+      const name = remaining[i]!;
+      if (id && name) out[id] = name;
+    }
+  }
+
+  return out;
+}
+
+export function quoteObjectNameHintsFromAnswers(
+  answers: readonly AnswerNameFields[],
+  catalog: QuoteObjectCatalogIndex,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const answer of answers) {
+    Object.assign(out, resolveAttachedObjectNames(answer, catalog));
+  }
+  return out;
+}
+
+function neighborResolvedName(
+  ids: string[],
+  index: number,
+  resolved: Record<string, string>,
+): string | undefined {
+  const id = ids[index];
+  if (!id) return undefined;
+  const name = resolved[id]?.trim();
+  return name || undefined;
+}
+
 export function answerMissingQuoteObjects(
-  answer: Pick<ScopeAnswerPublic, "attachedQuoteObjectIds" | "attachedObjectNames" | "answerid" | "label">,
+  answer: Pick<
+    ScopeAnswerPublic,
+    | "attachedQuoteObjectIds"
+    | "attachedObjectNames"
+    | "attachedObjectNameById"
+    | "answerid"
+    | "label"
+  >,
   catalog: QuoteObjectCatalogIndex,
 ): HealthCheckAnswerIssue | null {
   const missingIds: string[] = [];
   const missingNames: string[] = [];
+  const missingItems: HealthCheckMissingObject[] = [];
   const ids = (answer.attachedQuoteObjectIds ?? [])
     .map((id) => id.trim())
     .filter(Boolean);
+  const resolved = resolveAttachedObjectNames(answer, catalog);
 
   if (ids.length > 0) {
-    for (const id of ids) {
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i]!;
       if (isSystemScopeObjectId(id)) continue;
-      if (!catalog.ids.has(id)) missingIds.push(id);
+      if (catalog.ids.has(id)) continue;
+      missingIds.push(id);
+      const name = resolved[id]?.trim() || undefined;
+      missingItems.push({
+        id,
+        name,
+        beforeName: neighborResolvedName(ids, i - 1, resolved),
+        afterName: neighborResolvedName(ids, i + 1, resolved),
+      });
     }
   } else {
-    for (const name of answer.attachedObjectNames ?? []) {
-      const trimmed = name.trim();
-      if (!trimmed) continue;
-      if (!catalog.namesLower.has(normalizeQuoteObjectName(trimmed))) {
-        missingNames.push(trimmed);
+    const names = (answer.attachedObjectNames ?? []).map((name) => name.trim());
+    for (const name of names) {
+      if (!name) continue;
+      if (!catalog.namesLower.has(normalizeQuoteObjectName(name))) {
+        missingNames.push(name);
+        missingItems.push({ name });
       }
     }
   }
 
-  if (missingIds.length === 0 && missingNames.length === 0) return null;
+  if (missingItems.length === 0) return null;
   return {
     answerid: answer.answerid,
     answerLabel: answer.label,
     missingIds,
     missingNames,
+    missingItems,
   };
 }
 
@@ -136,15 +259,18 @@ export function quoteObjectCatalogFromRows(
   const ids = new Set<string>();
   const namesLower = new Set<string>();
   const numericIds = new Set<number>();
+  const nameById = new Map<string, string>();
   for (const row of rows) {
     const id = row.id.trim();
     if (id) ids.add(id);
+    const objectname = row.objectname.trim();
+    if (id && objectname) nameById.set(id, objectname);
     const name = normalizeQuoteObjectName(row.objectname);
     if (name) namesLower.add(name);
     const oid = integerObjectId(row.objectid);
     if (oid !== undefined) numericIds.add(oid);
   }
-  return { ids, namesLower, numericIds };
+  return { ids, namesLower, numericIds, nameById };
 }
 
 export function emptyHealthCheckReport(partial?: Partial<{

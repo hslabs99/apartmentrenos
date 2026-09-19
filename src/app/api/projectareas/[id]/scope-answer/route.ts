@@ -4,6 +4,7 @@ import { getAdminFirestore } from "@/lib/firebase/admin";
 import { isProjectAreasMetaDocument } from "@/lib/firestore/projectareas-collection";
 import { applyScopeAnswerToProjectArea } from "@/lib/server/project-area-scope-answers";
 import { projectAreaDocToPublic } from "@/lib/server/project-area-to-public";
+import { scopeAnswerServerTimingHeader } from "@/lib/server/scope-answer-timings";
 
 export const runtime = "nodejs";
 
@@ -41,17 +42,21 @@ export async function POST(req: NextRequest, context: RouteContext) {
       parsed.data.answerid,
       parsed.data.scopeInstanceId ?? null,
     );
-    const paSnap = await db.collection("projectareas").doc(id).get();
-    if (!paSnap.exists) {
-      return NextResponse.json({ error: "Project area not found" }, { status: 404 });
-    }
-    return NextResponse.json({
-      linesRemoved: result.linesRemoved,
-      linesAdded: result.linesAdded,
-      scopeAnswers: result.scopeAnswers,
-      diagnostics: result.diagnostics,
-      projectArea: projectAreaDocToPublic(id, paSnap.data()!),
-    });
+    const timings = result.diagnostics.timings ?? {};
+    result.diagnostics = { ...result.diagnostics, timings };
+    const header = scopeAnswerServerTimingHeader(timings);
+    return NextResponse.json(
+      {
+        linesRemoved: result.linesRemoved,
+        linesAdded: result.linesAdded,
+        scopeAnswers: result.scopeAnswers,
+        diagnostics: result.diagnostics,
+        projectArea: projectAreaDocToPublic(id, result.paDataForPublic),
+        removedLineIds: result.removedLineIds,
+        addedLines: result.addedLines,
+      },
+      header ? { headers: { "Server-Timing": header } } : undefined,
+    );
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to apply scope answer";
     const status =

@@ -2,6 +2,11 @@
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { DragReorderHandle } from "@/components/drag-reorder-handle";
+import {
+  MissingObjectBadge,
+  MissingQuoteObjectFacts,
+  MissingScopeObjectsDialog,
+} from "@/components/missing-scope-objects-dialog";
 import { ReorderArrows } from "@/components/reorder-arrows";
 import { ScopeAnswerObjectPicker } from "@/components/scope-answer-object-picker";
 import { ScopeMetricsEditor } from "@/components/scope-metrics-editor";
@@ -16,6 +21,12 @@ import {
 } from "@/lib/client/scope-form-draft";
 import { readApiJson } from "@/lib/client/read-api-json";
 import { loadCatalogSkuData } from "@/lib/client/load-catalog-sku-data";
+import {
+  answerMissingQuoteObjects,
+  quoteObjectCatalogFromRows,
+  quoteObjectNameHintsFromAnswers,
+  scopeHasMissingQuoteObjects,
+} from "@/lib/health-check/orphan-refs";
 import {
   DEFAULT_SCOPE_TOOL_TYPE,
   SCOPE_TOOL_TYPES,
@@ -58,6 +69,19 @@ function cloneScopeMetricsDraft(metrics: ScopeMetricPublic[] | undefined): Scope
     uom: m.uom,
     answerids: [...m.answerids],
   }));
+}
+
+function compactStringRecord(
+  ...parts: Array<Partial<Record<string, string>> | Record<string, string> | undefined>
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of parts) {
+    if (!part) continue;
+    for (const [key, value] of Object.entries(part)) {
+      if (typeof value === "string" && value.trim()) out[key] = value;
+    }
+  }
+  return out;
 }
 
 const EMPTY_AREA_DOC_IDS: string[] = [];
@@ -120,6 +144,7 @@ export function ScopeFormModal({
     useState<ScopeToolType>(DEFAULT_SCOPE_TOOL_TYPE);
   const [scopeMetricsDraft, setScopeMetricsDraft] = useState<ScopeMetricPublic[]>([]);
   const [activeTab, setActiveTab] = useState<ScopeFormTab>("details");
+  const [missingDialogAnswerId, setMissingDialogAnswerId] = useState<string | null>(null);
   const formInitializedForRef = useRef<string | null>(null);
 
   const activeScope = scopeDocId?.trim() ? fetchedScope : scope;
@@ -289,6 +314,7 @@ export function ScopeFormModal({
     setSaving(false);
     setAnswerRemoveConfirmId(null);
     setAnswerDragId(null);
+    setMissingDialogAnswerId(null);
     setActiveTab("details");
     setFormReady(false);
 
@@ -357,9 +383,30 @@ export function ScopeFormModal({
       try {
         const qos = await loadQuoteObjects();
         const byId = new Map(qos.map((q) => [q.id, q]));
+        const catalog = quoteObjectCatalogFromRows(qos);
         const drafts = publicAnswersToDraft(activeScope.answers, byId);
+        const firstMissing = drafts.find((d) => {
+          const original = activeScope.answers.find((a) => a.answerid === d.answerid);
+          return Boolean(
+            answerMissingQuoteObjects(
+              {
+                answerid: d.answerid,
+                label: d.label,
+                attachedQuoteObjectIds: d.attachedQuoteObjectIds,
+                attachedObjectNames: original?.attachedObjectNames ?? [],
+                attachedObjectNameById: d.attachedObjectNameById,
+              },
+              catalog,
+            ),
+          );
+        });
         setDraftAnswers(drafts);
-        setSelectedAnswerId(drafts[0]?.answerid ?? null);
+        setSelectedAnswerId(firstMissing?.answerid ?? drafts[0]?.answerid ?? null);
+        setActiveTab(
+          firstMissing || scopeHasMissingQuoteObjects(activeScope, catalog)
+            ? "answers"
+            : "details",
+        );
         setFormReady(true);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load quote objects");
@@ -532,9 +579,14 @@ export function ScopeFormModal({
         for (const [key, locked] of Object.entries(a.attachedObjectInheritMeasureLocked)) {
           if (idSet.has(key) && locked === false) attachedObjectInheritMeasureLocked[key] = false;
         }
+        const attachedObjectNameById: Partial<Record<string, string>> = {};
+        for (const [key, name] of Object.entries(a.attachedObjectNameById)) {
+          if (idSet.has(key) && name?.trim()) attachedObjectNameById[key] = name.trim();
+        }
         return {
           ...a,
           attachedQuoteObjectIds: ids,
+          attachedObjectNameById,
           attachedObjectTools,
           attachedObjectShowAll,
           attachedObjectShowAllDefault,
@@ -782,6 +834,62 @@ export function ScopeFormModal({
   const pendingRemoveAnswerLabel =
     draftAnswers.find((a) => a.answerid === answerRemoveConfirmId)?.label?.trim() || "";
 
+  const quoteObjectCatalog = useMemo(
+    () => quoteObjectCatalogFromRows(quoteObjects),
+    [quoteObjects],
+  );
+
+  const originalAnswerById = useMemo(() => {
+    const map = new Map((activeScope?.answers ?? []).map((a) => [a.answerid, a]));
+    return map;
+  }, [activeScope]);
+
+  const missingObjectLabels = useMemo(
+    () => quoteObjectNameHintsFromAnswers(activeScope?.answers ?? [], quoteObjectCatalog),
+    [activeScope, quoteObjectCatalog],
+  );
+
+  const missingByAnswerId = useMemo(() => {
+    const map = new Map<
+      string,
+      NonNullable<ReturnType<typeof answerMissingQuoteObjects>>
+    >();
+    for (const a of draftAnswers) {
+      const original = originalAnswerById.get(a.answerid);
+      const originalIds = original?.attachedQuoteObjectIds ?? [];
+      const originalNames = original?.attachedObjectNames ?? [];
+      const issue = answerMissingQuoteObjects(
+        {
+          answerid: a.answerid,
+          label: a.label,
+          attachedQuoteObjectIds: a.attachedQuoteObjectIds,
+          attachedObjectNames:
+            a.attachedQuoteObjectIds.length > 0 || originalIds.length === 0
+              ? originalNames
+              : [],
+          attachedObjectNameById: {
+            ...(original?.attachedObjectNameById ?? {}),
+            ...a.attachedObjectNameById,
+          },
+        },
+        quoteObjectCatalog,
+      );
+      if (issue) map.set(a.answerid, issue);
+    }
+    return map;
+  }, [draftAnswers, originalAnswerById, quoteObjectCatalog]);
+
+  const scopeMissingCount = useMemo(
+    () =>
+      [...missingByAnswerId.values()].reduce((n, issue) => n + issue.missingItems.length, 0),
+    [missingByAnswerId],
+  );
+
+  const missingDialogIssue =
+    missingDialogAnswerId != null
+      ? missingByAnswerId.get(missingDialogAnswerId) ?? null
+      : null;
+
   if (!open) return null;
 
   const title =
@@ -796,6 +904,13 @@ export function ScopeFormModal({
             : "Edit scope";
 
   const showLoading = fetchingScope || ((isEditMode || effectiveMode === "create") && !formReady && !error);
+  const headerQuestion = question.trim().replace(/\s+/g, " ");
+  const selectedMissingNameOnly =
+    selectedAnswer
+      ? (missingByAnswerId.get(selectedAnswer.answerid)?.missingItems ?? []).filter(
+          (item) => !item.id && Boolean(item.name?.trim()),
+        )
+      : [];
 
   const saveDisabled =
     saving ||
@@ -812,6 +927,10 @@ export function ScopeFormModal({
         aria-modal="true"
         aria-labelledby="scope-form-title"
         onClick={() => {
+          if (missingDialogAnswerId) {
+            setMissingDialogAnswerId(null);
+            return;
+          }
           if (answerRemoveConfirmId) {
             setAnswerRemoveConfirmId(null);
             return;
@@ -824,7 +943,13 @@ export function ScopeFormModal({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="border-b border-sf-border px-5 py-4 dark:border-zinc-700">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div
+              className={
+                isSectionMarkerForm
+                  ? "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
+                  : "grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] sm:items-center sm:gap-4"
+              }
+            >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <h2 id="scope-form-title" className="text-lg font-semibold md:text-xl">
@@ -867,8 +992,16 @@ export function ScopeFormModal({
                   </p>
                 ) : null}
               </div>
+              {!isSectionMarkerForm && !showLoading ? (
+                <p
+                  className="min-w-0 text-center text-base font-bold text-sf-text sm:truncate md:text-lg dark:text-zinc-100"
+                  title={headerQuestion || undefined}
+                >
+                  {headerQuestion || "\u00A0"}
+                </p>
+              ) : null}
               {!showLoading ? (
-                <div className="flex shrink-0 flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+                <div className="flex shrink-0 flex-col-reverse gap-2 sm:ml-auto sm:flex-row sm:items-center sm:justify-end">
                   <button
                     type="button"
                     onClick={onClose}
@@ -920,7 +1053,12 @@ export function ScopeFormModal({
                   aria-selected={activeTab === "answers"}
                   onClick={() => setActiveTab("answers")}
                 >
-                  Scope Answers
+                  <span className="inline-flex items-center gap-2">
+                    Scope Answers
+                    {scopeMissingCount > 0 ? (
+                      <MissingObjectBadge count={scopeMissingCount} />
+                    ) : null}
+                  </span>
                 </button>
               </div>
             ) : null}
@@ -1191,7 +1329,10 @@ export function ScopeFormModal({
                     </p>
                   ) : (
                     <ul className="space-y-2">
-                      {draftAnswers.map((a, answerIdx) => (
+                      {draftAnswers.map((a, answerIdx) => {
+                        const missing = missingByAnswerId.get(a.answerid);
+                        const missingCount = missing?.missingItems.length ?? 0;
+                        return (
                         <li
                           key={a.answerid}
                           onDragOver={handleAnswerDragOver}
@@ -1201,7 +1342,11 @@ export function ScopeFormModal({
                         >
                           <div
                             className={`rounded-lg border p-2 ${
-                              selectedAnswerId === a.answerid
+                              missing
+                                ? selectedAnswerId === a.answerid
+                                  ? "border-red-600 bg-red-50 dark:border-red-400 dark:bg-red-950/40"
+                                  : "border-red-300 bg-red-50/80 dark:border-red-800 dark:bg-red-950/25"
+                                : selectedAnswerId === a.answerid
                                 ? "border-sf-text bg-sf-page dark:border-zinc-200 dark:bg-zinc-800/60"
                                 : "border-sf-border dark:border-zinc-700"
                             }`}
@@ -1217,10 +1362,24 @@ export function ScopeFormModal({
                               <button
                                 type="button"
                                 onClick={() => setSelectedAnswerId(a.answerid)}
-                                className="min-w-0 flex-1 text-left text-sm font-medium text-sf-text dark:text-zinc-100"
+                                className={`min-w-0 flex-1 truncate text-left text-sm font-medium ${
+                                  missing
+                                    ? "text-red-900 dark:text-red-200"
+                                    : "text-sf-text dark:text-zinc-100"
+                                }`}
                               >
                                 {a.label || "(untitled)"}
                               </button>
+                              {missing ? (
+                                <MissingObjectBadge
+                                  count={missingCount}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedAnswerId(a.answerid);
+                                    setMissingDialogAnswerId(a.answerid);
+                                  }}
+                                />
+                              ) : null}
                               <ReorderArrows
                                 dense
                                 itemLabel={a.label || "answer"}
@@ -1315,13 +1474,35 @@ export function ScopeFormModal({
                             </div>
                           </div>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
 
                 <div className="min-w-0">
-                  <h3 className="mb-2 text-base font-semibold">Attached quote objects</h3>
+                  <h3
+                    className={`mb-2 text-base font-semibold ${
+                      selectedAnswer && missingByAnswerId.has(selectedAnswer.answerid)
+                        ? "text-red-800 dark:text-red-300"
+                        : ""
+                    }`}
+                  >
+                    Attached quote objects
+                    {selectedAnswer && missingByAnswerId.has(selectedAnswer.answerid) ? (
+                      <span className="ml-2 align-middle">
+                        <MissingObjectBadge
+                          count={
+                            missingByAnswerId.get(selectedAnswer.answerid)?.missingItems
+                              .length ?? 1
+                          }
+                          onClick={() =>
+                            setMissingDialogAnswerId(selectedAnswer.answerid)
+                          }
+                        />
+                      </span>
+                    ) : null}
+                  </h3>
                   <p className="mb-3 text-xs text-sf-text-weak dark:text-zinc-400">
                     Expand each object type (+/−), then multi-select quote objects. Drag selected
                     objects to set checklist order. Use Show All on an object to create one row per
@@ -1336,6 +1517,21 @@ export function ScopeFormModal({
                       : null}{" "}
                     Area tags on a quote object still apply at project runtime.
                   </p>
+                  {selectedMissingNameOnly.length > 0 ? (
+                    <ul className="mb-3 space-y-2">
+                      {selectedMissingNameOnly.map((item) => (
+                        <li
+                          key={item.name}
+                          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm dark:border-red-800 dark:bg-red-950/40"
+                        >
+                          <MissingQuoteObjectFacts item={item} />
+                          <span className="mt-0.5 block text-xs text-red-800 dark:text-red-300">
+                            It will be dropped when you save.
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                   {!selectedAnswer ? (
                     <p className="text-sm text-sf-text-secondary dark:text-zinc-400">
                       Select an answer on the left to attach objects.
@@ -1386,6 +1582,18 @@ export function ScopeFormModal({
                       }
                       disabled={saving}
                       inputClassName={inputClass}
+                      missingObjectLabels={compactStringRecord(
+                        missingObjectLabels,
+                        selectedAnswer.attachedObjectNameById,
+                        Object.fromEntries(
+                          (missingByAnswerId.get(selectedAnswer.answerid)?.missingItems ?? [])
+                            .filter((item) => item.id && item.name?.trim())
+                            .map((item) => [item.id!, item.name!.trim()]),
+                        ),
+                      )}
+                      missingObjects={
+                        missingByAnswerId.get(selectedAnswer.answerid)?.missingItems ?? []
+                      }
                     />
                   )}
                 </div>
@@ -1412,6 +1620,19 @@ export function ScopeFormModal({
           )}
         </div>
       </div>
+
+      <MissingScopeObjectsDialog
+        open={Boolean(missingDialogIssue)}
+        title={
+          missingDialogIssue
+            ? `Missing objects — ${
+                missingDialogIssue.answerLabel.trim() || "(untitled)"
+              }`
+            : "Missing objects"
+        }
+        answers={missingDialogIssue ? [missingDialogIssue] : []}
+        onClose={() => setMissingDialogAnswerId(null)}
+      />
 
       <ConfirmDialog
         open={Boolean(answerRemoveConfirmId)}

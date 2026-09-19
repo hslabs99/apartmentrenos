@@ -31,7 +31,9 @@ const nextConfig: NextConfig = {
   },
 
   /**
-   * Windows polling for `npm run dev:webpack` and production webpack builds only.
+   * Windows polling for `npm run dev` / `npm run dev:webpack` and production webpack builds only.
+   * Default `npm run dev` is webpack because Next 16 Turbopack can 404 nested
+   * `/projects/project*` pages for a whole Windows session (touching a page repairs it).
    * Turbopack ignores `webpack()` anyway; including it while using `--turbopack` triggers a Next warning.
    */
   ...(applyWebpackDevConfig

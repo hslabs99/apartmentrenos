@@ -1,5 +1,7 @@
 "use client";
 
+import { IconX } from "@/components/icons/lightning-icons";
+
 export function ModalFrame({
   title,
   description,
@@ -9,6 +11,8 @@ export function ModalFrame({
   wide,
   panelClassName,
   contentClassName,
+  overlayClassName,
+  headerClose = false,
 }: {
   title: string;
   description?: string;
@@ -19,10 +23,14 @@ export function ModalFrame({
   /** Extra classes on the dialog panel (e.g. larger supplier popup). */
   panelClassName?: string;
   contentClassName?: string;
+  /** Extra classes on the dimmed overlay (padding, alignment). */
+  overlayClassName?: string;
+  /** Show an X in the header instead of relying on a footer Close button. */
+  headerClose?: boolean;
 }) {
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
+      className={`fixed inset-0 z-[60] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4 ${overlayClassName ?? ""}`}
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-frame-title"
@@ -34,12 +42,24 @@ export function ModalFrame({
         } ${panelClassName ?? ""}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="shrink-0 border-b border-sf-border px-5 py-4 dark:border-zinc-700">
-          <h2 id="modal-frame-title" className="text-lg font-semibold md:text-xl">
-            {title}
-          </h2>
-          {description ? (
-            <p className="mt-1 text-sm text-sf-text-secondary dark:text-zinc-400">{description}</p>
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-sf-border px-5 py-4 dark:border-zinc-700">
+          <div className="min-w-0">
+            <h2 id="modal-frame-title" className="text-lg font-semibold md:text-xl">
+              {title}
+            </h2>
+            {description ? (
+              <p className="mt-1 text-sm text-sf-text-secondary dark:text-zinc-400">{description}</p>
+            ) : null}
+          </div>
+          {headerClose ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sf-text-secondary transition hover:bg-sf-page hover:text-sf-text dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              aria-label="Close"
+            >
+              <IconX className="h-5 w-5" />
+            </button>
           ) : null}
         </div>
         <div className={`min-h-0 flex-1 overflow-y-auto px-5 py-4 ${contentClassName ?? ""}`}>

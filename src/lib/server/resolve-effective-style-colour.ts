@@ -1,4 +1,4 @@
-import type { Firestore } from "firebase-admin/firestore";
+import type { DocumentData, Firestore } from "firebase-admin/firestore";
 import { isProjectAreasMetaDocument } from "@/lib/firestore/projectareas-collection";
 
 export type EffectiveStyleColour = {
@@ -6,31 +6,38 @@ export type EffectiveStyleColour = {
   colour: string;
 };
 
+/** Same rules as `resolveEffectiveStyleColour`, from already-loaded docs (no extra reads). */
+export function effectiveStyleColourFromData(
+  paData: DocumentData | undefined,
+  projectData: DocumentData | undefined,
+): EffectiveStyleColour {
+  let style = "";
+  let colour = "";
+  if (typeof paData?.style === "string" && paData.style.trim()) style = paData.style.trim();
+  if (typeof paData?.colour === "string" && paData.colour.trim()) colour = paData.colour.trim();
+  if (!style && typeof projectData?.defaultstyle === "string" && projectData.defaultstyle.trim()) {
+    style = projectData.defaultstyle.trim();
+  }
+  if (!colour && typeof projectData?.defaultcolour === "string" && projectData.defaultcolour.trim()) {
+    colour = projectData.defaultcolour.trim();
+  }
+  return { style, colour };
+}
+
 export async function resolveEffectiveStyleColour(
   db: Firestore,
   projectAreaDocId: string,
   projectid: number,
 ): Promise<EffectiveStyleColour> {
-  let style = "";
-  let colour = "";
-
+  let paData: DocumentData | undefined;
   if (!isProjectAreasMetaDocument(projectAreaDocId)) {
     const paSnap = await db.collection("projectareas").doc(projectAreaDocId).get();
-    const pa = paSnap.data();
-    if (typeof pa?.style === "string" && pa.style.trim()) style = pa.style.trim();
-    if (typeof pa?.colour === "string" && pa.colour.trim()) colour = pa.colour.trim();
+    paData = paSnap.data();
   }
 
-  if (!style || !colour) {
-    const projQ = await db.collection("projects").where("projectid", "==", projectid).limit(1).get();
-    const pd = projQ.docs[0]?.data();
-    if (!style && typeof pd?.defaultstyle === "string" && pd.defaultstyle.trim()) {
-      style = pd.defaultstyle.trim();
-    }
-    if (!colour && typeof pd?.defaultcolour === "string" && pd.defaultcolour.trim()) {
-      colour = pd.defaultcolour.trim();
-    }
-  }
+  const fromArea = effectiveStyleColourFromData(paData, undefined);
+  if (fromArea.style && fromArea.colour) return fromArea;
 
-  return { style, colour };
+  const projQ = await db.collection("projects").where("projectid", "==", projectid).limit(1).get();
+  return effectiveStyleColourFromData(paData, projQ.docs[0]?.data());
 }

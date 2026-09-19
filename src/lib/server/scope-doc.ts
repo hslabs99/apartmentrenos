@@ -46,6 +46,22 @@ function normalizeAttachedQuoteObjectIds(raw: unknown): string[] {
   return out;
 }
 
+function normalizeAttachedObjectNameById(
+  raw: unknown,
+  attachedIds: string[],
+): Partial<Record<string, string>> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const allowed = new Set(attachedIds);
+  const out: Partial<Record<string, string>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = key.trim();
+    const name = typeof value === "string" ? value.trim() : "";
+    if (!id || !allowed.has(id) || !name) continue;
+    out[id] = name.slice(0, 255);
+  }
+  return out;
+}
+
 function normalizeAttachedObjectNames(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
@@ -234,6 +250,13 @@ export function firestoreAnswersToPublic(raw: unknown): ScopeAnswerPublic[] {
       label,
       attachedQuoteObjectIds,
       attachedObjectNames: normalizeAttachedObjectNames(rec.attachedObjectNames),
+      attachedObjectNameById: (() => {
+        const mapped = normalizeAttachedObjectNameById(
+          rec.attachedObjectNameById,
+          attachedQuoteObjectIds,
+        );
+        return Object.keys(mapped).length > 0 ? mapped : undefined;
+      })(),
       attachedCategories: normalizeAttachedCategories(rec.attachedCategories),
       attachedObjectTools:
         Object.keys(attachedObjectTools).length > 0 ? attachedObjectTools : undefined,

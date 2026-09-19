@@ -3,9 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { isProjectAreaObjectsMetaDocument } from "@/lib/firestore/projectareaobjects-collection";
-import { enrichLinesWithTemplateTooltips } from "@/lib/server/area-object-tooltip";
+import { applyTemplateTooltipsFromQuoteMap } from "@/lib/server/area-object-tooltip";
 import { docToProjectAreaObjectPublic } from "@/lib/server/project-area-object-doc";
-import { loadQuoteByObjectIdMap } from "@/lib/server/project-area-seeding";
+import { loadQuoteMapForNumericObjectId } from "@/lib/server/project-area-seeding";
 import { projectAreaLineTierPrices } from "@/lib/server/reprice-project-area-lines";
 import { normalizeLoadValue } from "@/lib/server/quote-object-doc";
 import {
@@ -126,13 +126,23 @@ export async function GET(_req: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const db = getAdminFirestore();
-    const quoteByObjectId = await loadQuoteByObjectIdMap(db);
     const ref = db.collection("projectareaobjects").doc(id);
     const snap = await ref.get();
     if (!snap.exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const [enriched] = await enrichLinesWithTemplateTooltips(db, [
-      docToProjectAreaObjectPublic(id, snap.data()!, quoteByObjectId),
-    ]);
+    const data = snap.data()!;
+    let quoteByObjectId = new Map<number, DocumentData>();
+    try {
+      quoteByObjectId = await loadQuoteMapForNumericObjectId(
+        db,
+        integerObjectId(data.objectid),
+      );
+    } catch {
+      quoteByObjectId = new Map();
+    }
+    const [enriched] = applyTemplateTooltipsFromQuoteMap(
+      [docToProjectAreaObjectPublic(id, data, quoteByObjectId)],
+      quoteByObjectId,
+    );
     return NextResponse.json({ projectAreaObject: enriched });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to load project area object";
@@ -155,13 +165,21 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       );
     }
     const db = getAdminFirestore();
-    const quoteByObjectId = await loadQuoteByObjectIdMap(db);
     const ref = db.collection("projectareaobjects").doc(id);
     const snap = await ref.get();
     if (!snap.exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const existing = snap.data() as DocumentData;
+    let quoteByObjectId = new Map<number, DocumentData>();
+    try {
+      quoteByObjectId = await loadQuoteMapForNumericObjectId(
+        db,
+        integerObjectId(existing.objectid),
+      );
+    } catch {
+      quoteByObjectId = new Map();
+    }
 
     const d = parsed.data;
-    const existing = snap.data() as DocumentData;
     const custommeasure =
       d.custommeasure !== undefined ? d.custommeasure : numOrNull(existing.custommeasure);
     const customumprice =
@@ -371,9 +389,10 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
 
     await ref.update(update);
     const next = await ref.get();
-    const [enriched] = await enrichLinesWithTemplateTooltips(db, [
-      docToProjectAreaObjectPublic(id, next.data()!, quoteByObjectId),
-    ]);
+    const [enriched] = applyTemplateTooltipsFromQuoteMap(
+      [docToProjectAreaObjectPublic(id, next.data()!, quoteByObjectId)],
+      quoteByObjectId,
+    );
     return NextResponse.json({ projectAreaObject: enriched });
   } catch (e) {
     const message =

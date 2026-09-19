@@ -37,7 +37,7 @@ import { formatCurrencyInput, parseCurrencyInput } from "@/lib/client/format-mon
 import { quoteObjectCategory } from "@/lib/client/quote-object-category";
 import { bundledAppendSkuPickerHint } from "@/lib/client/resolve-append-child-sku-picks";
 import { appendSpecForSupplierOption } from "@/lib/sku/data-sku-append-slots";
-import { patchBodyForScopeLineSku } from "@/lib/client/scope-line-sku-patch";
+import { patchBodyForScopeLineSku, patchBodyClearScopeLineSku } from "@/lib/client/scope-line-sku-patch";
 import {
   resolveScopeLineSkuUnitPriceExcGst,
   type ScopeLineSkuPick,
@@ -310,6 +310,9 @@ function ChecklistBundledLine({
                 autoApplyOnlyWhenEmptySku
                 onSelectSku={(pick: ScopeLineSkuPick) => {
                   onPatchLine(child.id, patchBodyForScopeLineSku(child, pick));
+                }}
+                onClearSku={() => {
+                  onPatchLine(child.id, patchBodyClearScopeLineSku());
                 }}
                 colourLookupIndex={colourLookupIndex}
                 appendProductSpec={appendProductSpec}

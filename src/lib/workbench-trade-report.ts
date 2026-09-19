@@ -1,11 +1,11 @@
 import { projectLineObjectLabel, quoteObjectForProjectLine } from "@/lib/client/project-line-quote-object";
-import { resolveScopeLineSupplier } from "@/lib/client/scope-line-sku-match";
+import { resolveScopeLineSupplier, skuOptionLabel } from "@/lib/client/scope-line-sku-match";
 import {
   formatLabourHours,
   type LabourSiloKey,
   WB_LABOUR_SILO_HEADERS,
 } from "@/lib/labour-silo";
-import { noteHasTradeTag, sortNotesNewestFirst } from "@/lib/project-note-filters";
+import { noteHasTradeTag, noteSkuId, sortNotesNewestFirst } from "@/lib/project-note-filters";
 import { DEFAULT_NOTE_TYPE } from "@/lib/project-note-types";
 import { projectAreaHeading } from "@/lib/project-area-display-name";
 import type { AreaPublic } from "@/types/area";
@@ -265,10 +265,14 @@ function supplierInfo(
 function toNoteItem(
   note: ProjectNotePublic,
   objectLabel = "",
+  catalogSkus: DataSkuPublic[] = [],
 ): WbTradeReportNoteItem {
+  const skuId = noteSkuId(note);
+  const sku = skuId ? catalogSkus.find((s) => s.skuId === skuId) : undefined;
+  const skuLabel = sku ? skuOptionLabel(sku) : skuId;
   return {
     id: note.id,
-    objectLabel,
+    objectLabel: skuLabel ? `${objectLabel} · ${skuLabel}` : objectLabel,
     notetype: note.notetype || "Note",
     author: note.author?.trim() ?? "",
     notedatetime: note.notedatetime,
@@ -480,7 +484,7 @@ export function buildWorkbenchTradeReport(args: BuildWorkbenchTradeReportArgs): 
         objectid,
         config,
       )) {
-        objectNotes.push(toNoteItem(note, label));
+        objectNotes.push(toNoteItem(note, label, catalogSkus));
       }
     }
 
