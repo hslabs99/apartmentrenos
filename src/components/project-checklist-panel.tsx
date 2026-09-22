@@ -106,6 +106,8 @@ import { partitionAreaLines } from "@/lib/client/partition-area-lines";
 import { collectChecklistProjectHealthIssues } from "@/lib/client/checklist-project-health";
 import {
   currentCatalogSkuIdSet,
+  currentCatalogSkuIdentityKeySet,
+  currentCatalogSkuProductNameSet,
   projectLineHasOrphanSku,
 } from "@/lib/health-check/orphan-refs";
 import {
@@ -442,8 +444,10 @@ function clScopeObjectRepopulateState(
   objectLabel: string,
 ): ClScopeRepopulateState {
   const actualCount = objectLines.length;
+  const currentIdentities = currentCatalogSkuIdentityKeySet(catalogSkus);
+  const currentProductNames = currentCatalogSkuProductNameSet(catalogSkus);
   const orphanCount = objectLines.filter((l) =>
-    projectLineHasOrphanSku(l, currentSkuIds),
+    projectLineHasOrphanSku(l, currentSkuIds, currentIdentities, currentProductNames),
   ).length;
   const isShowAll = scopeObjectIsShowAll(objectLines, quoteObject, scope);
   const expected = isShowAll

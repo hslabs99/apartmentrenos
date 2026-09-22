@@ -11,8 +11,10 @@ import {
   effectiveStyleColourForLine,
   encodeScopeLineSkuPickValue,
   filterCatalogSkusByProductSpec,
+  isStoredScopeLineSkuPickValue,
   matchingSkusForScopeLine,
   SCOPE_LINE_SKU_SPEC_ALL,
+  SCOPE_LINE_STORED_SKU_VALUE,
   scopeLineSkuPickAllModeLabel,
   scopeLineSkuPickDescriptionLabel,
   scopeLineSkuPickHoverTitle,
@@ -177,7 +179,15 @@ export function ScopeLineSkuPicker({
     });
     const locked = lockToSkuId?.trim();
     if (locked) {
-      matches = matches.filter((m) => m.skuId === locked);
+      const lockedHits = matches.filter((m) => m.skuId === locked);
+      if (lockedHits.length > 0) return lockedHits;
+      const product = line.skuProduct?.trim() ?? "";
+      if (product) {
+        const byName = matches.filter((m) => skuProductMatchesAppendSpec(m, product));
+        const skuIds = new Set(byName.map((m) => m.skuId));
+        if (skuIds.size === 1) return byName;
+      }
+      return lockedHits;
     }
     return matches;
   }, [
@@ -188,6 +198,7 @@ export function ScopeLineSkuPicker({
     colourLookupIndex,
     appendProductSpec,
     appendParentCategory,
+    line.skuProduct,
   ]);
 
   const picks = useMemo(
@@ -333,6 +344,11 @@ export function ScopeLineSkuPicker({
   );
   const [pendingValue, setPendingValue] = useState<string | null>(null);
   const value = pendingValue ?? committedValue;
+  const storedProductLabel = line.skuProduct?.trim() ?? "";
+  const storedProductOption =
+    isStoredScopeLineSkuPickValue(value) && storedProductLabel ? (
+      <option value={SCOPE_LINE_STORED_SKU_VALUE}>{storedProductLabel}</option>
+    ) : null;
   /** Keep the control enabled while a pick is in-flight so the new option can paint. */
   const selectLocked = disabled && pendingValue == null;
   const prevDisabledRef = useRef(disabled);
@@ -409,6 +425,7 @@ export function ScopeLineSkuPicker({
     if (userClearedSkuRef.current) return;
     // Never overwrite a stored SKU — only fill an empty one.
     if ((line.skuId ?? "").trim()) return;
+    if (isStoredScopeLineSkuPickValue(committedValue)) return;
     if (scopeLineMatchesSkuPick(line, autoApplyPick)) return;
 
     const attemptKey = `${line.id}|${autoApplyPickKey}`;
@@ -424,6 +441,7 @@ export function ScopeLineSkuPicker({
     autoApplyPickKey,
     line.id,
     line.skuId,
+    committedValue,
     effectiveAutoApplySingleMatch,
   ]);
 
@@ -435,7 +453,7 @@ export function ScopeLineSkuPicker({
     if (!syncUnitPriceFromPick || disabled || allPriorityPicks.length === 0) return;
     if (line.customumprice != null) return;
     const encoded = activeScopeLineSkuPickValue(line, allPriorityPicks);
-    if (!encoded) return;
+    if (!encoded || isStoredScopeLineSkuPickValue(encoded)) return;
     const decoded = decodeScopeLineSkuPickValue(encoded);
     if (!decoded) return;
     const hit = allPriorityPicks.find(
@@ -478,6 +496,7 @@ export function ScopeLineSkuPicker({
       onAddBlankLine?.();
       return;
     }
+    if (isStoredScopeLineSkuPickValue(raw)) return;
     if (!raw) {
       if (!onClearSku) return;
       userClearedSkuRef.current = true;
@@ -545,7 +564,11 @@ export function ScopeLineSkuPicker({
     scopeLineSkuPickHoverTitle(pick, hoverObjectTypeForPick(pick));
 
   if (picks.length === 0) {
-    const noMatchLabel = shortMatchLabels ? "No matching SKU" : "SKU: No matching SKU";
+    const noMatchLabel = storedProductLabel
+      ? storedProductLabel
+      : shortMatchLabels
+        ? "No matching SKU"
+        : "SKU: No matching SKU";
 
     return (
       <>
@@ -554,7 +577,11 @@ export function ScopeLineSkuPicker({
           disabled={disabled}
           onClick={() => setShowDiagnostic(true)}
           className={`block w-full min-w-0 truncate text-left underline decoration-dotted underline-offset-2 hover:decoration-solid ${labelClass}`}
-          title="View SKU match diagnostic"
+          title={
+            storedProductLabel
+              ? "Stored SKU name (catalog id changed). View SKU match diagnostic"
+              : "View SKU match diagnostic"
+          }
         >
           {noMatchLabel}
         </button>
@@ -643,9 +670,11 @@ export function ScopeLineSkuPicker({
   if (inlineRow && skuPickerUi === "popup") {
     const triggerLabel = selectedPick
       ? optionLabel(selectedPick)
-      : picks.length === 1
-        ? optionLabel(picks[0]!)
-        : "Select…";
+      : isStoredScopeLineSkuPickValue(value) && storedProductLabel
+        ? storedProductLabel
+        : picks.length === 1
+          ? optionLabel(picks[0]!)
+          : "Select…";
     const hoverPick = selectedPick ?? (picks.length === 1 ? picks[0] : undefined);
 
     return (
@@ -712,6 +741,7 @@ export function ScopeLineSkuPicker({
           onChange={(e) => handleSelectChange(e.target.value)}
         >
           <option value="">Select…</option>
+          {storedProductOption}
           {picks.map((pick) => (
             <option
               key={encodeScopeLineSkuPickValue(pick.skuId, pick.supplierOption)}
@@ -727,7 +757,12 @@ export function ScopeLineSkuPicker({
     );
   }
 
-  if (picks.length === 1 && !includeAllSupplierOptions && !showAddBlankLineOption) {
+  if (
+    picks.length === 1 &&
+    !includeAllSupplierOptions &&
+    !showAddBlankLineOption &&
+    !isStoredScopeLineSkuPickValue(value)
+  ) {
     const only = picks[0]!;
     const singleLabel = scopeLineSkuPickDescriptionLabel(only);
 
@@ -760,6 +795,7 @@ export function ScopeLineSkuPicker({
         onChange={(e) => handleSelectChange(e.target.value)}
       >
         <option value="">Select SKU…</option>
+        {storedProductOption}
         {picks.map((pick) => (
           <option
             key={encodeScopeLineSkuPickValue(pick.skuId, pick.supplierOption)}

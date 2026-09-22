@@ -1,4 +1,6 @@
 import { isSystemScopeObjectId } from "@/lib/system-scope-types";
+import { buildProductIdentityKey } from "@/lib/sku/product-key";
+import { normalizeSkuPart } from "@/lib/sku/normalize-sku-part";
 import type {
   HealthCheckAnswerIssue,
   HealthCheckMissingObject,
@@ -66,20 +68,73 @@ export function currentCatalogSkuIdSet(
   return ids;
 }
 
+type CatalogSkuIdentityRow = {
+  product?: string | null;
+  productType?: string | null;
+  isCurrent?: boolean;
+};
+
+/** Current catalog Product Type + Product name keys (`isCurrent !== false`). */
+export function currentCatalogSkuIdentityKeySet(
+  rows: readonly CatalogSkuIdentityRow[],
+): Set<string> {
+  const keys = new Set<string>();
+  for (const row of rows) {
+    if (row.isCurrent === false) continue;
+    const key = buildProductIdentityKey(row.productType ?? "", row.product ?? "");
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+/** Current catalog product names (`isCurrent !== false`). */
+export function currentCatalogSkuProductNameSet(
+  rows: readonly CatalogSkuIdentityRow[],
+): Set<string> {
+  const names = new Set<string>();
+  for (const row of rows) {
+    if (row.isCurrent === false) continue;
+    const name = normalizeSkuPart(row.product ?? "");
+    if (name) names.add(name);
+  }
+  return names;
+}
+
+function lineMatchesCurrentCatalogProduct(
+  line: { skuProduct?: string | null; objectname?: string | null },
+  currentIdentities: ReadonlySet<string>,
+  currentProductNames: ReadonlySet<string>,
+): boolean {
+  const product = typeof line.skuProduct === "string" ? line.skuProduct : "";
+  if (!normalizeSkuPart(product)) return false;
+  const objectname = typeof line.objectname === "string" ? line.objectname : "";
+  const identity = buildProductIdentityKey(objectname, product);
+  if (identity) return currentIdentities.has(identity);
+  return currentProductNames.has(normalizeSkuPart(product));
+}
+
 /** Line stores a SKU that is missing from the current catalog. */
 export function projectLineHasOrphanSku(
   line: {
     skuId?: string | null;
+    skuProduct?: string | null;
+    objectname?: string | null;
     systemObjectKind?: string | null;
     linesource?: string | null;
   },
   currentSkuIds: ReadonlySet<string>,
+  currentIdentities: ReadonlySet<string> = EMPTY_IDENTITY_KEYS,
+  currentProductNames: ReadonlySet<string> = EMPTY_PRODUCT_NAMES,
 ): boolean {
   if (shouldSkipProjectLineForHealthCheck(line)) return false;
   const skuId = typeof line.skuId === "string" ? line.skuId.trim() : "";
   if (!skuId) return false;
-  return !currentSkuIds.has(skuId);
+  if (currentSkuIds.has(skuId)) return false;
+  return !lineMatchesCurrentCatalogProduct(line, currentIdentities, currentProductNames);
 }
+
+const EMPTY_IDENTITY_KEYS: ReadonlySet<string> = new Set();
+const EMPTY_PRODUCT_NAMES: ReadonlySet<string> = new Set();
 
 export function formatMissingQuoteObjectItem(item: HealthCheckMissingObject): string {
   return missingQuoteObjectTitle(item);

@@ -27,11 +27,15 @@ import {
 import type { InheritMeasureSource, ScopeMetricPublic } from "@/types/scope-metric";
 import type { ScopeShowAllDefaultQty } from "@/types/scope";
 import type { DataSkuPublic } from "@/types/data-sku-public";
-import { countSkusMatchingBaseProductKey } from "@/lib/sku/match-data-sku-filters";
+import {
+  countSkusMatchingBaseProductKey,
+  skusMatchingBaseProductKey,
+} from "@/lib/sku/match-data-sku-filters";
 import { missingQuoteObjectTitle } from "@/lib/health-check/orphan-refs";
 import {
   MissingQuoteObjectFacts,
 } from "@/components/missing-scope-objects-dialog";
+import { ScopeObjectCatalogSkusModal } from "@/components/scope-object-catalog-skus-modal";
 import type { HealthCheckMissingObject } from "@/types/health-check";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
@@ -296,6 +300,7 @@ export function ScopeAnswerObjectPicker({
   const [search, setSearch] = useState("");
   const [expandedTypes, setExpandedTypes] = useState<Set<string> | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [skuPreviewQuoteId, setSkuPreviewQuoteId] = useState<string | null>(null);
 
   const systemItems = useMemo((): PickerItem[] => {
     if (!systemScopeType) return [];
@@ -345,6 +350,24 @@ export function ScopeAnswerObjectPicker({
     const n = catalogSkuCountForQuoteId.get(quoteObjectDocId) ?? 0;
     return n === 1 ? "1 SKU" : `${n} SKUs`;
   }
+
+  function openSkuPreview(quoteObjectDocId: string, e?: { preventDefault(): void; stopPropagation(): void }) {
+    e?.preventDefault();
+    e?.stopPropagation();
+    setSkuPreviewQuoteId(quoteObjectDocId);
+  }
+
+  const skuPreviewQuote = skuPreviewQuoteId ? quoteById.get(skuPreviewQuoteId) ?? null : null;
+  const skuPreviewRows = skuPreviewQuote
+    ? skusMatchingBaseProductKey(
+        catalogSkus,
+        skuPreviewQuote.category.trim(),
+        skuPreviewQuote.objectname.trim(),
+      )
+    : [];
+  const skuPreviewLabel = skuPreviewQuote
+    ? skuPreviewQuote.objectname.trim() || "(unnamed)"
+    : "";
 
   function displayInheritMeasureSource(id: string): InheritMeasureSource {
     const stored = objectInheritM2Source[id];
@@ -711,23 +734,30 @@ export function ScopeAnswerObjectPicker({
                   {!item.isSystem ? (
                     <span className="ml-1.5 text-xs font-medium text-sf-text-secondary dark:text-zinc-300">
                       · {item.uom}
-                      <span
-                        className={
-                          (catalogSkuCountForQuoteId.get(item.id) ?? 0) === 0
-                            ? " text-amber-700 dark:text-amber-400"
-                            : ""
-                        }
-                        title="Current data_skus rows matching category + product type (no tier/style/colour filter)"
-                      >
-                        {" "}
-                        · {skuCountLabel(item.id)}
-                      </span>
                     </span>
                   ) : null}
                 </span>
                 )}
                 {!item.isSystem && !item.isMissing ? (
                   <>
+                    <button
+                      type="button"
+                      aria-haspopup="dialog"
+                      aria-label={`Show ${skuCountLabel(item.id)} matching this object`}
+                      className={`shrink-0 text-xs font-medium underline decoration-dotted underline-offset-2 hover:text-sf-brand dark:hover:text-[#58a9f5] ${
+                        (catalogSkuCountForQuoteId.get(item.id) ?? 0) === 0
+                          ? "text-amber-700 dark:text-amber-400"
+                          : "text-sf-text-secondary dark:text-zinc-300"
+                      }`}
+                      title="Show current data_skus rows matching category + product type (no Elevate/style/colour filter)"
+                      onClick={(e) => openSkuPreview(item.id, e)}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                    >
+                      · {skuCountLabel(item.id)}
+                    </button>
                     <div
                       className="flex shrink-0 items-center gap-1.5 text-xs"
                       title={
@@ -945,17 +975,24 @@ export function ScopeAnswerObjectPicker({
                                 {!item.isSystem ? (
                                   <span className="ml-1.5 text-xs font-medium text-sf-text-secondary dark:text-zinc-300">
                                     · {item.uom}
-                                    <span
-                                      className={
+                                    <button
+                                      type="button"
+                                      aria-haspopup="dialog"
+                                      aria-label={`Show ${skuCountLabel(item.id)} matching this object`}
+                                      className={`ml-1.5 underline decoration-dotted underline-offset-2 hover:text-sf-brand dark:hover:text-[#58a9f5] ${
                                         (catalogSkuCountForQuoteId.get(item.id) ?? 0) === 0
                                           ? " text-amber-700 dark:text-amber-400"
                                           : ""
-                                      }
-                                      title="Current data_skus rows matching category + product type"
+                                      }`}
+                                      title="Show current data_skus rows matching category + product type"
+                                      onClick={(e) => openSkuPreview(item.id, e)}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                      }}
                                     >
-                                      {" "}
                                       · {skuCountLabel(item.id)}
-                                    </span>
+                                    </button>
                                   </span>
                                 ) : null}
                                 {item.isSystem ? (
@@ -976,6 +1013,14 @@ export function ScopeAnswerObjectPicker({
           </ul>
         )}
       </div>
+
+      {skuPreviewQuote ? (
+        <ScopeObjectCatalogSkusModal
+          objectLabel={skuPreviewLabel}
+          skus={skuPreviewRows}
+          onClose={() => setSkuPreviewQuoteId(null)}
+        />
+      ) : null}
     </div>
   );
 }

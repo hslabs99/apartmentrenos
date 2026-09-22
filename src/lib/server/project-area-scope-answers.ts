@@ -103,7 +103,9 @@ import {
   DATA_SKUS_COLLECTION,
   isDataSkusMetaDocument,
 } from "@/lib/firestore/data-skus-collection";
+import { parseProductFromDoc } from "@/lib/legacy-product-field";
 import { projectLineHasOrphanSku } from "@/lib/health-check/orphan-refs";
+import { buildProductIdentityKey } from "@/lib/sku/product-key";
 import { isProjectAreaObjectsMetaDocument } from "@/lib/firestore/projectareaobjects-collection";
 
 export function parseScopeAnswersFromFirestore(raw: unknown): ProjectAreaScopeAnswerPublic[] {
@@ -921,9 +923,15 @@ async function materializeScopeLineSpecs(
   return { linesAdded, newLineDocIds };
 }
 
-async function loadCurrentCatalogSkuIdSet(db: Firestore): Promise<Set<string>> {
+async function loadCurrentCatalogSkuIndex(db: Firestore): Promise<{
+  ids: Set<string>;
+  identities: Set<string>;
+  productNames: Set<string>;
+}> {
   const snap = await db.collection(DATA_SKUS_COLLECTION).get();
   const ids = new Set<string>();
+  const identities = new Set<string>();
+  const productNames = new Set<string>();
   for (const d of snap.docs) {
     if (isDataSkusMetaDocument(d.id)) continue;
     const data = d.data();
@@ -931,8 +939,13 @@ async function loadCurrentCatalogSkuIdSet(db: Firestore): Promise<Set<string>> {
     ids.add(d.id);
     const skuId = String(data.skuId ?? "").trim();
     if (skuId) ids.add(skuId);
+    const product = parseProductFromDoc(data);
+    const identity = buildProductIdentityKey(String(data.productType ?? ""), product);
+    if (identity) identities.add(identity);
+    const name = normalizeSkuPart(product);
+    if (name) productNames.add(name);
   }
-  return ids;
+  return { ids, identities, productNames };
 }
 
 function readLineSortOrder(raw: unknown): number | null {
@@ -1206,9 +1219,18 @@ export async function repopulateScopeObjectOnProjectArea(
     });
   }
 
-  const currentSkuIds = await loadCurrentCatalogSkuIdSet(db);
+  const currentCatalog = await loadCurrentCatalogSkuIndex(db);
   const hasOrphan = existing.some((row) =>
-    projectLineHasOrphanSku({ skuId: row.skuId || null }, currentSkuIds),
+    projectLineHasOrphanSku(
+      {
+        skuId: row.skuId || null,
+        skuProduct: row.skuProduct || null,
+        objectname: row.objectname || null,
+      },
+      currentCatalog.ids,
+      currentCatalog.identities,
+      currentCatalog.productNames,
+    ),
   );
 
   const existingShowAll =
@@ -1260,7 +1282,16 @@ export async function repopulateScopeObjectOnProjectArea(
   const keptSkuIds = new Set<string>();
   const keptProducts = new Set<string>();
   for (const row of existing) {
-    const inCatalog = Boolean(row.skuId && currentSkuIds.has(row.skuId));
+    const inCatalog = !projectLineHasOrphanSku(
+      {
+        skuId: row.skuId || null,
+        skuProduct: row.skuProduct || null,
+        objectname: row.objectname || null,
+      },
+      currentCatalog.ids,
+      currentCatalog.identities,
+      currentCatalog.productNames,
+    );
     const inDesired = Boolean(row.skuId && desiredSkuIds.has(row.skuId));
     if (inCatalog || inDesired || !row.skuId) {
       keepIds.add(row.id);

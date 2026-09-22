@@ -13,7 +13,11 @@ import {
   scopeObjectIsShowAll,
 } from "@/lib/client/scope-show-all-expected";
 import type { CascadeRow } from "@/lib/cascades/cascade-filter-options";
-import { projectLineHasOrphanSku } from "@/lib/health-check/orphan-refs";
+import {
+  currentCatalogSkuIdentityKeySet,
+  currentCatalogSkuProductNameSet,
+  projectLineHasOrphanSku,
+} from "@/lib/health-check/orphan-refs";
 import { projectAreaHeading } from "@/lib/project-area-display-name";
 import {
   clRedundantScopeAnchorId,
@@ -71,6 +75,8 @@ export function collectChecklistProjectHealthIssues(args: {
   const issues: ChecklistHealthIssue[] = [];
   const quoteObjects = [...args.quoteObjects];
   const catalogSkus = [...args.catalogSkus];
+  const currentIdentities = currentCatalogSkuIdentityKeySet(catalogSkus);
+  const currentProductNames = currentCatalogSkuProductNameSet(catalogSkus);
   const scopes = [...args.scopes];
   const areas = [...args.areas];
   const projectHints = leftoverHintsByScopeDocId(args.objectsByProjectAreaDocId);
@@ -135,7 +141,7 @@ export function collectChecklistProjectHealthIssues(args: {
           areaId: pa.id,
         });
       }
-      if (projectLineHasOrphanSku(line, args.currentSkuIds)) {
+      if (projectLineHasOrphanSku(line, args.currentSkuIds, currentIdentities, currentProductNames)) {
         issues.push({
           id: `orphan-sku:${line.id}`,
           kind: "orphan_sku",

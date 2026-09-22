@@ -25,6 +25,18 @@ export function buildProductKey(fields: ProductKeyFields): string {
   return PRODUCT_KEY_FIELDS.map((f) => normalizeProductKeyPart(fields[f])).join("\x1e");
 }
 
+/**
+ * Stable identity for merge / health: Product Type + Product name.
+ * Elevate / style / colour / category may change on rebuild without minting a new skuId
+ * when this pair uniquely matches one existing row.
+ */
+export function buildProductIdentityKey(productType: string, product: string): string {
+  const type = normalizeProductKeyPart(productType);
+  const name = normalizeProductKeyPart(product);
+  if (!type || !name) return "";
+  return `${type}\x1f${name}`;
+}
+
 export function isProductKeyComplete(fields: ProductKeyFields): boolean {
   return PRODUCT_KEY_FIELDS.every((f) => fields[f].trim() !== "");
 }

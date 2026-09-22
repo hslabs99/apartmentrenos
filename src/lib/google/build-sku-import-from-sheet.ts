@@ -123,7 +123,7 @@ function buildDataError(
 /**
  * Build products/suppliers from parsed sheet rows.
  * Row order in the workbook does not matter: products are merged by product key (cols A–F).
- * Existing SKUs are matched later by the same key in `resolveSkuImportIds`.
+ * Existing SKUs are matched later by full product key, then unique type+name, in `resolveSkuImportIds`.
  */
 export function buildSkuImportFromSheetRows(
   sheetRows: ParsedSheetRow[],

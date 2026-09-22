@@ -387,16 +387,25 @@ export function dataSkuFilterPipeline<T extends DataSkuMatchable & { skuId?: str
   return steps;
 }
 
+/** Current catalog rows matching category + product type (no Elevate/style/colour filter). */
+export function skusMatchingBaseProductKey<T extends DataSkuMatchable>(
+  skus: T[],
+  category: string,
+  productType: string,
+): T[] {
+  if (!category.trim() || !productType.trim()) return [];
+  return skusMatchingBaseFilters(
+    skus.filter((s) => (s as { isCurrent?: boolean }).isCurrent !== false),
+    { category, productType, elevateLevel: "", style: "", colour: "" },
+  );
+}
+
 export function countSkusMatchingBaseProductKey(
   skus: DataSkuMatchable[],
   category: string,
   productType: string,
 ): number {
-  if (!category.trim() || !productType.trim()) return 0;
-  return skusMatchingBaseFilters(
-    skus.filter((s) => (s as { isCurrent?: boolean }).isCurrent !== false),
-    { category, productType, elevateLevel: "", style: "", colour: "" },
-  ).length;
+  return skusMatchingBaseProductKey(skus, category, productType).length;
 }
 
 /**

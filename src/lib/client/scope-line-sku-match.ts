@@ -387,6 +387,13 @@ export function scopeLineSkuPickWithResolvedPrice(
 
 const PICK_VALUE_SEP = "::";
 
+/** Display-only select value when the line still has a product name but its skuId is not in the current pick list. Never PATCH this. */
+export const SCOPE_LINE_STORED_SKU_VALUE = "__stored_product__";
+
+export function isStoredScopeLineSkuPickValue(value: string): boolean {
+  return value === SCOPE_LINE_STORED_SKU_VALUE;
+}
+
 
 
 export function encodeScopeLineSkuPickValue(
@@ -824,7 +831,7 @@ export function buildScopeLineSkuPicks(
 
 export function activeScopeLineSkuPickValue(
 
-  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption">,
+  line: Pick<ProjectAreaObjectPublic, "skuId" | "supplierOption" | "skuProduct">,
 
   picks: ScopeLineSkuPick[],
 
@@ -857,6 +864,10 @@ export function activeScopeLineSkuPickValue(
     if (p1) return encodeScopeLineSkuPickValue(p1.skuId, p1.supplierOption);
 
   }
+
+  const storedProduct = line.skuProduct?.trim() ?? "";
+
+  if (storedProduct) return SCOPE_LINE_STORED_SKU_VALUE;
 
   return "";
 

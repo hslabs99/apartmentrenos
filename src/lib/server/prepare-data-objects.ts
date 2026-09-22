@@ -37,7 +37,7 @@ import {
   quoteObjectSkuPipelineKey,
 } from "@/lib/server/quote-object-sku-pipeline";
 import {
-  loadExistingProductKeyMap,
+  loadExistingSkuImportIndexes,
   resolveSkuImportIds,
 } from "@/lib/server/resolve-sku-import-ids";
 import { syncObjectCategoryLookupsFromQuoteObjects } from "@/lib/server/sync-object-category-lookups-from-quote-objects";
@@ -345,7 +345,7 @@ async function upsertLabourSkusFromRates(
   if (products.length === 0) return { created: 0, updated: 0 };
 
   const skuSnap = await db.collection(DATA_SKUS_COLLECTION).get();
-  const existingByKey = loadExistingProductKeyMap(
+  const existing = loadExistingSkuImportIndexes(
     skuSnap.docs
       .filter((d) => !isDataSkusMetaDocument(d.id))
       .map((d) => {
@@ -364,7 +364,12 @@ async function upsertLabourSkusFromRates(
       }),
   );
 
-  const resolved = resolveSkuImportIds(products, [], existingByKey);
+  const resolved = resolveSkuImportIds(
+    products,
+    [],
+    existing.byProductKey,
+    existing.byUniqueIdentity,
+  );
   const importRunId = `prepare-labour-${Date.now()}`;
   const now = FieldValue.serverTimestamp();
 

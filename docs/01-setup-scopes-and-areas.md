@@ -163,7 +163,7 @@ For each selected catalog line, a row of options appears. Hover labels for full 
 - **Area m² (room)** — pull from the room’s m² on the Check List.  
 - **Scope metric: …** — pull from a metric you defined on this scope (see next section).
 
-SKU count shown beside each line (e.g. “3 SKUs”) reflects catalog matches — amber if zero matches.
+SKU count shown beside each line (e.g. “3 SKUs”) reflects catalog matches — amber if zero matches. Click the count to see those SKUs (category, type, product, UOM, pricing level, style, colour). Informational only.
 
 ### 6. Scope metrics (optional)
 

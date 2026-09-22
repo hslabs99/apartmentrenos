@@ -7,18 +7,22 @@ import { isProjectAreasMetaDocument } from "@/lib/firestore/projectareas-collect
 import { isProjectsMetaDocument } from "@/lib/firestore/projects-collection";
 import { isQuoteObjectsMetaDocument } from "@/lib/firestore/quote-objects-collection";
 import { isScopesMetaDocument } from "@/lib/firestore/scopes-collection";
+import { parseProductFromDoc } from "@/lib/legacy-product-field";
 import {
   emptyHealthCheckReport,
   integerObjectId,
   normalizeQuoteObjectName,
   projectChecklistHref,
   projectChecklistLineHref,
+  projectLineHasOrphanSku,
   scopeHref,
   scopeMissingObjectFindings,
   setupAreasHref,
   shouldSkipProjectLineForHealthCheck,
   type QuoteObjectCatalogIndex,
 } from "@/lib/health-check/orphan-refs";
+import { normalizeSkuPart } from "@/lib/sku/normalize-sku-part";
+import { buildProductIdentityKey } from "@/lib/sku/product-key";
 import { isProjectArchivedFlag } from "@/lib/project-archived";
 import { isProjectTemplateFlag } from "@/lib/project-template";
 import { parseProjectStatus } from "@/lib/project-status";
@@ -85,17 +89,32 @@ function loadQuoteCatalog(qoSnap: QuerySnapshot): {
   return { catalog: { ids, namesLower, numericIds, nameById }, count };
 }
 
-function loadSkuIdSet(skuSnap: QuerySnapshot): { ids: Set<string>; count: number } {
+function loadSkuCatalog(skuSnap: QuerySnapshot): {
+  ids: Set<string>;
+  identities: Set<string>;
+  productNames: Set<string>;
+  count: number;
+} {
   const ids = new Set<string>();
+  const identities = new Set<string>();
+  const productNames = new Set<string>();
   let count = 0;
   for (const d of skuSnap.docs) {
     if (isDataSkusMetaDocument(d.id)) continue;
     count += 1;
     ids.add(d.id);
-    const skuId = String(d.data().skuId ?? "").trim();
+    const data = d.data();
+    const skuId = String(data.skuId ?? "").trim();
     if (skuId) ids.add(skuId);
+    if (data.isCurrent === false) continue;
+    const product = parseProductFromDoc(data);
+    const productType = String(data.productType ?? "").trim();
+    const identity = buildProductIdentityKey(productType, product);
+    if (identity) identities.add(identity);
+    const name = normalizeSkuPart(product);
+    if (name) productNames.add(name);
   }
-  return { ids, count };
+  return { ids, identities, productNames, count };
 }
 
 async function scanCatalog(
@@ -204,7 +223,8 @@ export async function runHealthCheckDeep(
 
   emit({ phase: "skus", message: "Loading SKU catalog…", percent: 12 });
   const skuSnap = await db.collection(DATA_SKUS_COLLECTION).get();
-  const { ids: skuIds, count: skuCount } = loadSkuIdSet(skuSnap);
+  const { ids: skuIds, identities: skuIdentities, productNames: skuProductNames, count: skuCount } =
+    loadSkuCatalog(skuSnap);
 
   emit({ phase: "projects", message: "Loading live projects and templates…", percent: 22 });
   const [projSnap, paSnap] = await Promise.all([
@@ -297,9 +317,22 @@ export async function runHealthCheckDeep(
     const skuId = typeof data.skuId === "string" && data.skuId.trim() ? data.skuId.trim() : null;
     const skuProduct =
       typeof data.skuProduct === "string" && data.skuProduct.trim() ? data.skuProduct.trim() : null;
+    const snapshotObjectname =
+      typeof data.objectname === "string" && data.objectname.trim() ? data.objectname.trim() : null;
 
     const missingObject = objectid !== undefined && !catalog.numericIds.has(objectid);
-    const missingSku = skuId != null && !skuIds.has(skuId);
+    const missingSku = projectLineHasOrphanSku(
+      {
+        skuId,
+        skuProduct,
+        objectname: snapshotObjectname,
+        linesource: typeof data.linesource === "string" ? data.linesource : null,
+        systemObjectKind: typeof data.systemObjectKind === "string" ? data.systemObjectKind : null,
+      },
+      skuIds,
+      skuIdentities,
+      skuProductNames,
+    );
     if (!missingObject && !missingSku) continue;
 
     let issue = byProject.get(project.docId);

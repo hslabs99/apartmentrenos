@@ -30,8 +30,9 @@ import {
   markProductsNotCurrentForCategories,
 } from "@/lib/server/data-sku-maintenance";
 import {
-  loadExistingProductKeyMap,
+  loadExistingSkuImportIndexes,
   resolveSkuImportIds,
+  type ExistingSkuImportIndexes,
 } from "@/lib/server/resolve-sku-import-ids";
 import { saveDataSkusImportLog } from "@/lib/server/save-import-log";
 import { auditElementSkuCoverage } from "@/lib/server/validate-element-sku-coverage";
@@ -141,7 +142,7 @@ function deriveStatus(audit: ImportLogAudit, written: number, error?: string): I
 
 async function loadExistingProductKeys(
   db: Firestore,
-): Promise<Map<string, string>> {
+): Promise<ExistingSkuImportIndexes> {
   const snap = await db.collection(DATA_SKUS_COLLECTION).get();
   const docs = snap.docs
     .filter((d) => !isDataSkusMetaDocument(d.id))
@@ -159,7 +160,7 @@ async function loadExistingProductKeys(
         },
       };
     });
-  return loadExistingProductKeyMap(docs);
+  return loadExistingSkuImportIndexes(docs);
 }
 
 export async function runDataSkusImport(
@@ -306,8 +307,13 @@ export async function runDataSkusImport(
       audit,
     });
 
-    const existingByKey = await loadExistingProductKeys(db);
-    const resolved = resolveSkuImportIds(products, suppliers, existingByKey);
+    const existing = await loadExistingProductKeys(db);
+    const resolved = resolveSkuImportIds(
+      products,
+      suppliers,
+      existing.byProductKey,
+      existing.byUniqueIdentity,
+    );
     products = resolved.products;
     suppliers = resolved.suppliers;
     productsCreated = resolved.productsCreated;
