@@ -4,8 +4,7 @@ import { z } from "zod";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { ensureSettingsBootstrap } from "@/lib/firestore/collection-bootstrap";
 import { isSettingsMetaDocument } from "@/lib/firestore/settings-collection";
-import { isMarginSettingKey } from "@/lib/settings-margin";
-import { isLoadRateSettingKey } from "@/lib/settings-load-rates";
+import { isProtectedSettingKey } from "@/lib/settings-protected";
 import type { SettingPublic } from "@/types/setting";
 
 export const runtime = "nodejs";
@@ -67,20 +66,11 @@ export async function POST(req: NextRequest) {
     const db = getAdminFirestore();
     await ensureSettingsBootstrap(db);
     const nameNorm = normalizeName(parsed.data.settingname);
-    if (isMarginSettingKey(parsed.data.settingname)) {
+    if (isProtectedSettingKey(parsed.data.settingname)) {
       return NextResponse.json(
         {
           error:
-            'The name "margin" is reserved. Edit the existing margin setting to change its value.',
-        },
-        { status: 403 },
-      );
-    }
-    if (isLoadRateSettingKey(parsed.data.settingname)) {
-      return NextResponse.json(
-        {
-          error:
-            "Load rate setting names are reserved. Edit the existing load rate rows under System → Settings.",
+            "That setting name is reserved. Edit the existing System → Settings row to change its value.",
         },
         { status: 403 },
       );

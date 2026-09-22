@@ -18,6 +18,7 @@ export type ScopeAnswerTimings = {
   matStyleColourMs?: number;
   matElevateMs?: number;
   matDimsMs?: number;
+  matLmRunsRollWidthMs?: number;
   matObjectLabourMs?: number;
   matContractLabourMs?: number;
   matSkuPrimeMs?: number;
@@ -35,6 +36,7 @@ export type ScopeAnswerTimings = {
   reloadProjectAreaMs?: number;
   loadProjectMs?: number;
   elevateMs?: number;
+  lmRunsRollWidthMs?: number;
   readAddedLinesMs?: number;
   primeCatalogsWallMs?: number;
 };

@@ -20,6 +20,11 @@ import {
   MIN_SUPPLIER_OPTION,
   PREFERRED_SUPPLIER_OPTION,
 } from "@/lib/sku/supplier-option";
+import {
+  buildDataObjectKey,
+  isDataObjectKeyUsable,
+} from "@/lib/data-object-key";
+import { mapSkuUomToQuoteUom } from "@/lib/map-sku-uom-to-quote-uom";
 import type { ParsedSheetRow } from "@/lib/google/parsed-sheet-row";
 import type { DataSku } from "@/types/data-sku";
 import type { DataSkuSupplier } from "@/types/data-sku-supplier";
@@ -286,6 +291,12 @@ export function buildSkuImportFromSheetRows(
     a.skuId.localeCompare(b.skuId, undefined, { sensitivity: "base" }),
   );
 
+  const mixedUom = collectMixedObjectUomErrors(products);
+  for (const error of mixedUom.errors) {
+    pushError(error);
+  }
+  skippedInvalidRows += mixedUom.skuCount;
+
   return {
     products,
     suppliers,
@@ -298,6 +309,76 @@ export function buildSkuImportFromSheetRows(
 function formatSupplierOptionDisplay(n: number | null): string {
   if (n == null) return "blank";
   return String(n);
+}
+
+function collectMixedObjectUomErrors(products: DataSku[]): {
+  errors: ImportLogDataError[];
+  skuCount: number;
+} {
+  type UomHit = { uom: string; product: string; sheetRow: number };
+  const byObject = new Map<
+    string,
+    { category: string; productType: string; hits: UomHit[] }
+  >();
+
+  for (const product of products) {
+    const fields = {
+      category: product.category,
+      productType: product.productType,
+    };
+    if (!isDataObjectKeyUsable(fields)) continue;
+    const key = buildDataObjectKey(fields);
+    const uom = mapSkuUomToQuoteUom(product.uom);
+    const sheetRow = product.sourceSheetRows[0] ?? 0;
+    const cur = byObject.get(key);
+    const hit: UomHit = { uom, product: product.product, sheetRow };
+    if (cur) {
+      cur.hits.push(hit);
+    } else {
+      byObject.set(key, {
+        category: product.category.trim(),
+        productType: product.productType.trim(),
+        hits: [hit],
+      });
+    }
+  }
+
+  const errors: ImportLogDataError[] = [];
+  let skuCount = 0;
+  for (const group of byObject.values()) {
+    const uoms = [...new Set(group.hits.map((h) => h.uom))].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" }),
+    );
+    if (uoms.length < 2) continue;
+    skuCount += group.hits.length;
+    const firstRow =
+      group.hits.map((h) => h.sheetRow).filter((n) => n > 0).sort((a, b) => a - b)[0] ?? 0;
+    const byUom = uoms.map((uom) => {
+      const sample = group.hits.find((h) => h.uom === uom);
+      const rowBit = sample?.sheetRow ? ` row ${sample.sheetRow}` : "";
+      const prodBit = sample?.product ? ` (${sample.product})` : "";
+      return `${uom}${rowBit}${prodBit}`;
+    });
+    errors.push({
+      sheetRowNumber: firstRow,
+      code: "mixed_object_uom",
+      message:
+        `Object ${group.category} · ${group.productType} has mixed UOMs (${byUom.join("; ")}). ` +
+        `All SKUs in an object must share the same unit of measure — fix in the spreadsheet; ` +
+        `this object cannot be quoted confidently until they match.`,
+      category: group.category || null,
+      product: null,
+      productKey: {
+        category: group.category,
+        productType: group.productType,
+        product: "",
+        elevateLevel: "",
+        style: "",
+        colourOptions: "",
+      },
+    });
+  }
+  return { errors, skuCount };
 }
 
 function describeSupplierPresence(row: ParsedSheetRow): string {

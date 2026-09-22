@@ -262,8 +262,9 @@ export function PriceBookTestingPanel({ isActive = true }: Props) {
   }, []);
 
   useEffect(() => {
+    if (!isActive) return;
     void loadLookups();
-  }, [loadLookups]);
+  }, [isActive, loadLookups]);
 
   useEffect(() => {
     if (!isActive) return;

@@ -1,6 +1,6 @@
 "use client";
 
-import { importLogDataErrors, importLogCustomElevateRowsSkipped, importLogCustomElevateSheetRows, importLogErrorSheetRows } from "@/lib/import-log-error-rows";
+import { importLogDataErrors, importLogCustomElevateRowsSkipped, importLogCustomElevateSheetRows, importLogErrorSheetRows, isMixedObjectUomImportError } from "@/lib/import-log-error-rows";
 import { masterPricesSpreadsheetRowUrl } from "@/lib/google/master-prices-spreadsheet";
 import type { ImportLogPublic, ImportLogStatus } from "@/types/import-log-types";
 
@@ -45,6 +45,7 @@ export function ImportSummaryBanner({ log, statusOverride }: Props) {
   const customElevateCount = importLogCustomElevateRowsSkipped(log);
   const customElevateSheetRows = importLogCustomElevateSheetRows(log);
   const hasErrorDetails = summary.errorRows > 0 && dataErrors.length > 0;
+  const hasMixedObjectUom = dataErrors.some(isMixedObjectUomImportError);
   const hasCustomElevateDetails = customElevateCount > 0 && customElevateSheetRows.length > 0;
 
   const scrollToErrorDetails = () => {
@@ -116,12 +117,22 @@ export function ImportSummaryBanner({ log, statusOverride }: Props) {
             <button
               type="button"
               onClick={scrollToErrorDetails}
-              className="tabular-nums text-lg font-semibold text-amber-800 underline decoration-amber-400/60 underline-offset-2 hover:decoration-amber-600 dark:text-amber-300"
+              className={`tabular-nums text-lg font-semibold underline underline-offset-2 ${
+                hasMixedObjectUom
+                  ? "text-red-800 decoration-red-400/60 hover:decoration-red-600 dark:text-red-300"
+                  : "text-amber-800 decoration-amber-400/60 hover:decoration-amber-600 dark:text-amber-300"
+              }`}
             >
               {summary.errorRows}
             </button>
           ) : (
-            <span className="tabular-nums text-lg font-semibold text-amber-800 dark:text-amber-300">
+            <span
+              className={`tabular-nums text-lg font-semibold ${
+                hasMixedObjectUom
+                  ? "text-red-800 dark:text-red-300"
+                  : "text-amber-800 dark:text-amber-300"
+              }`}
+            >
               {summary.errorRows}
             </span>
           )}
@@ -172,25 +183,51 @@ export function ImportSummaryBanner({ log, statusOverride }: Props) {
       ) : null}
 
       {hasErrorDetails && log.gid > 0 && errorSheetRows.length > 0 ? (
-        <div className="mt-4 rounded border border-amber-200/80 bg-white/50 p-3 dark:border-amber-900/50 dark:bg-zinc-950/30">
-          <p className="text-xs font-medium uppercase tracking-wide text-amber-900 dark:text-amber-200">
+        <div
+          className={`mt-4 rounded border bg-white/50 p-3 dark:bg-zinc-950/30 ${
+            hasMixedObjectUom
+              ? "border-red-300 dark:border-red-800"
+              : "border-amber-200/80 dark:border-amber-900/50"
+          }`}
+        >
+          <p
+            className={`text-xs font-medium uppercase tracking-wide ${
+              hasMixedObjectUom
+                ? "text-red-800 dark:text-red-200"
+                : "text-amber-900 dark:text-amber-200"
+            }`}
+          >
             Error sheet rows ({errorSheetRows.length})
           </p>
           <p className="mt-1 text-xs text-sf-text-secondary dark:text-zinc-400">
             Open in Google Sheets — row numbers match the spreadsheet row column.
+            {hasMixedObjectUom
+              ? " Mixed UOM objects are shown in red — fix those SKUs before quoting."
+              : ""}
           </p>
           <div className="mt-2 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
-            {errorSheetRows.map((row) => (
+            {errorSheetRows.map((row) => {
+              const mixedRow = dataErrors.some(
+                (err) =>
+                  isMixedObjectUomImportError(err) &&
+                  (err.sheetRowNumber === row || err.triggerSheetRowNumber === row),
+              );
+              return (
               <a
                 key={row}
                 href={masterPricesSpreadsheetRowUrl(log.gid, row)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex min-h-7 items-center rounded border border-amber-300/80 bg-amber-50 px-2 py-0.5 font-mono text-xs text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/70"
+                className={
+                  mixedRow
+                    ? "inline-flex min-h-7 items-center rounded border border-red-400 bg-red-50 px-2 py-0.5 font-mono text-xs text-red-950 hover:bg-red-100 dark:border-red-700 dark:bg-red-950/50 dark:text-red-100 dark:hover:bg-red-950/80"
+                    : "inline-flex min-h-7 items-center rounded border border-amber-300/80 bg-amber-50 px-2 py-0.5 font-mono text-xs text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/70"
+                }
               >
                 {row}
               </a>
-            ))}
+              );
+            })}
           </div>
           <button
             type="button"
@@ -216,7 +253,11 @@ export function ImportSummaryBanner({ log, statusOverride }: Props) {
             <button
               type="button"
               onClick={scrollToErrorDetails}
-              className="font-semibold text-amber-800 underline decoration-amber-400/60 underline-offset-2 hover:decoration-amber-600 dark:text-amber-300"
+              className={`font-semibold underline underline-offset-2 ${
+                hasMixedObjectUom
+                  ? "text-red-800 decoration-red-400/60 hover:decoration-red-600 dark:text-red-300"
+                  : "text-amber-800 decoration-amber-400/60 hover:decoration-amber-600 dark:text-amber-300"
+              }`}
             >
               {summary.errorRows} data error(s)
             </button>
@@ -224,7 +265,15 @@ export function ImportSummaryBanner({ log, statusOverride }: Props) {
           </>
         ) : (
           <>
-            <strong className="text-amber-800 dark:text-amber-300">{summary.errorRows}</strong> data
+            <strong
+              className={
+                hasMixedObjectUom
+                  ? "text-red-800 dark:text-red-300"
+                  : "text-amber-800 dark:text-amber-300"
+              }
+            >
+              {summary.errorRows}
+            </strong> data
             error(s).{" "}
           </>
         )}

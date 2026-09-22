@@ -4,6 +4,7 @@ import {
   uomSupportsInheritM2,
 } from "@/lib/inherit-m2-source";
 import { collectScopeInstanceIds, matchesScopeInstance } from "@/lib/scope-instance";
+import { effectiveLmRunsRollWidthM } from "@/lib/settings-lm-runs-roll-width";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import type { ProjectAreaPublic } from "@/types/project-area";
 import type { QuoteObjectPublic } from "@/types/quote-object";
@@ -14,7 +15,6 @@ import {
   type ProjectAreaScopeMetricValuePublic,
   type ScopeMetricPublic,
 } from "@/types/scope-metric";
-const DEFAULT_LM_RUNS_RUN_WIDTH = 3.2;
 
 function numOrNull(v: unknown): number | null | undefined {
   if (v === null) return null;
@@ -36,6 +36,7 @@ export function measureFromScopeMetricForQuoteObject(
   metricid: string,
   scopeMetricValues: Map<string, number | null> | undefined,
   scopeMetrics: ScopeMetricPublic[],
+  lmRunsRollWidthFallback?: number,
 ): number | null {
   if (!q) return null;
   const metric = scopeMetrics.find((m) => m.metricid === metricid);
@@ -43,13 +44,13 @@ export function measureFromScopeMetricForQuoteObject(
   const raw = scopeMetricValues.get(metricid);
   if (raw == null) return null;
   if (!(raw > 0)) return raw === 0 ? 0 : null;
-  const uom = String(q.uom ?? "").trim();
-  const mu = metric.uom.trim();
+  const uom = normalizeMeasureUom(String(q.uom ?? ""));
+  const mu = normalizeMeasureUom(metric.uom);
   if (uom === "M2" && mu === "M2") return raw;
   if (uom === "Unit" && mu === "M2") return raw;
+  if (uom === "LM" && mu === "M2") return raw;
   if (uom === INHERIT_M2_LM_RUNS_UOM) {
-    const rw = numOrNull(q.runWidth);
-    const rollWidth = rw != null && rw > 0 ? rw : DEFAULT_LM_RUNS_RUN_WIDTH;
+    const rollWidth = effectiveLmRunsRollWidthM(numOrNull(q.runWidth), lmRunsRollWidthFallback);
     if (mu === "M2") return linearMetersFromAreaM2Client(raw, rollWidth);
     if (mu === INHERIT_M2_LM_RUNS_UOM) return raw;
   }
@@ -122,15 +123,16 @@ export function normalizeMeasureUom(uom: string): string {
   const lower = u.toLowerCase();
   if (lower === "m2" || lower === "m²" || lower === "sqm" || lower === "sq m") return "M2";
   if (lower === "lm-runs" || lower === "lm runs") return INHERIT_M2_LM_RUNS_UOM;
+  if (lower === "lm") return "LM";
   return u;
 }
 
-/** M2 metric can drive M2, LM-Runs, or Unit (area metric as line quantity). */
+/** M2 metric can drive M2, LM, LM-Runs, or Unit (area metric as line quantity). */
 export function metricUomCompatibleWithObjectUom(metricUom: string, objectUom: string): boolean {
   const m = normalizeMeasureUom(metricUom);
   const o = normalizeMeasureUom(objectUom);
   if (!m || !o) return false;
-  if (m === "M2") return o === "M2" || o === INHERIT_M2_LM_RUNS_UOM || o === "Unit";
+  if (m === "M2") return o === "M2" || o === "LM" || o === INHERIT_M2_LM_RUNS_UOM || o === "Unit";
   if (m === INHERIT_M2_LM_RUNS_UOM) return o === INHERIT_M2_LM_RUNS_UOM;
   return m.toLowerCase() === o.toLowerCase();
 }
@@ -167,12 +169,11 @@ export function inheritMeasureLabel(
 
 export function inheritMeasureOptionsForObject(
   scope: Pick<ScopePublic, "scopeMetrics"> | undefined,
-  objectUom: string,
+  _objectUom: string,
   objectDefault: InheritMeasureSource,
   standardOptions: { value: InheritMeasureSource; label: string }[],
   opts?: { answerid?: string | null },
 ): { value: InheritMeasureSource; label: string }[] {
-  const uom = normalizeMeasureUom(objectUom);
   const out = [...standardOptions];
   const answerid = opts?.answerid?.trim() ?? "";
   const metrics = (scope?.scopeMetrics ?? []).filter((m) => {
@@ -180,7 +181,6 @@ export function inheritMeasureOptionsForObject(
     return m.answerids.includes(answerid);
   });
   for (const m of metrics) {
-    if (!metricUomCompatibleWithObjectUom(m.uom, uom)) continue;
     const value = encodeScopeMetricInherit(m.metricid);
     if (out.some((o) => o.value === value)) continue;
     out.push({
@@ -213,6 +213,40 @@ export function scopeMetricValueLookup(
       v.metricid === mid,
   );
   return hit ? hit.value : undefined;
+}
+
+/** Insert or replace one metric value on a project area (client + server). */
+export function upsertScopeMetricValue(
+  current: ProjectAreaScopeMetricValuePublic[],
+  entry: ProjectAreaScopeMetricValuePublic,
+): ProjectAreaScopeMetricValuePublic[] {
+  const scopeDocId = entry.scopeDocId.trim();
+  const metricid = entry.metricid.trim();
+  const inst = entry.scopeInstanceId?.trim() || null;
+  const next = current.filter(
+    (v) =>
+      !(
+        v.scopeDocId === scopeDocId &&
+        matchesScopeInstance(v.scopeInstanceId, inst) &&
+        v.metricid === metricid
+      ),
+  );
+  next.push({
+    scopeDocId,
+    scopeInstanceId: inst,
+    metricid,
+    value: entry.value ?? null,
+  });
+  return next;
+}
+
+/** Optimistic project-area patch so checklist rows can show the new metric immediately. */
+export function applyScopeMetricValueToProjectArea(
+  pa: ProjectAreaPublic,
+  entry: ProjectAreaScopeMetricValuePublic,
+): ProjectAreaPublic {
+  const next = upsertScopeMetricValue(pa.scopeMetricValues ?? [], entry);
+  return { ...pa, scopeMetricValues: next.length > 0 ? next : undefined };
 }
 
 export function buildScopeMetricValueKey(

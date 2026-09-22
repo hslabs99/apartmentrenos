@@ -5,6 +5,7 @@ import {
   importLogCustomElevateRowsSkipped,
   importLogDataErrors,
   importLogSkippedCustomElevateSamples,
+  isMixedObjectUomImportError,
 } from "@/lib/import-log-error-rows";
 import { sfDataSurface } from "@/lib/sf-layout";
 import type { ImportLogPublic } from "@/types/import-log-types";
@@ -83,7 +84,13 @@ export function ImportLogAuditPanel({ log }: { log: ImportLogPublic }) {
             </tr>
             <tr className="border-b border-sf-border dark:border-zinc-800">
               <th className="py-2 pr-4 font-medium text-sf-text-secondary">Error rows</th>
-              <td className="py-2 tabular-nums text-amber-800 dark:text-amber-300">
+              <td
+                className={`py-2 tabular-nums ${
+                  dataErrors.some(isMixedObjectUomImportError)
+                    ? "font-semibold text-red-800 dark:text-red-300"
+                    : "text-amber-800 dark:text-amber-300"
+                }`}
+              >
                 {summary.errorRows}
               </td>
             </tr>
@@ -188,7 +195,13 @@ export function ImportLogAuditPanel({ log }: { log: ImportLogPublic }) {
 
       {dataErrors.length > 0 ? (
         <details open className="text-sm">
-          <summary className="cursor-pointer font-medium text-amber-900 dark:text-amber-200">
+          <summary
+            className={`cursor-pointer font-medium ${
+              dataErrors.some(isMixedObjectUomImportError)
+                ? "text-red-800 dark:text-red-300"
+                : "text-amber-900 dark:text-amber-200"
+            }`}
+          >
             Data errors ({dataErrors.length}) — fix in spreadsheet
           </summary>
           <div className="mt-2 max-h-64 overflow-auto">
@@ -205,7 +218,11 @@ export function ImportLogAuditPanel({ log }: { log: ImportLogPublic }) {
                 {dataErrors.map((row) => (
                   <tr
                     key={`${row.sheetRowNumber}-${row.triggerSheetRowNumber ?? ""}-${row.code}-${row.message}`}
-                    className="border-b border-sf-border/60 dark:border-zinc-800"
+                    className={
+                      isMixedObjectUomImportError(row)
+                        ? "border-b border-red-200 bg-red-50 dark:border-red-900/60 dark:bg-red-950/50"
+                        : "border-b border-sf-border/60 dark:border-zinc-800"
+                    }
                   >
                     <td className="py-1 pr-2 font-mono align-top">
                       {sheetGid > 0 ? (
@@ -247,16 +264,30 @@ export function ImportLogAuditPanel({ log }: { log: ImportLogPublic }) {
                     <td className="py-1 pr-2 font-mono text-[0.65rem]">{row.code}</td>
                     <td className="max-w-[14rem] py-1 pr-2 align-top text-[0.65rem] text-sf-text-secondary dark:text-zinc-400">
                       {row.productKey ? (
-                        <span className="block whitespace-pre-wrap">
-                          {row.productKey.category || "∅"} · {row.productKey.productType || "∅"} ·{" "}
-                          {row.productKey.product || "∅"} · {row.productKey.elevateLevel || "∅"} ·{" "}
-                          {row.productKey.style || "∅"} · {row.productKey.colourOptions || "∅"}
-                        </span>
+                        isMixedObjectUomImportError(row) ? (
+                          <span className="block whitespace-pre-wrap">
+                            {row.productKey.category || "∅"} · {row.productKey.productType || "∅"}
+                          </span>
+                        ) : (
+                          <span className="block whitespace-pre-wrap">
+                            {row.productKey.category || "∅"} · {row.productKey.productType || "∅"} ·{" "}
+                            {row.productKey.product || "∅"} · {row.productKey.elevateLevel || "∅"} ·{" "}
+                            {row.productKey.style || "∅"} · {row.productKey.colourOptions || "∅"}
+                          </span>
+                        )
                       ) : (
                         "—"
                       )}
                     </td>
-                    <td className="py-1 text-amber-900 dark:text-amber-200">{row.message}</td>
+                    <td
+                      className={
+                        isMixedObjectUomImportError(row)
+                          ? "py-1 font-medium text-red-800 dark:text-red-200"
+                          : "py-1 text-amber-900 dark:text-amber-200"
+                      }
+                    >
+                      {row.message}
+                    </td>
                   </tr>
                 ))}
               </tbody>

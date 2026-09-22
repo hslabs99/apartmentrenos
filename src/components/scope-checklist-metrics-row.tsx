@@ -2,7 +2,7 @@
 
 import { clScopeMetricsRowClass } from "@/components/cl-checklist-layout";
 import { CL_FIELD_CONTROL_HEIGHT_CLASS } from "@/components/cl-checklist-layout";
-import { scopeMetricValueLookup } from "@/lib/scope-metrics";
+import { applyScopeMetricValueToProjectArea, scopeMetricValueLookup } from "@/lib/scope-metrics";
 import { readApiJson } from "@/lib/client/read-api-json";
 import type { ProjectAreaPublic } from "@/types/project-area";
 import type { ScopeMetricPublic } from "@/types/scope-metric";
@@ -38,6 +38,14 @@ export function ScopeChecklistMetricsRow({
 
   const saveMetricValue = useCallback(
     async (metricid: string, value: number | null) => {
+      const snapshot = pa;
+      const optimistic = applyScopeMetricValueToProjectArea(pa, {
+        scopeDocId,
+        scopeInstanceId: scopeInstanceId?.trim() ? scopeInstanceId.trim() : null,
+        metricid,
+        value,
+      });
+      onProjectAreaUpdated(optimistic);
       setSavingMetricId(metricid);
       try {
         const res = await fetch(
@@ -60,12 +68,13 @@ export function ScopeChecklistMetricsRow({
         if (!res.ok) throw new Error(data.error ?? "Failed to save scope metric");
         if (data.projectArea) onProjectAreaUpdated(data.projectArea);
       } catch (e) {
+        onProjectAreaUpdated(snapshot);
         onError(e instanceof Error ? e.message : "Failed to save scope metric");
       } finally {
         setSavingMetricId(null);
       }
     },
-    [pa.id, scopeDocId, scopeInstanceId, onProjectAreaUpdated, onError],
+    [pa, scopeDocId, scopeInstanceId, onProjectAreaUpdated, onError],
   );
 
   if (metrics.length === 0) return null;

@@ -25,7 +25,8 @@ import {
   type DataObjectKeyFields,
 } from "@/lib/data-object-key";
 import { LABOUR_PREPARE_OBJECT_PRODUCT_TYPE } from "@/lib/labour-silo";
-import { mapSkuUomToQuoteUom } from "@/lib/map-sku-uom-to-quote-uom";
+import { INHERIT_M2_LM_RUNS_UOM } from "@/lib/inherit-m2-source";
+import { mapSkuUomToQuoteUom, resolveExistingObjectUomFromPriceList } from "@/lib/map-sku-uom-to-quote-uom";
 import {
   canonicalDataObjectFields,
   dataObjectKeyFromFields,
@@ -113,6 +114,14 @@ function lerpPercent(from: number, to: number, done: number, total: number): num
 
 type DistinctRow = DataObjectKeyFields & { uom: string };
 
+/** First SKU wins, except `LM-Runs` on any row in the group upgrades the data object. */
+function mergeSkuUomIntoDistinct(existingUom: string, incomingRaw: string): string {
+  if (existingUom === INHERIT_M2_LM_RUNS_UOM) return existingUom;
+  const incoming = mapSkuUomToQuoteUom(incomingRaw);
+  if (incoming === INHERIT_M2_LM_RUNS_UOM) return incoming;
+  return existingUom;
+}
+
 async function deleteRefsInBatches(
   db: Firestore,
   refs: DocumentReference[],
@@ -149,7 +158,11 @@ function collectDistinctRowsFromSkus(
     }
     const canon = canonicalDataObjectFields(fields);
     const key = buildDataObjectKey(canon);
-    if (distinctByKey.has(key)) continue;
+    const existing = distinctByKey.get(key);
+    if (existing) {
+      existing.uom = mergeSkuUomIntoDistinct(existing.uom, String(data.uom ?? ""));
+      continue;
+    }
     distinctByKey.set(key, {
       ...canon,
       uom: mapSkuUomToQuoteUom(String(data.uom ?? "")),
@@ -178,7 +191,11 @@ function collectDistinctRowsFromLabourRates(
     }
     const canon = canonicalDataObjectFields(fields);
     const key = buildDataObjectKey(canon);
-    if (distinctByKey.has(key)) continue;
+    const existing = distinctByKey.get(key);
+    if (existing) {
+      existing.uom = mergeSkuUomIntoDistinct(existing.uom, String(data.uom ?? ""));
+      continue;
+    }
     distinctByKey.set(key, {
       ...canon,
       uom: mapSkuUomToQuoteUom(String(data.uom ?? "")),
@@ -201,10 +218,13 @@ function mergeDistinctRows(
 
 function collectExistingDataObjectsByKey(
   snap: QuerySnapshot,
-): Map<string, { id: string; quoteObjectDocId: string | null; objectid: number | null }> {
+): Map<
+  string,
+  { id: string; quoteObjectDocId: string | null; objectid: number | null; uom: string }
+> {
   const byKey = new Map<
     string,
-    { id: string; quoteObjectDocId: string | null; objectid: number | null }
+    { id: string; quoteObjectDocId: string | null; objectid: number | null; uom: string }
   >();
   for (const doc of snap.docs) {
     if (isDataObjectsMetaDocument(doc.id)) continue;
@@ -220,7 +240,12 @@ function collectExistingDataObjectsByKey(
     const rawId = data.objectid;
     const objectid =
       typeof rawId === "number" && Number.isFinite(rawId) ? rawId : null;
-    byKey.set(key, { id: doc.id, quoteObjectDocId, objectid });
+    byKey.set(key, {
+      id: doc.id,
+      quoteObjectDocId,
+      objectid,
+      uom: String(data.uom ?? ""),
+    });
   }
   return byKey;
 }
@@ -437,9 +462,12 @@ export async function runPrepareDataObjects(
     });
     const key = buildDataObjectKey(row);
     const existing = existingByKey.get(key);
+    const uom = existing
+      ? resolveExistingObjectUomFromPriceList(existing.uom, row.uom)
+      : row.uom;
     const payload = dataObjectToFirestore(
       row,
-      row.uom,
+      uom,
       existing
         ? {
             quoteObjectDocId: existing.quoteObjectDocId,
@@ -466,6 +494,7 @@ export async function runPrepareDataObjects(
       id: ref.id,
       quoteObjectDocId: null,
       objectid: null,
+      uom,
     });
     created++;
     dataObjectIndex++;
@@ -513,6 +542,7 @@ export async function runPrepareDataObjects(
       quoteCache,
     );
     if (action === "created") quoteObjectsCreated++;
+    else if (action === "updated") quoteObjectsUpdated++;
     else quoteObjectsSkipped++;
     quoteIndex++;
   }

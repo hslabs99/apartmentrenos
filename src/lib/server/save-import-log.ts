@@ -71,7 +71,14 @@ export async function saveDataSkusImportLog(
     }));
 
   const warnings = params.audit.warnings.slice(0, 30);
-  const dataErrors = params.audit.dataErrors.slice(0, 50);
+  const dataErrors = [...params.audit.dataErrors]
+    .sort((a, b) => {
+      const ar = a.code === "mixed_object_uom" ? 0 : 1;
+      const br = b.code === "mixed_object_uom" ? 0 : 1;
+      if (ar !== br) return ar - br;
+      return a.sheetRowNumber - b.sheetRowNumber;
+    })
+    .slice(0, 50);
 
   const payload = sanitizeForFirestore({
     importRunId: params.importRunId,

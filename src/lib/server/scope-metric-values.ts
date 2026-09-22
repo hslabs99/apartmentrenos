@@ -4,6 +4,7 @@ import {
   measureLockedByScopeMetricInherit,
   resolveScopeLineInheritMeasureLocked,
   resolveScopeLineInheritMeasureSource,
+  resolveScopeMetricIdFromInherit,
 } from "@/lib/inherit-m2-source";
 import { scopeMetricValuesMap } from "@/lib/inherit-m2-source";
 import {
@@ -16,12 +17,12 @@ import {
   firestoreAnswersToPublic,
   firestoreScopeMetricsToPublic,
 } from "@/lib/server/scope-doc";
-import { isQuoteObjectsMetaDocument } from "@/lib/firestore/quote-objects-collection";
-import { resolveEffectivePriceLevelId } from "@/lib/server/resolve-effective-price-level";
+import { effectivePriceLevelIdFromData } from "@/lib/server/resolve-effective-price-level";
 import { loadProjectDimensionsByProjectId } from "@/lib/server/project-dimensions";
-import { loadQuoteByObjectIdMap } from "@/lib/server/project-area-seeding";
+import { loadLmRunsRollWidthMFromDb } from "@/lib/server/load-lm-runs-roll-width";
+import { loadQuoteDocsByIds, loadQuoteMapForNumericObjectIds } from "@/lib/server/project-area-seeding";
 import { primarySupplierPriceExcGst } from "@/lib/server/materialize-line-sku";
-import { loadSkuCalcM2Fields } from "@/lib/server/sku-calc-m2-fields";
+import { loadSkuCalcM2FieldsBySkuIds } from "@/lib/server/sku-calc-m2-fields";
 import type { ProjectAreaScopeMetricValuePublic } from "@/types/scope-metric";
 import type { ScopeMetricPublic } from "@/types/scope-metric";
 import type { QuoteObjectPublic } from "@/types/quote-object";
@@ -49,29 +50,7 @@ export function parseScopeMetricValuesFromFirestore(
   return out;
 }
 
-export function upsertScopeMetricValue(
-  current: ProjectAreaScopeMetricValuePublic[],
-  entry: ProjectAreaScopeMetricValuePublic,
-): ProjectAreaScopeMetricValuePublic[] {
-  const scopeDocId = entry.scopeDocId.trim();
-  const metricid = entry.metricid.trim();
-  const inst = entry.scopeInstanceId?.trim() || null;
-  const next = current.filter(
-    (v) =>
-      !(
-        v.scopeDocId === scopeDocId &&
-        matchesScopeInstance(v.scopeInstanceId, inst) &&
-        v.metricid === metricid
-      ),
-  );
-  next.push({
-    scopeDocId,
-    scopeInstanceId: inst,
-    metricid,
-    value: entry.value ?? null,
-  });
-  return next;
-}
+export { upsertScopeMetricValue } from "@/lib/scope-metrics";
 
 /** Drop metric values for a scope instance that are not visible for the chosen answer. */
 export function pruneScopeMetricValuesForAnswer(
@@ -103,15 +82,26 @@ export async function repriceScopeInstanceLines(
   scopeInstanceId: string | null | undefined,
   scopeMetrics: ScopeMetricPublic[],
   scopeMetricValues: ProjectAreaScopeMetricValuePublic[],
+  opts?: {
+    metricid?: string;
+    paData?: DocumentData;
+    scopeData?: DocumentData | null;
+  },
 ): Promise<{ updated: number }> {
-  const paSnap = await db.collection("projectareas").doc(projectAreaDocId).get();
-  if (!paSnap.exists) return { updated: 0 };
-  const pa = paSnap.data() as DocumentData;
+  const pa =
+    opts?.paData ??
+    ((await db.collection("projectareas").doc(projectAreaDocId).get()).data() as
+      | DocumentData
+      | undefined);
+  if (!pa) return { updated: 0 };
   const projectid = Number(pa.projectid);
   if (!Number.isInteger(projectid)) return { updated: 0 };
 
-  const scopeSnap = await db.collection("scopes").doc(scopeDocId.trim()).get();
-  const scopeData = scopeSnap.exists ? scopeSnap.data()! : null;
+  let scopeData = opts?.scopeData;
+  if (scopeData === undefined) {
+    const scopeSnap = await db.collection("scopes").doc(scopeDocId.trim()).get();
+    scopeData = scopeSnap.exists ? scopeSnap.data()! : null;
+  }
   const scopeForResolve: Pick<ScopePublic, "answers" | "scopeMetrics"> = {
     answers: firestoreAnswersToPublic(scopeData?.answers),
     scopeMetrics: scopeMetrics.length
@@ -119,34 +109,84 @@ export async function repriceScopeInstanceLines(
       : firestoreScopeMetricsToPublic(scopeData?.scopeMetrics),
   };
 
-  let quoteObjectsForResolve: QuoteObjectPublic[] = [];
-  const quoteSnap = await db.collection("quote_objects").get();
-  for (const doc of quoteSnap.docs) {
-    if (isQuoteObjectsMetaDocument(doc.id)) continue;
-    quoteObjectsForResolve.push(docToQuoteObjectPublic(doc.id, doc.data()));
-  }
-
-  const areaM2 = numOrNull(pa.aream2);
-  const projDims = await loadProjectDimensionsByProjectId(db, projectid);
-  const areaPl = await resolveEffectivePriceLevelId(db, projectAreaDocId, projectid);
-  const quoteByObjectId = await loadQuoteByObjectIdMap(db);
-  const metricMap = scopeMetricValuesMap(scopeMetricValues);
-
   const lines = await db
     .collection("projectareaobjects")
     .where("projectid", "==", projectid)
     .where("projectAreaDocId", "==", projectAreaDocId)
     .get();
 
+  const instanceLines = lines.docs.filter((doc) => {
+    const data = doc.data();
+    if (String(data.linesource ?? "") !== "scope") return false;
+    if (String(data.scopeDocId ?? "") !== scopeDocId.trim()) return false;
+    return matchesScopeInstance(
+      data.scopeInstanceId as string | null | undefined,
+      scopeInstanceId,
+    );
+  });
+  if (instanceLines.length === 0) return { updated: 0 };
+
+  const quoteDocIds = new Set<string>();
+  for (const answer of scopeForResolve.answers) {
+    for (const id of answer.attachedQuoteObjectIds ?? []) {
+      const trimmed = id.trim();
+      if (trimmed) quoteDocIds.add(trimmed);
+    }
+  }
+  const quoteDocs = await loadQuoteDocsByIds(db, quoteDocIds);
+  const quoteObjectsForResolve: QuoteObjectPublic[] = [];
+  const quoteByObjectId = new Map<number, DocumentData>();
+  for (const [id, data] of quoteDocs) {
+    quoteObjectsForResolve.push(docToQuoteObjectPublic(id, data));
+    const objectid = numOrNull(data.objectid);
+    if (objectid != null && Number.isInteger(objectid)) quoteByObjectId.set(objectid, data);
+  }
+  const extraQuotes = await loadQuoteMapForNumericObjectIds(
+    db,
+    instanceLines.map((doc) => numOrNull(doc.data().objectid)),
+  );
+  for (const [objectid, data] of extraQuotes) {
+    if (!quoteByObjectId.has(objectid)) quoteByObjectId.set(objectid, data);
+  }
+
+  const metricFilter = opts?.metricid?.trim() ?? "";
+  const matching = instanceLines.filter((doc) => {
+    if (!metricFilter) return true;
+    const data = doc.data();
+    const objectid = numOrNull(data.objectid);
+    if (objectid == null || !Number.isInteger(objectid)) return false;
+    const inherit = resolveScopeLineInheritMeasureSource(
+      {
+        linesource: "scope",
+        scopeDocId: scopeDocId.trim(),
+        answerid: String(data.answerid ?? ""),
+        objectid,
+      },
+      scopeForResolve as ScopePublic,
+      quoteObjectsForResolve,
+    );
+    return resolveScopeMetricIdFromInherit(inherit) === metricFilter;
+  });
+  if (matching.length === 0) return { updated: 0 };
+
+  const skuCalcById = await loadSkuCalcM2FieldsBySkuIds(
+    db,
+    matching.map((doc) => String(doc.data().skuId ?? "")),
+  );
+
+  const areaM2 = numOrNull(pa.aream2);
+  const [projDims, projSnap, lmRunsRollWidthFallback] = await Promise.all([
+    loadProjectDimensionsByProjectId(db, projectid),
+    db.collection("projects").where("projectid", "==", projectid).limit(1).get(),
+    loadLmRunsRollWidthMFromDb(db),
+  ]);
+  const areaPl = effectivePriceLevelIdFromData(pa, projSnap.docs[0]?.data());
+  const metricMap = scopeMetricValuesMap(scopeMetricValues);
+
   let updated = 0;
   const batch = db.batch();
-  for (const doc of lines.docs) {
+  for (const doc of matching) {
     const data = doc.data();
-    if (String(data.linesource ?? "") !== "scope") continue;
-    if (String(data.scopeDocId ?? "") !== scopeDocId.trim()) continue;
-    if (!matchesScopeInstance(data.scopeInstanceId as string | null | undefined, scopeInstanceId)) {
-      continue;
-    }
     const objectid = numOrNull(data.objectid);
     if (objectid == null || !Number.isInteger(objectid)) continue;
     const q = quoteByObjectId.get(objectid);
@@ -156,6 +196,7 @@ export async function repriceScopeInstanceLines(
       apartmentTotalM2: projDims.apartmentTotalM2,
       apartmentHardM2: projDims.apartmentHardM2,
       apartmentSoftM2: projDims.apartmentSoftM2,
+      lmRunsRollWidthFallback,
     };
     const storedMeasure = numOrNull(data.custommeasure);
     const lineInheritCtx = {
@@ -175,7 +216,7 @@ export async function repriceScopeInstanceLines(
       quoteObjectsForResolve,
     );
     const skuId = String(data.skuId ?? "").trim();
-    const skuCalcM2 = await loadSkuCalcM2Fields(db, skuId || null);
+    const skuCalcM2 = skuId ? (skuCalcById.get(skuId) ?? null) : null;
     const measureForPricing = effectiveMeasureForLinePricing(
       q,
       pricing.measurement,

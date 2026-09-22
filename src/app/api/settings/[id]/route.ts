@@ -8,8 +8,7 @@ import { z } from "zod";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { ensureSettingsBootstrap } from "@/lib/firestore/collection-bootstrap";
 import { isSettingsMetaDocument } from "@/lib/firestore/settings-collection";
-import { isMarginSettingKey } from "@/lib/settings-margin";
-import { isLoadRateSettingKey } from "@/lib/settings-load-rates";
+import { isProtectedSettingKey } from "@/lib/settings-protected";
 import type { SettingPublic } from "@/types/setting";
 
 export const runtime = "nodejs";
@@ -79,8 +78,8 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     if (!snap.exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const currentName = String((snap.data() as DocumentData).settingname ?? "");
-    /** Margin and load-rate rows: value-only updates — never run duplicate-name logic (avoids 409 when duplicates exist). */
-    if (isMarginSettingKey(currentName) || isLoadRateSettingKey(currentName)) {
+    /** Protected rows: value-only updates — never run duplicate-name logic. */
+    if (isProtectedSettingKey(currentName)) {
       const update: Record<string, unknown> = {
         updatedAt: FieldValue.serverTimestamp(),
       };
@@ -98,28 +97,9 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         : currentName;
     const nameNorm = normalizeName(nextName);
 
-    if (isMarginSettingKey(currentName)) {
-      if (parsed.data.settingname !== undefined && !isMarginSettingKey(parsed.data.settingname)) {
-        return NextResponse.json(
-          { error: "The margin setting cannot be renamed." },
-          { status: 403 },
-        );
-      }
-    } else if (isLoadRateSettingKey(currentName)) {
-      if (parsed.data.settingname !== undefined && !isLoadRateSettingKey(parsed.data.settingname)) {
-        return NextResponse.json(
-          { error: "Load rate settings cannot be renamed." },
-          { status: 403 },
-        );
-      }
-    } else if (parsed.data.settingname !== undefined && isMarginSettingKey(parsed.data.settingname)) {
+    if (parsed.data.settingname !== undefined && isProtectedSettingKey(parsed.data.settingname)) {
       return NextResponse.json(
-        { error: 'The name "margin" is reserved for the protected margin setting.' },
-        { status: 403 },
-      );
-    } else if (parsed.data.settingname !== undefined && isLoadRateSettingKey(parsed.data.settingname)) {
-      return NextResponse.json(
-        { error: "That name is reserved for a load rate setting." },
+        { error: "That name is reserved for a protected system setting." },
         { status: 403 },
       );
     }
@@ -166,15 +146,9 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
     if (!snap.exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const data = snap.data() as DocumentData;
     const n = String(data.settingname ?? "");
-    if (isMarginSettingKey(n)) {
+    if (isProtectedSettingKey(n)) {
       return NextResponse.json(
-        { error: "The margin setting cannot be deleted." },
-        { status: 403 },
-      );
-    }
-    if (isLoadRateSettingKey(n)) {
-      return NextResponse.json(
-        { error: "Load rate settings cannot be deleted." },
+        { error: "Protected system settings cannot be deleted." },
         { status: 403 },
       );
     }

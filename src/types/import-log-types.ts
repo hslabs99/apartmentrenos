@@ -30,7 +30,8 @@ export type ImportLogDataError = {
     | "incomplete_row"
     | "supplier_without_product_key"
     | "invalid_supplier_option"
-    | "duplicate_supplier_option";
+    | "duplicate_supplier_option"
+    | "mixed_object_uom";
   message: string;
   category: string | null;
   product: string | null;

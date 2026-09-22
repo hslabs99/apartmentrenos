@@ -1,5 +1,5 @@
-/** `Cascading Restrictions` tab: A1:C50 — Level, Style, Colour. */
-export const CASCADES_SHEET_RANGE = "A1:C50";
+/** `Cascading Restrictions` tab: columns A–C, all rows — Level, Style, Colour. */
+export const CASCADES_SHEET_RANGE = "A1:C";
 
 export type ParsedCascadeRow = {
   sheetRow: number;
@@ -33,7 +33,7 @@ function buildRowKey(level: string, style: string, colour: string): string {
 }
 
 /**
- * Parse cascade rows from `Cascading Restrictions!A1:C50`.
+ * Parse cascade rows from `Cascading Restrictions!A1:C`.
  * Skips title rows until a Level / Style / Colour header row is found.
  */
 export function parseCascadingRestrictionsRows(

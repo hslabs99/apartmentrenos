@@ -13,12 +13,13 @@ export type CatalogSkuData = {
   suppliersBySkuId: Record<string, DataSkuSupplierPublic[]>;
 };
 
-export async function loadCatalogSkuData(): Promise<CatalogSkuData> {
+export async function loadCatalogSkuData(signal?: AbortSignal): Promise<CatalogSkuData> {
+  const req = signal ? { signal } : undefined;
   const skuResult = await catalogJsonGet<{
     items?: DataSkuPublic[];
     suppliers?: DataSkuSupplierPublic[];
     error?: string;
-  }>("/api/data-skus?includeSuppliers=1");
+  }>("/api/data-skus?includeSuppliers=1", req);
   if (!skuResult.ok) throw new Error(skuResult.data.error ?? "Failed to load data_skus");
 
   let supplierItems = skuResult.data.suppliers;
@@ -26,7 +27,7 @@ export async function loadCatalogSkuData(): Promise<CatalogSkuData> {
     const supResult = await catalogJsonGet<{
       items?: DataSkuSupplierPublic[];
       error?: string;
-    }>("/api/data-sku-suppliers");
+    }>("/api/data-sku-suppliers", req);
     if (!supResult.ok) {
       throw new Error(supResult.data.error ?? "Failed to load data_sku_suppliers");
     }

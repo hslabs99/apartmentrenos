@@ -40,6 +40,7 @@ import {
 import { labourLineCatalogFields } from "@/lib/server/labour-checklist-line";
 import { TEMPLATE_LABOUR_SILO_KEYS } from "@/lib/labour-silo";
 import { loadProjectDimensionsByProjectId } from "@/lib/server/project-dimensions";
+import { loadLmRunsRollWidthMFromDb } from "@/lib/server/load-lm-runs-roll-width";
 import {
   applyTemplateTooltipsFromQuoteMap,
   readTooltipFromQuoteObjectData,
@@ -412,7 +413,10 @@ export async function POST(req: NextRequest) {
 
     const paSnap = await db.collection("projectareas").doc(parsed.data.projectAreaDocId).get();
     const areaM2 = paSnap.exists ? numOrNull(paSnap.data()!.aream2) : undefined;
-    const projDims = await loadProjectDimensionsByProjectId(db, projectid);
+    const [projDims, lmRunsRollWidthFallback] = await Promise.all([
+      loadProjectDimensionsByProjectId(db, projectid),
+      loadLmRunsRollWidthMFromDb(db),
+    ]);
     const pl = await resolveEffectivePriceLevelId(
       db,
       parsed.data.projectAreaDocId,
@@ -433,6 +437,7 @@ export async function POST(req: NextRequest) {
       apartmentTotalM2: projDims.apartmentTotalM2,
       apartmentHardM2: projDims.apartmentHardM2,
       apartmentSoftM2: projDims.apartmentSoftM2,
+      lmRunsRollWidthFallback,
     };
     let scopeInheritMeasureSource: InheritMeasureSource | undefined;
     let scopeInheritMeasureLocked: boolean | undefined;

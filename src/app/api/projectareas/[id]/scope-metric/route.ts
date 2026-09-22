@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { isProjectAreasMetaDocument } from "@/lib/firestore/projectareas-collection";
@@ -49,7 +49,8 @@ export async function POST(req: NextRequest, context: RouteContext) {
     if (!scopeSnap.exists) {
       return NextResponse.json({ error: "Scope not found" }, { status: 404 });
     }
-    const scopeMetrics = loadScopeMetricsFromScopeDoc(scopeSnap.data()!);
+    const scopeData = scopeSnap.data()!;
+    const scopeMetrics = loadScopeMetricsFromScopeDoc(scopeData);
     const metric = scopeMetrics.find((m) => m.metricid === parsed.data.metricid);
     if (!metric) {
       return NextResponse.json({ error: "Unknown scope metric" }, { status: 400 });
@@ -68,18 +69,25 @@ export async function POST(req: NextRequest, context: RouteContext) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    await repriceScopeInstanceLines(
-      db,
-      id,
-      parsed.data.scopeDocId,
-      parsed.data.scopeInstanceId ?? null,
-      scopeMetrics,
-      nextValues,
-    );
+    const scopeDocId = parsed.data.scopeDocId.trim();
+    const scopeInstanceId = parsed.data.scopeInstanceId ?? null;
+    const metricid = parsed.data.metricid;
+    after(() => {
+      void repriceScopeInstanceLines(
+        db,
+        id,
+        scopeDocId,
+        scopeInstanceId,
+        scopeMetrics,
+        nextValues,
+        { metricid, paData: { ...paData, scopeMetricValues: nextValues }, scopeData },
+      ).catch((e) => {
+        console.error("[scope-metric] background reprice failed", e);
+      });
+    });
 
-    const updatedSnap = await paRef.get();
     return NextResponse.json({
-      projectArea: projectAreaDocToPublic(id, updatedSnap.data()!),
+      projectArea: projectAreaDocToPublic(id, { ...paData, scopeMetricValues: nextValues }),
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to save scope metric";

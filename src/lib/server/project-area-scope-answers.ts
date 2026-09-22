@@ -67,6 +67,7 @@ import {
   projectDimensionsFromData,
   type ProjectDimensions,
 } from "@/lib/server/project-dimensions";
+import { loadLmRunsRollWidthMFromDb } from "@/lib/server/load-lm-runs-roll-width";
 import { docToProjectAreaObjectPublic } from "@/lib/server/project-area-object-doc";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import {
@@ -649,6 +650,7 @@ async function materializeScopeLineSpecs(
       colour: string;
       elevateLevel: string;
       projDims: ProjectDimensions;
+      lmRunsRollWidthFallback?: number;
     };
   },
 ): Promise<{ linesAdded: number; newLineDocIds: string[] }> {
@@ -693,6 +695,7 @@ async function materializeScopeLineSpecs(
     projDims,
     objectLabourRates,
     contractLabourRates,
+    lmRunsRollWidthFallback,
   ] = await Promise.all([
     timedValue(timings, "matExtraQuotesMs", () =>
       loadQuoteMapForNumericObjectIds(db, missingQuoteObjectIds),
@@ -714,6 +717,9 @@ async function materializeScopeLineSpecs(
         ),
     timedValue(timings, "matObjectLabourMs", () => loadAllObjectLabourRates(db)),
     timedValue(timings, "matContractLabourMs", () => loadAllContractLabourRates(db)),
+    loadedPricing?.lmRunsRollWidthFallback != null
+      ? Promise.resolve(loadedPricing.lmRunsRollWidthFallback)
+      : timedValue(timings, "matLmRunsRollWidthMs", () => loadLmRunsRollWidthMFromDb(db)),
     timedValue(timings, "matSkuPrimeMs", () => primeDataSkusResolveCache(db)),
     timedValue(timings, "matSupplierPrimeMs", () => primePrimarySupplierPriceCache(db)),
   ]);
@@ -777,6 +783,7 @@ async function materializeScopeLineSpecs(
         apartmentTotalM2: projDims.apartmentTotalM2,
         apartmentHardM2: projDims.apartmentHardM2,
         apartmentSoftM2: projDims.apartmentSoftM2,
+        lmRunsRollWidthFallback,
       };
       const scopeInheritMeasureSource = scopeInheritByObjectId.get(pl.objectid);
       const scopeInheritMeasureLocked = scopeInheritMeasureLockedByObjectId.get(pl.objectid);
@@ -1507,7 +1514,7 @@ export async function applyScopeAnswerToProjectArea(
       )
     : Promise.resolve();
 
-  const [deleted, elevateLevel] = await Promise.all([
+  const [deleted, elevateLevel, , lmRunsRollWidthFallback] = await Promise.all([
     deleteScopeLinesForScope(
       db,
       projectid,
@@ -1526,6 +1533,7 @@ export async function applyScopeAnswerToProjectArea(
         )
       : Promise.resolve(""),
     catalogPrime,
+    timedValue(timings, "lmRunsRollWidthMs", () => loadLmRunsRollWidthMFromDb(db)),
   ]);
   const linesRemoved = deleted.removed;
 
@@ -1620,7 +1628,7 @@ export async function applyScopeAnswerToProjectArea(
       startingLineSortOrder,
       effectivePl: collected.effectivePl,
       timings,
-      loadedPricing: { style, colour, elevateLevel, projDims },
+      loadedPricing: { style, colour, elevateLevel, projDims, lmRunsRollWidthFallback },
     }),
   );
   const quoteByObjectId = new Map<number, DocumentData>();

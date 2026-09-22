@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { MASTER_PRICES_CASCADES_TAB_TITLE } from "@/lib/google/master-prices-spreadsheet";
+import { CASCADES_SHEET_RANGE } from "@/lib/google/parse-cascading-restrictions";
 import { runImportCascades } from "@/lib/server/import-cascades";
 import { importRunIdFromError, runSupportingImportWithLog } from "@/lib/server/supporting-import-log";
 
 export const runtime = "nodejs";
 
-/** POST — replace `cascades` from `Cascading Restrictions!A1:C50`. */
+/** POST — replace `cascades` from `Cascading Restrictions!A1:C`. */
 export async function POST() {
   const db = getAdminFirestore();
   try {
@@ -15,7 +16,7 @@ export async function POST() {
       {
         kind: "supporting_cascades",
         tabTitle: MASTER_PRICES_CASCADES_TAB_TITLE,
-        sheetRange: "A1:C50",
+        sheetRange: CASCADES_SHEET_RANGE,
       },
       () => runImportCascades(db),
       (result) => ({

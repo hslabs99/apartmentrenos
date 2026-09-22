@@ -486,7 +486,7 @@ export function parseMasterPricesSkuRows(
 
   if (built.dataErrors.length > 0) {
     warnings.push(
-      `${built.dataErrors.length} data error(s) — duplicate supplier options and other issues must be fixed in the spreadsheet.`,
+      `${built.dataErrors.length} data error(s) — mixed object UOMs, duplicate supplier options, and other issues must be fixed in the spreadsheet.`,
     );
   }
 

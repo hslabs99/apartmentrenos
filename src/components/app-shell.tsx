@@ -301,6 +301,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Link
                   key={href}
                   href={href}
+                  prefetch={false}
                   className={`flex min-h-10 items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors lg:w-full ${
                     active
                       ? "bg-sf-nav-active-bg font-medium text-sf-accent dark:bg-sf-accent/15 dark:text-emerald-300"

@@ -5,6 +5,7 @@ import {
   quoteTemplatePricingForPriceLevel,
 } from "@/lib/server/quote-object-doc";
 import { loadQuoteByObjectIdMap } from "@/lib/server/project-area-seeding";
+import { loadLmRunsRollWidthMFromDb } from "@/lib/server/load-lm-runs-roll-width";
 import { loadProjectDimensionsByProjectId } from "@/lib/server/project-dimensions";
 import {
   resolveEffectivePriceLevelId,
@@ -21,6 +22,7 @@ export function projectAreaLineTierPrices(args: {
   apartmentTotalM2?: number | null;
   apartmentHardM2?: number | null;
   apartmentSoftM2?: number | null;
+  lmRunsRollWidthFallback?: number;
 }): { customumprice: number | null; totalprice: number | null } {
   const {
     lineData,
@@ -30,6 +32,7 @@ export function projectAreaLineTierPrices(args: {
     apartmentTotalM2,
     apartmentHardM2,
     apartmentSoftM2,
+    lmRunsRollWidthFallback,
   } = args;
   const lineOverride = numOrNull(lineData.pricelevelid);
   const pl = resolveLineEffectivePriceLevelId(areaEffectivePriceLevelId, lineOverride);
@@ -37,7 +40,7 @@ export function projectAreaLineTierPrices(args: {
   const templateMeasure = effectiveMeasurementForQuoteLine(
     quoteData,
     pricing.measurement,
-    { areaM2, apartmentTotalM2, apartmentHardM2, apartmentSoftM2 },
+    { areaM2, apartmentTotalM2, apartmentHardM2, apartmentSoftM2, lmRunsRollWidthFallback },
   );
   const existingMeasure = numOrNull(lineData.custommeasure);
   const custommeasure =
@@ -76,7 +79,10 @@ export async function repriceProjectAreaLinesForEffectiveTier(
   if (!Number.isInteger(projectid)) return { updated: 0 };
 
   const areaM2 = numOrNull(pa.aream2);
-  const projDims = await loadProjectDimensionsByProjectId(db, projectid);
+  const [projDims, lmRunsRollWidthFallback] = await Promise.all([
+    loadProjectDimensionsByProjectId(db, projectid),
+    loadLmRunsRollWidthMFromDb(db),
+  ]);
 
   const areaPl = await resolveEffectivePriceLevelId(db, projectAreaDocId, projectid);
   const quoteByObjectId = await loadQuoteByObjectIdMap(db);
@@ -105,6 +111,7 @@ export async function repriceProjectAreaLinesForEffectiveTier(
         apartmentTotalM2: projDims.apartmentTotalM2,
         apartmentHardM2: projDims.apartmentHardM2,
         apartmentSoftM2: projDims.apartmentSoftM2,
+        lmRunsRollWidthFallback,
       });
       batch.update(doc.ref, {
         customumprice,

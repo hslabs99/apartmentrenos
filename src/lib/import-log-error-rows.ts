@@ -17,6 +17,10 @@ export function importLogDataErrors(log: ImportLogPublic): ImportLogDataError[] 
   return log.dataErrors ?? log.audit?.dataErrors ?? [];
 }
 
+export function isMixedObjectUomImportError(error: ImportLogDataError): boolean {
+  return error.code === "mixed_object_uom";
+}
+
 export function importLogCustomElevateRowsSkipped(log: ImportLogPublic): number {
   if (typeof log.customElevateRowsSkipped === "number") return log.customElevateRowsSkipped;
   if (typeof log.audit?.customElevateRowsSkipped === "number") {

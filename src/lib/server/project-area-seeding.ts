@@ -22,6 +22,7 @@ import {
 import { readTooltipFromQuoteObjectData } from "@/lib/server/area-object-tooltip";
 import { resolveEffectivePriceLevelId } from "@/lib/server/resolve-effective-price-level";
 import { loadProjectDimensionsByProjectId } from "@/lib/server/project-dimensions";
+import { loadLmRunsRollWidthMFromDb } from "@/lib/server/load-lm-runs-roll-width";
 
 function integerObjectId(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isInteger(v)) return v;
@@ -312,7 +313,10 @@ export async function addProjectAreaWithSeed(
   await purgeStaleAreaLinesBeforeSeed(db, projectid, areaid, ref.id);
 
   const effectivePl = await resolveEffectivePriceLevelId(db, ref.id, projectid);
-  const projDims = await loadProjectDimensionsByProjectId(db, projectid);
+  const [projDims, lmRunsRollWidthFallback] = await Promise.all([
+    loadProjectDimensionsByProjectId(db, projectid),
+    loadLmRunsRollWidthMFromDb(db),
+  ]);
 
   const quoteByObjectId =
     options?.quoteByObjectId ?? (await loadQuoteByObjectIdMap(db));
@@ -348,6 +352,7 @@ export async function addProjectAreaWithSeed(
           apartmentTotalM2: projDims.apartmentTotalM2,
           apartmentHardM2: projDims.apartmentHardM2,
           apartmentSoftM2: projDims.apartmentSoftM2,
+          lmRunsRollWidthFallback,
         };
         const custommeasure = customMeasureForNewProjectLine(
           q,

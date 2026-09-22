@@ -9,6 +9,7 @@ import {
   uomSupportsInheritedAreaMeasure,
 } from "@/lib/inherit-m2-source";
 import { measureFromScopeMetricForQuoteObject } from "@/lib/scope-metrics";
+import { effectiveLmRunsRollWidthM } from "@/lib/settings-lm-runs-roll-width";
 import {
   measureFromScopeMetricWithSkuCalcM2,
   type SkuCalcM2Fields,
@@ -31,6 +32,8 @@ export type ChecklistScopeMeasureExtras = {
   skuCalcM2Override?: SkuCalcM2Fields | null;
   /** Scope setup: when true, checklist measure is locked to the inherited scope metric. */
   inheritMeasureLocked?: boolean;
+  /** System → Settings `lmRunsRollWidth` when the quote object has no runWidth. */
+  lmRunsRollWidthFallback?: number;
 };
 
 function resolveSkuCalcM2Fields(
@@ -51,11 +54,15 @@ function mergeScopeMeasureExtras(
   scopeInheritMeasureSource?: InheritMeasureSource;
   scopeMetrics?: ScopeMetricPublic[];
   scopeMetricValues?: Map<string, number | null>;
+  lmRunsRollWidthFallback?: number;
+  inheritMeasureLocked?: boolean;
 } {
   return {
     scopeInheritMeasureSource,
     scopeMetrics: extras?.scopeMetrics,
     scopeMetricValues: extras?.scopeMetricValues,
+    lmRunsRollWidthFallback: extras?.lmRunsRollWidthFallback,
+    inheritMeasureLocked: extras?.inheritMeasureLocked,
   };
 }
 
@@ -65,6 +72,7 @@ function measureFromScopeMetricIfApplicable(
   scopeMetrics?: ScopeMetricPublic[],
   scopeMetricValues?: Map<string, number | null>,
   skuCalcM2?: SkuCalcM2Fields | null,
+  lmRunsRollWidthFallback?: number,
 ): number | null {
   const metricId = resolveScopeMetricIdFromInherit(scopeInheritMeasureSource);
   if (!metricId || !scopeMetrics?.length || !scopeMetricValues) return null;
@@ -73,13 +81,12 @@ function measureFromScopeMetricIfApplicable(
     metricId,
     scopeMetricValues,
     scopeMetrics,
+    lmRunsRollWidthFallback,
   );
   return measureFromScopeMetricWithSkuCalcM2(fromMetric, skuCalcM2);
 }
 /** Matches server `LM_RUNS_UOM` / checklist carpet lineal-metre logic. */
 export const CHECKLIST_LM_RUNS_UOM = INHERIT_M2_LM_RUNS_UOM;
-
-const DEFAULT_LM_RUNS_RUN_WIDTH = 3.2;
 
 function numOrNull(v: unknown): number | null | undefined {
   if (v === null) return null;
@@ -102,10 +109,11 @@ export function linearMetersFromAreaM2ForLmRunsClient(
   return Math.round(lm * 100) / 100;
 }
 
-function effectiveLmRunsRollWidth(q: QuoteObjectPublic): number {
-  const rw = numOrNull(q.runWidth);
-  if (rw != null && rw > 0) return rw;
-  return DEFAULT_LM_RUNS_RUN_WIDTH;
+function rollWidthForQuoteObject(
+  q: QuoteObjectPublic,
+  fallback?: number,
+): number {
+  return effectiveLmRunsRollWidthM(numOrNull(q.runWidth), fallback);
 }
 
 function normalizedInheritSource(
@@ -154,6 +162,7 @@ export function checklistDefaultMeasureForRow(
     ctx.scopeMetrics,
     ctx.scopeMetricValues,
     skuCalcM2,
+    extras?.lmRunsRollWidthFallback,
   );
 }
 
@@ -223,6 +232,7 @@ export function checklistTemplateMeasurementFromQuote(
   scopeMetrics?: ScopeMetricPublic[],
   scopeMetricValues?: Map<string, number | null>,
   skuCalcM2?: SkuCalcM2Fields | null,
+  lmRunsRollWidthFallback?: number,
 ): number | null {
   if (!q) return templateMeasurement;
   const fromMetric = measureFromScopeMetricIfApplicable(
@@ -231,6 +241,7 @@ export function checklistTemplateMeasurementFromQuote(
     scopeMetrics,
     scopeMetricValues,
     skuCalcM2,
+    lmRunsRollWidthFallback,
   );
   if (fromMetric != null) return fromMetric;
 
@@ -240,7 +251,7 @@ export function checklistTemplateMeasurementFromQuote(
     const baseM2 = inheritedApartmentM2FromSource(src, ctx);
     if (uom === "M2") return baseM2 ?? templateMeasurement;
     if (uom === CHECKLIST_LM_RUNS_UOM) {
-      const rw = effectiveLmRunsRollWidth(q);
+      const rw = rollWidthForQuoteObject(q, lmRunsRollWidthFallback);
       if (baseM2 != null && baseM2 > 0) {
         return linearMetersFromAreaM2ForLmRunsClient(baseM2, rw);
       }
@@ -278,6 +289,7 @@ export function checklistInheritedMeasureForRow(
     ctx.scopeMetrics,
     ctx.scopeMetricValues,
     skuCalcM2,
+    extras?.lmRunsRollWidthFallback,
   );
 }
 
@@ -370,10 +382,12 @@ export function checklistLmRunsMeasureBreakdown(
   pa: ProjectAreaPublic,
   project: ProjectPublic | null,
   scopeInheritMeasureSource?: InheritMeasureSource,
+  lmRunsRollWidthFallback?: number,
 ): LmRunsMeasureBreakdown | null {
   if (!q || String(q.uom ?? "").trim() !== CHECKLIST_LM_RUNS_UOM) return null;
-  const base = lmRunsBaseM2AndLabel(q, pa, project, scopeInheritMeasureSource);  if (!base) return null;
-  const runWidth = effectiveLmRunsRollWidth(q);
+  const base = lmRunsBaseM2AndLabel(q, pa, project, scopeInheritMeasureSource);
+  if (!base) return null;
+  const runWidth = rollWidthForQuoteObject(q, lmRunsRollWidthFallback);
   const side = Math.sqrt(base.baseM2);
   const strips = Math.ceil(side / runWidth);
   const lm = linearMetersFromAreaM2ForLmRunsClient(base.baseM2, runWidth);
@@ -402,9 +416,10 @@ function lmRunsMissingSourceHint(
   q: QuoteObjectPublic,
   pa: ProjectAreaPublic,
   scopeInheritMeasureSource?: InheritMeasureSource,
+  lmRunsRollWidthFallback?: number,
 ): string {
   const src = normalizedInheritSource(q, scopeInheritMeasureSource);
-  const rw = effectiveLmRunsRollWidth(q);
+  const rw = rollWidthForQuoteObject(q, lmRunsRollWidthFallback);
   if (isQuoteObjectInheritM2Source(src) && src !== "none") {
     return `LM-Runs: set ${QUOTE_OBJECT_INHERIT_M2_LABELS[src]} on the project or area header to calculate LM (roll width ${fmtMeasureNum(rw)} m).`;
   }  if (pa.aream2 == null) {
@@ -455,7 +470,13 @@ export function checklistMeasureFieldTooltip(
   }
 
   if (q && String(q.uom ?? "").trim() === CHECKLIST_LM_RUNS_UOM) {
-    const bd = checklistLmRunsMeasureBreakdown(q, pa, project, ctx.scopeInheritMeasureSource);
+    const bd = checklistLmRunsMeasureBreakdown(
+      q,
+      pa,
+      project,
+      ctx.scopeInheritMeasureSource,
+      extras?.lmRunsRollWidthFallback,
+    );
     if (row.custommeasure != null) {
       if (bd) {
         return `Manual measure (${fmtMeasureNum(row.custommeasure)} LM). Calculated: ${formatLmRunsBreakdownTooltip(bd)}${autoHint}`;
@@ -463,7 +484,7 @@ export function checklistMeasureFieldTooltip(
       return `Manual measure (${fmtMeasureNum(row.custommeasure)} LM).${autoHint}`;
     }
     if (bd) return `${formatLmRunsBreakdownTooltip(bd)}${autoHint}`;
-    return `${lmRunsMissingSourceHint(q, pa, ctx.scopeInheritMeasureSource)}${autoHint}`;
+    return `${lmRunsMissingSourceHint(q, pa, ctx.scopeInheritMeasureSource, extras?.lmRunsRollWidthFallback)}${autoHint}`;
   }
 
   if (row.custommeasure != null) {

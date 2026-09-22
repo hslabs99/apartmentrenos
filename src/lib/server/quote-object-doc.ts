@@ -10,6 +10,7 @@ import {
   uomSupportsInheritM2,
 } from "@/lib/inherit-m2-source";
 import { parseScopeMetricInheritId } from "@/lib/scope-metrics";
+import { effectiveLmRunsRollWidthM } from "@/lib/settings-lm-runs-roll-width";
 import {
   measureFromScopeMetricWithSkuCalcM2,
   type SkuCalcM2Fields,
@@ -37,7 +38,19 @@ export function numOrNull(v: unknown): number | null | undefined {
 
 /** UOM for carpet-style lineal metres from area m² and roll width. */
 export const LM_RUNS_UOM = INHERIT_M2_LM_RUNS_UOM;
-export const DEFAULT_LM_RUNS_RUN_WIDTH = 3.2;
+
+type QuoteMeasureCtx = {
+  areaM2?: number | null;
+  apartmentTotalM2?: number | null;
+  apartmentSoftM2?: number | null;
+  apartmentHardM2?: number | null;
+  /** System setting fallback when quote object `runWidth` is empty. */
+  lmRunsRollWidthFallback?: number;
+};
+
+function rollWidthFromQuoteDoc(quoteData: DocumentData, fallback?: number): number {
+  return effectiveLmRunsRollWidthM(numOrNull(quoteData.runWidth), fallback);
+}
 
 /**
  * Rough LM for carpet: assume square room side = √areaM², strips across width =
@@ -52,12 +65,6 @@ export function linearMetersFromAreaM2ForLmRuns(
   const strips = Math.ceil(side / runWidth);
   const lm = strips * side;
   return Math.round(lm * 100) / 100;
-}
-
-function effectiveLmRunsRollWidthM(quoteData: DocumentData): number {
-  const rw = numOrNull(quoteData.runWidth);
-  if (rw != null && rw > 0) return rw;
-  return DEFAULT_LM_RUNS_RUN_WIDTH;
 }
 
 function inheritM2InputFromQuoteDoc(quoteData: DocumentData | undefined) {
@@ -95,6 +102,7 @@ function measureFromScopeMetric(
   scopeMetricValues: Map<string, number | null>,
   scopeMetrics: ScopeMetricPublic[],
   skuCalcM2?: SkuCalcM2Fields | null,
+  lmRunsRollWidthFallback?: number,
 ): number | null {
   const metric = scopeMetrics.find((m) => m.metricid === metricid);
   if (!metric) return null;
@@ -106,9 +114,13 @@ function measureFromScopeMetric(
   let converted: number | null = null;
   if (uom === "M2" && mu === "M2") converted = raw;
   else if (uom === "Unit" && mu === "M2") converted = raw;
+  else if (uom === "LM" && mu === "M2") converted = raw;
   else if (uom === LM_RUNS_UOM) {
     if (mu === "M2") {
-      converted = linearMetersFromAreaM2ForLmRuns(raw, effectiveLmRunsRollWidthM(quoteData));
+      converted = linearMetersFromAreaM2ForLmRuns(
+        raw,
+        rollWidthFromQuoteDoc(quoteData, lmRunsRollWidthFallback),
+      );
     } else if (mu === LM_RUNS_UOM) converted = raw;
   } else if (mu.toLowerCase() === uom.toLowerCase()) {
     converted = raw;
@@ -123,12 +135,7 @@ function measureFromScopeMetric(
 export function customMeasureForNewProjectLine(
   quoteData: DocumentData | undefined,
   templateMeasurement: number | null,
-  ctx: {
-    areaM2?: number | null;
-    apartmentTotalM2?: number | null;
-    apartmentSoftM2?: number | null;
-    apartmentHardM2?: number | null;
-  },
+  ctx: QuoteMeasureCtx,
   explicitCustomMeasure?: number | null,
   scopeInheritMeasureSource?: InheritMeasureSource,
   scopeMetricValues?: Map<string, number | null>,
@@ -158,12 +165,7 @@ export function customMeasureForNewProjectLine(
 export function effectiveMeasureForLinePricing(
   quoteData: DocumentData | undefined,
   templateMeasurement: number | null,
-  ctx: {
-    areaM2?: number | null;
-    apartmentTotalM2?: number | null;
-    apartmentSoftM2?: number | null;
-    apartmentHardM2?: number | null;
-  },
+  ctx: QuoteMeasureCtx,
   storedCustomMeasure: number | null | undefined,
   scopeInheritMeasureSource?: InheritMeasureSource,
   scopeMetricValues?: Map<string, number | null>,
@@ -266,12 +268,7 @@ export function representativePriceLevelRow(
 export function effectiveMeasurementForQuoteLine(
   quoteData: DocumentData | undefined,
   templateMeasurement: number | null,
-  ctx: {
-    areaM2?: number | null;
-    apartmentTotalM2?: number | null;
-    apartmentSoftM2?: number | null;
-    apartmentHardM2?: number | null;
-  },
+  ctx: QuoteMeasureCtx,
   scopeInheritMeasureSource?: InheritMeasureSource,
   scopeMetricValues?: Map<string, number | null>,
   scopeMetrics: ScopeMetricPublic[] = [],
@@ -288,6 +285,7 @@ export function effectiveMeasurementForQuoteLine(
       scopeMetricValues,
       scopeMetrics,
       skuCalcM2,
+      ctx.lmRunsRollWidthFallback,
     );
     if (fromMetric != null) return fromMetric;
   }
@@ -298,7 +296,7 @@ export function effectiveMeasurementForQuoteLine(
     const baseM2 = inheritedApartmentM2FromSource(src, ctx);
     if (uom === "M2") return baseM2 ?? templateMeasurement;
     if (uom === LM_RUNS_UOM) {
-      const rw = effectiveLmRunsRollWidthM(quoteData);
+      const rw = rollWidthFromQuoteDoc(quoteData, ctx.lmRunsRollWidthFallback);
       if (baseM2 != null && baseM2 > 0) {
         return linearMetersFromAreaM2ForLmRuns(baseM2, rw);
       }

@@ -157,8 +157,9 @@ export function SettingsPanel() {
     const rank = (name: string) => {
       const n = name.trim().toLowerCase();
       if (n === "margin") return 0;
-      if (n.startsWith("loadrate")) return 1;
-      return 2;
+      if (n === "lmrunsrollwidth") return 1;
+      if (n.startsWith("loadrate")) return 2;
+      return 3;
     };
     return [...settings].sort((a, b) => {
       const d = rank(a.settingname) - rank(b.settingname);
@@ -173,10 +174,12 @@ export function SettingsPanel() {
         <div className="min-w-0 space-y-1">
           <h2 className={sfSectionHeading}>Settings</h2>
           <p className={sfSectionLead}>
-            Key/value app settings. <span className="font-medium">margin</span> and the{" "}
-            <span className="font-medium">loadRate*</span> rows are protected (names fixed, values
-            editable): margin drives Check List markup %; load rates are $ per load unit for costing
-            load columns (default 0).
+            Key/value app settings. <span className="font-medium">margin</span>,{" "}
+            <span className="font-medium">loadRate*</span>, and{" "}
+            <span className="font-medium">lmRunsRollWidth</span> are protected (names fixed, values
+            editable): margin drives Check List markup %; load rates are $ per load unit (default 0);
+            lmRunsRollWidth is the default carpet roll width in metres when a quote object does not
+            set its own.
           </p>
         </div>
         <button type="button" onClick={openCreate} className={sfPrimaryToolbarButton}>

@@ -15,6 +15,10 @@ import {
 import { downloadQuoteObjectsImportTemplateXlsx } from "@/lib/quote-objects-import-template-xlsx";
 import { sortPriceLevelsPublic } from "@/lib/sort-price-levels";
 import {
+  DEFAULT_LM_RUNS_ROLL_WIDTH_M,
+  lmRunsRollWidthMFromSettings,
+} from "@/lib/settings-lm-runs-roll-width";
+import {
   sfDataSurface,
   sfNeutralToolbarButton,
   sfPrimaryToolbarButton,
@@ -35,6 +39,7 @@ import {
   QUOTE_OBJECT_INHERIT_M2_SOURCES,
 } from "@/types/quote-object";
 import type { ScopePublic } from "@/types/scope";
+import type { SettingPublic } from "@/types/setting";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Mode = "idle" | "create" | "edit";
@@ -42,7 +47,6 @@ type Mode = "idle" | "create" | "edit";
 const DEFAULT_OBJECT_TYPE = "Unit";
 /** Carpet roll LM from checklist area m² (see `effectiveMeasurementForQuoteLine` on server). */
 const LM_RUNS_UOM = "LM-Runs";
-const DEFAULT_LM_RUNS_RUN_WIDTH = 3.2;
 
 const UOM_OPTIONS = ["Unit", "M2", "M3", "LM", "LM-Runs", "Kg", "Ltr"] as const;
 
@@ -62,11 +66,14 @@ function parsePositiveAreaM2(s: string): number | null {
   return n;
 }
 
-/** Effective roll width (m) for preview; matches server default when unset. */
-function effectiveLmRunsRunWidthMForPreview(runWidthStr: string): number {
+/** Effective roll width (m) for preview; object override, else System Settings, else 3.2. */
+function effectiveLmRunsRunWidthMForPreview(
+  runWidthStr: string,
+  settingsFallback: number = DEFAULT_LM_RUNS_ROLL_WIDTH_M,
+): number {
   const n = Number(runWidthStr.trim());
   if (Number.isFinite(n) && n > 0) return n;
-  return DEFAULT_LM_RUNS_RUN_WIDTH;
+  return settingsFallback;
 }
 
 type LmRunsBreakdown = {
@@ -88,11 +95,14 @@ function computeLmRunsBreakdown(areaM2: number, runWidthM: number): LmRunsBreakd
 function computedLmFromLmRunsFormInputs(
   defaultAreaM2Str: string,
   runWidthStr: string,
+  settingsFallback: number = DEFAULT_LM_RUNS_ROLL_WIDTH_M,
 ): number | null {
   const m2 = parsePositiveAreaM2(defaultAreaM2Str);
   if (m2 == null) return null;
-  return computeLmRunsBreakdown(m2, effectiveLmRunsRunWidthMForPreview(runWidthStr))
-    ?.linealMetres ?? null;
+  return computeLmRunsBreakdown(
+    m2,
+    effectiveLmRunsRunWidthMForPreview(runWidthStr, settingsFallback),
+  )?.linealMetres ?? null;
 }
 
 type LevelDraft = {
@@ -148,12 +158,16 @@ function fillLevelDraftsFromQuote(
 }
 
 /** Measurement used for tier preview total = meas × UOM price (aligned with LM-Runs default LM). */
-function effectiveMeasurementForTierRecalc(r: QuoteObjectPublic): number | null {
+function effectiveMeasurementForTierRecalc(
+  r: QuoteObjectPublic,
+  settingsFallback: number = DEFAULT_LM_RUNS_ROLL_WIDTH_M,
+): number | null {
   const u = r.uom || "Unit";
   if (u === LM_RUNS_UOM) {
     const lm = computedLmFromLmRunsFormInputs(
       r.defaultAreaM2 != null && r.defaultAreaM2 > 0 ? String(r.defaultAreaM2) : "",
       r.runWidth != null && r.runWidth > 0 ? String(r.runWidth) : "",
+      settingsFallback,
     );
     if (lm != null) return lm;
     if (r.measurement != null && Number.isFinite(r.measurement)) return r.measurement;
@@ -450,6 +464,7 @@ export function QuoteObjectsPanel() {
   /** For LM-Runs: saved default room area (m²); with run width derives default measurement (LM). */
   const [defaultAreaM2Str, setDefaultAreaM2Str] = useState("");
   const [priceLevels, setPriceLevels] = useState<PriceLevelPublic[]>([]);
+  const [settings, setSettings] = useState<SettingPublic[]>([]);
   const [levelDrafts, setLevelDrafts] = useState<Record<string, LevelDraft>>({});
   const [notes1, setNotes1] = useState("");
   const [notes2, setNotes2] = useState("");
@@ -599,6 +614,11 @@ export function QuoteObjectsPanel() {
     }
   }
 
+  const lmRunsRollWidthFallback = useMemo(
+    () => lmRunsRollWidthMFromSettings(settings),
+    [settings],
+  );
+
   const sortedPriceLevels = useMemo(
     () => sortPriceLevelsPublic(priceLevels),
     [priceLevels],
@@ -608,16 +628,23 @@ export function QuoteObjectsPanel() {
     if (uom !== LM_RUNS_UOM) return null;
     const areaM2 = parsePositiveAreaM2(defaultAreaM2Str);
     if (areaM2 == null) return null;
-    const runWidthM = effectiveLmRunsRunWidthMForPreview(runWidthStr);
+    const runWidthM = effectiveLmRunsRunWidthMForPreview(
+      runWidthStr,
+      lmRunsRollWidthFallback,
+    );
     return computeLmRunsBreakdown(areaM2, runWidthM);
-  }, [uom, defaultAreaM2Str, runWidthStr]);
+  }, [uom, defaultAreaM2Str, runWidthStr, lmRunsRollWidthFallback]);
 
   useEffect(() => {
     if (uom !== LM_RUNS_UOM) return;
-    const lm = computedLmFromLmRunsFormInputs(defaultAreaM2Str, runWidthStr);
+    const lm = computedLmFromLmRunsFormInputs(
+      defaultAreaM2Str,
+      runWidthStr,
+      lmRunsRollWidthFallback,
+    );
     if (lm == null) return;
     setMeasurementStr(String(lm));
-  }, [uom, defaultAreaM2Str, runWidthStr]);
+  }, [uom, defaultAreaM2Str, runWidthStr, lmRunsRollWidthFallback]);
 
   /** First row in System → Price Levels display order (e.g. Investor when listed first). */
   const investorPriceLevelKey = useMemo(() => {
@@ -897,6 +924,18 @@ export function QuoteObjectsPanel() {
     setPriceLevels(data.priceLevels ?? []);
   }, []);
 
+  const loadSettings = useCallback(async () => {
+    const initRes = await fetch("/api/settings/init", { method: "POST" });
+    const initData = await readApiJson<{ error?: string }>(initRes);
+    if (!initRes.ok) {
+      throw new Error(initData.error ?? "Failed to initialize settings");
+    }
+    const res = await fetch("/api/settings");
+    const data = await readApiJson<{ settings?: SettingPublic[]; error?: string }>(res);
+    if (!res.ok) throw new Error(data.error ?? "Failed to load settings");
+    setSettings(data.settings ?? []);
+  }, []);
+
   const loadAreas = useCallback(async () => {
     const initRes = await fetch("/api/areas/init", { method: "POST" });
     const initData = await readApiJson<{ error?: string }>(initRes);
@@ -922,13 +961,16 @@ export function QuoteObjectsPanel() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     async function bootstrapThenLoad() {
       setLoading(true);
       setError(null);
       try {
         const initRes = await fetch("/api/quote-objects/init", { method: "POST" });
+        if (cancelled) return;
         const initData = await readApiJson<{ error?: string }>(initRes);
         if (!initRes.ok) {
+          if (cancelled) return;
           setError(
             initData.error ??
               "Failed to initialize quote objects collection in Firestore",
@@ -941,30 +983,44 @@ export function QuoteObjectsPanel() {
           await loadPriceLevels();
         } catch (plErr) {
           console.error(plErr);
-          setPriceLevels([]);
+          if (!cancelled) setPriceLevels([]);
         }
+        if (cancelled) return;
+        try {
+          await loadSettings();
+        } catch (stErr) {
+          console.error(stErr);
+          if (!cancelled) setSettings([]);
+        }
+        if (cancelled) return;
         try {
           await loadLookups();
         } catch (luErr) {
           console.error(luErr);
-          setLookups([]);
+          if (!cancelled) setLookups([]);
         }
+        if (cancelled) return;
         try {
           await loadAreas();
         } catch (arErr) {
           console.error(arErr);
-          setAreas([]);
+          if (!cancelled) setAreas([]);
         }
       } catch (e) {
+        if (cancelled) return;
         setError(e instanceof Error ? e.message : "Initialization failed");
         setRows([]);
         setLoading(false);
         return;
       }
+      if (cancelled) return;
       await load();
     }
     void bootstrapThenLoad();
-  }, [load, loadAreas, loadLookups, loadPriceLevels]);
+    return () => {
+      cancelled = true;
+    };
+  }, [load, loadAreas, loadLookups, loadPriceLevels, loadSettings]);
 
   useEffect(() => {
     setLevelDrafts((prev) => {
@@ -980,13 +1036,6 @@ export function QuoteObjectsPanel() {
 
   useEffect(() => {
     if (uom !== "M2" && uom !== LM_RUNS_UOM) setInheritM2Source("none");
-  }, [uom]);
-
-  useEffect(() => {
-    if (uom !== LM_RUNS_UOM) return;
-    setRunWidthStr((prev) =>
-      prev.trim() === "" ? String(DEFAULT_LM_RUNS_RUN_WIDTH) : prev,
-    );
   }, [uom]);
 
   function openCreate() {
@@ -1021,10 +1070,8 @@ export function QuoteObjectsPanel() {
     }
     setMeasurementStr(numToInput(r.measurement));
     setRunWidthStr(
-      (r.uom || "") === LM_RUNS_UOM
-        ? r.runWidth != null && r.runWidth > 0
-          ? String(r.runWidth)
-          : String(DEFAULT_LM_RUNS_RUN_WIDTH)
+      (r.uom || "") === LM_RUNS_UOM && r.runWidth != null && r.runWidth > 0
+        ? String(r.runWidth)
         : "",
     );
     setDefaultAreaM2Str(
@@ -1033,7 +1080,7 @@ export function QuoteObjectsPanel() {
         : "",
     );
     const baseDrafts = fillLevelDraftsFromQuote(r, priceLevels);
-    const effM = effectiveMeasurementForTierRecalc(r);
+    const effM = effectiveMeasurementForTierRecalc(r, lmRunsRollWidthFallback);
     setLevelDrafts(
       recalcEmptyTierTotalsFromMeasurement(
         baseDrafts,
@@ -1137,7 +1184,11 @@ export function QuoteObjectsPanel() {
     const defaultM2Parsed = parsePositiveAreaM2(defaultAreaM2Str);
     const computedLm =
       uom === LM_RUNS_UOM
-        ? computedLmFromLmRunsFormInputs(defaultAreaM2Str, runWidthStr)
+        ? computedLmFromLmRunsFormInputs(
+            defaultAreaM2Str,
+            runWidthStr,
+            lmRunsRollWidthFallback,
+          )
         : null;
     const measurement =
       uom === LM_RUNS_UOM
@@ -1297,10 +1348,8 @@ export function QuoteObjectsPanel() {
         }
         setMeasurementStr(numToInput(r.measurement));
         setRunWidthStr(
-          (r.uom || "") === LM_RUNS_UOM
-            ? r.runWidth != null && r.runWidth > 0
-              ? String(r.runWidth)
-              : String(DEFAULT_LM_RUNS_RUN_WIDTH)
+          (r.uom || "") === LM_RUNS_UOM && r.runWidth != null && r.runWidth > 0
+            ? String(r.runWidth)
             : "",
         );
         setDefaultAreaM2Str(
@@ -1309,7 +1358,7 @@ export function QuoteObjectsPanel() {
             : "",
         );
         const cloneDrafts = fillLevelDraftsFromQuote(r, priceLevels);
-        const cloneEffM = effectiveMeasurementForTierRecalc(r);
+        const cloneEffM = effectiveMeasurementForTierRecalc(r, lmRunsRollWidthFallback);
         setLevelDrafts(
           recalcEmptyTierTotalsFromMeasurement(
             cloneDrafts,
@@ -2080,7 +2129,7 @@ export function QuoteObjectsPanel() {
                             value={runWidthStr}
                             onChange={(e) => setRunWidthStr(e.target.value)}
                             inputMode="decimal"
-                            placeholder={String(DEFAULT_LM_RUNS_RUN_WIDTH)}
+                            placeholder={String(lmRunsRollWidthFallback)}
                             className={headerMeasurementClass}
                           />
                         </label>
@@ -2161,8 +2210,8 @@ export function QuoteObjectsPanel() {
                         </span>
                       </label>
                       <p className="text-xs text-sf-text-weak dark:text-zinc-400">
-                        Roll width: if empty, {DEFAULT_LM_RUNS_RUN_WIDTH} m is used when calculating
-                        quantities.
+                        Roll width: if empty, System Settings lmRunsRollWidth (
+                        {lmRunsRollWidthFallback} m) is used when calculating quantities.
                       </p>
                     </div>
                   ) : null}

@@ -7,6 +7,7 @@ import { applyTemplateTooltipsFromQuoteMap } from "@/lib/server/area-object-tool
 import { docToProjectAreaObjectPublic } from "@/lib/server/project-area-object-doc";
 import { loadQuoteMapForNumericObjectId } from "@/lib/server/project-area-seeding";
 import { projectAreaLineTierPrices } from "@/lib/server/reprice-project-area-lines";
+import { loadLmRunsRollWidthMFromDb } from "@/lib/server/load-lm-runs-roll-width";
 import { normalizeLoadValue } from "@/lib/server/quote-object-doc";
 import {
   loadAllObjectLabourRates,
@@ -337,11 +338,13 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         custommeasure,
         pricelevelid: d.pricelevelid,
       };
+      const lmRunsRollWidthFallback = await loadLmRunsRollWidthMFromDb(db);
       const { customumprice: tierUm, totalprice: tierTot } = projectAreaLineTierPrices({
         lineData: mergedLine,
         quoteData: q,
         areaEffectivePriceLevelId: areaPl,
         areaM2,
+        lmRunsRollWidthFallback,
       });
       update.customumprice = tierUm;
       update.totalprice = tierTot;

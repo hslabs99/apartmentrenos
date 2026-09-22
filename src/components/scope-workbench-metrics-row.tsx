@@ -2,7 +2,7 @@
 
 import { CL_FIELD_CONTROL_HEIGHT_CLASS } from "@/components/cl-checklist-layout";
 import { readApiJson } from "@/lib/client/read-api-json";
-import { scopeMetricValueLookup } from "@/lib/scope-metrics";
+import { applyScopeMetricValueToProjectArea, scopeMetricValueLookup } from "@/lib/scope-metrics";
 import type { ScopeMetricAreaEntry } from "@/lib/scope-metrics";
 import type { ProjectAreaPublic } from "@/types/project-area";
 import { useCallback, useState } from "react";
@@ -13,7 +13,6 @@ type Props = {
   disabled?: boolean;
   onProjectAreaUpdated: (pa: ProjectAreaPublic) => void;
   onError: (message: string) => void;
-  onRepriced?: () => void;
 };
 
 function parseOptionalNumber(raw: string): number | null {
@@ -29,13 +28,20 @@ export function ScopeWorkbenchMetricsRow({
   disabled = false,
   onProjectAreaUpdated,
   onError,
-  onRepriced,
 }: Props) {
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
   const saveMetricValue = useCallback(
     async (entry: ScopeMetricAreaEntry, value: number | null) => {
       const saveId = `${entry.scopeDocId}|${entry.scopeInstanceId ?? ""}|${entry.metric.metricid}`;
+      const snapshot = pa;
+      const optimistic = applyScopeMetricValueToProjectArea(pa, {
+        scopeDocId: entry.scopeDocId,
+        scopeInstanceId: entry.scopeInstanceId?.trim() ? entry.scopeInstanceId.trim() : null,
+        metricid: entry.metric.metricid,
+        value,
+      });
+      onProjectAreaUpdated(optimistic);
       setSavingKey(saveId);
       try {
         const res = await fetch(
@@ -59,14 +65,14 @@ export function ScopeWorkbenchMetricsRow({
         }>(res);
         if (!res.ok) throw new Error(data.error ?? "Failed to save scope metric");
         if (data.projectArea) onProjectAreaUpdated(data.projectArea);
-        onRepriced?.();
       } catch (e) {
+        onProjectAreaUpdated(snapshot);
         onError(e instanceof Error ? e.message : "Failed to save scope metric");
       } finally {
         setSavingKey(null);
       }
     },
-    [pa.id, onProjectAreaUpdated, onError, onRepriced],
+    [pa, onProjectAreaUpdated, onError],
   );
 
   if (entries.length === 0) return null;

@@ -5,6 +5,7 @@ import { ensureSettingsBootstrap } from "@/lib/firestore/collection-bootstrap";
 import { isSettingsMetaDocument } from "@/lib/firestore/settings-collection";
 import { dedupeSettingsByNormalizedName } from "@/lib/server/settings-dedupe";
 import { LOAD_RATE_SETTING_KEYS } from "@/lib/settings-load-rates";
+import { LM_RUNS_ROLL_WIDTH_SETTING_KEY, DEFAULT_LM_RUNS_ROLL_WIDTH_M } from "@/lib/settings-lm-runs-roll-width";
 
 export const runtime = "nodejs";
 
@@ -14,11 +15,13 @@ const SEED: { name: string; value: string }[] = [
   { name: LOAD_RATE_SETTING_KEYS.plumbing, value: "0" },
   { name: LOAD_RATE_SETTING_KEYS.elec, value: "0" },
   { name: LOAD_RATE_SETTING_KEYS.pm, value: "0" },
+  { name: LM_RUNS_ROLL_WIDTH_SETTING_KEY, value: String(DEFAULT_LM_RUNS_ROLL_WIDTH_M) },
 ];
 
 /**
- * Idempotent: ensures `settings` exists, seeds margin + load-rate rows if missing (inside a
- * transaction so parallel calls cannot double-seed), then removes duplicate rows per normalized name.
+ * Idempotent: ensures `settings` exists, seeds margin, load-rate, and lmRunsRollWidth rows if
+ * missing (inside a transaction so parallel calls cannot double-seed), then removes duplicate
+ * rows per normalized name.
  */
 export async function POST() {
   try {

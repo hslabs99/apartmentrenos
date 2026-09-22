@@ -30,7 +30,7 @@ export const quoteObjectCreateSchema = z.object({
     .default("none"),
   /** Legacy boolean (kept for backwards compatibility); prefer `inheritM2Source`. */
   inheritAreaM2: z.boolean().optional().default(false),
-  /** Roll width (m) for UOM LM-Runs; default 3.2 when omitted on create. */
+  /** Roll width (m) for UOM LM-Runs; omit or null to use System Settings `lmRunsRollWidth`. */
   runWidth: numberOrNull.optional(),
   defaultAreaM2: numberOrNull.optional(),
   measurement: numberOrNull.optional(),

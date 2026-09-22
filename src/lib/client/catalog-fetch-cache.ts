@@ -44,11 +44,25 @@ export function clearCatalogCacheAfterLeavingEditor(pathname: string): () => voi
 /**
  * GET + JSON with optional session cache (see `CHECKLIST_FAST_BOOT`).
  * Failed responses are never cached.
+ * Pass `signal` when the caller may unmount (e.g. leaving Check List); abortable
+ * requests skip the shared in-flight map so one page leaving does not cancel another.
  */
-export async function catalogJsonGet<T>(url: string): Promise<CatalogJsonGetResult<T>> {
+export async function catalogJsonGet<T>(
+  url: string,
+  init?: { signal?: AbortSignal },
+): Promise<CatalogJsonGetResult<T>> {
   if (CHECKLIST_FAST_BOOT) {
     const hit = cache.get(url);
     if (hit) return hit as CatalogJsonGetResult<T>;
+  }
+
+  const signal = init?.signal;
+  if (signal) {
+    const res = await fetch(url, { signal });
+    const data = (await res.json()) as T;
+    const entry: CacheEntry = { ok: res.ok, status: res.status, data };
+    if (CHECKLIST_FAST_BOOT && res.ok) cache.set(url, entry);
+    return entry as CatalogJsonGetResult<T>;
   }
 
   let pending = inflight.get(url);

@@ -35,20 +35,42 @@ import type {
 } from "@/lib/server/import-data-skus";
 import type { PrepareDataObjectsProgress } from "@/lib/server/prepare-data-objects";
 import { importLogFromProgress } from "@/lib/client/import-log-from-progress";
-import { DataObjectsTablePanel } from "@/components/data-objects-table-panel";
-import { DataSkusTablePanel } from "@/components/data-skus-table-panel";
 import {
   BLINDS_PRICES_SPREADSHEET_ID,
   blindsPricesSpreadsheetEditUrl,
 } from "@/lib/google/blinds-prices-spreadsheet";
-import { PriceBookTestingPanel } from "@/components/price-book-testing-panel";
 import { ImportLogAuditPanel } from "@/components/import-log-audit-panel";
 import { ImportLogIndexPanel } from "@/components/import-log-index-panel";
 import { ImportSummaryBanner } from "@/components/import-summary-banner";
 import { sfTabStripClass, sfUnderlineTabClass } from "@/lib/sf-tabs";
 import { SKU_DATA_START_ROW_1_BASED, SKU_HEADER_ROW_1_BASED } from "@/lib/google/parse-master-prices-skus";
 import type { ImportLogPublic } from "@/types/import-log-types";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+
+const importTabPanelFallback = (
+  <p className="p-4 text-sm text-sf-text-secondary dark:text-zinc-400">Loading…</p>
+);
+
+const DataSkusTablePanel = dynamic(
+  () =>
+    import("@/components/data-skus-table-panel").then((m) => ({ default: m.DataSkusTablePanel })),
+  { ssr: false, loading: () => importTabPanelFallback },
+);
+const DataObjectsTablePanel = dynamic(
+  () =>
+    import("@/components/data-objects-table-panel").then((m) => ({
+      default: m.DataObjectsTablePanel,
+    })),
+  { ssr: false, loading: () => importTabPanelFallback },
+);
+const PriceBookTestingPanel = dynamic(
+  () =>
+    import("@/components/price-book-testing-panel").then((m) => ({
+      default: m.PriceBookTestingPanel,
+    })),
+  { ssr: false, loading: () => importTabPanelFallback },
+);
 
 function elementCoverageWarningClass(message: string): string {
   if (message.includes("element matrix")) {
@@ -1184,7 +1206,7 @@ export function ImportMasterPricesPanel() {
       await resolveImportRunLog(data.importRunId);
       setImportCascadesResult({
         tabTitle: data.tabTitle ?? MASTER_PRICES_CASCADES_TAB_TITLE,
-        range: data.range ?? "A1:C50",
+        range: data.range ?? "A1:C",
         headerRow1Based: data.headerRow1Based ?? 0,
         parsed: data.parsed ?? 0,
         written: data.written ?? 0,
@@ -1596,9 +1618,7 @@ export function ImportMasterPricesPanel() {
         />
       ) : null}
 
-      <div role="tabpanel" hidden={pageTab !== "price-book-testing"}>
-        <PriceBookTestingPanel isActive={pageTab === "price-book-testing"} />
-      </div>
+      {pageTab === "price-book-testing" ? <PriceBookTestingPanel /> : null}
 
       {pageTab === "import" ? (
         <>

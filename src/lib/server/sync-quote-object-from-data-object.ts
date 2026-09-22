@@ -1,7 +1,7 @@
 import { FieldValue, type DocumentData, type Firestore } from "firebase-admin/firestore";
 import { buildDataObjectKey, type DataObjectKeyFields } from "@/lib/data-object-key";
 import { quoteObjectSkuPipelineKey } from "@/lib/server/quote-object-sku-pipeline";
-import { mapSkuUomToQuoteUom } from "@/lib/map-sku-uom-to-quote-uom";
+import { mapSkuUomToQuoteUom, resolveExistingObjectUomFromPriceList } from "@/lib/map-sku-uom-to-quote-uom";
 import { isQuoteObjectsMetaDocument } from "@/lib/firestore/quote-objects-collection";
 import { allocateNextSequence } from "@/lib/firestore/sequences";
 import {
@@ -31,7 +31,7 @@ export type SyncQuoteObjectFromDataObjectResult = {
   quoteObject: QuoteObjectPublic;
 };
 
-export type PrepareQuoteObjectAction = "created" | "skipped";
+export type PrepareQuoteObjectAction = "created" | "updated" | "skipped";
 
 export type PrepareQuoteObjectCache = {
   qoDocs: { id: string; data: DocumentData }[];
@@ -117,8 +117,9 @@ export async function loadPrepareQuoteObjectCache(
 }
 
 /**
- * Prepare pass: match in memory. Existing quote objects are left untouched.
- * Only missing quote objects are appended. Data-object link is written when absent.
+ * Prepare pass: match in memory. Missing quote objects are appended.
+ * Existing objects keep Setup fields (prices, inherit, run width, UOM) except a
+ * price-list `LM-Runs` upgrades object UOM. Other sheet UOMs do not overwrite.
  */
 export async function prepareQuoteObjectForDataObject(
   db: Firestore,
@@ -135,6 +136,7 @@ export async function prepareQuoteObjectForDataObject(
   const objectKey = buildDataObjectKey(fields);
   const existing = findMatchingQuoteObjectDoc(cache.qoDocs, objectKey);
   const doRef = db.collection("data_objects").doc(dataObjectDocId);
+  const sheetUom = mapSkuUomToQuoteUom(dataObject.uom);
 
   if (existing) {
     const objectid =
@@ -144,18 +146,30 @@ export async function prepareQuoteObjectForDataObject(
     const alreadyLinked =
       dataObject.quoteObjectDocId === existing.id &&
       dataObject.objectid === objectid;
-    if (!alreadyLinked) {
+    const prevUom = String(existing.data.uom ?? "");
+    const nextUom = resolveExistingObjectUomFromPriceList(prevUom, sheetUom);
+    const uomChanged = nextUom !== mapSkuUomToQuoteUom(prevUom);
+    const now = FieldValue.serverTimestamp();
+    if (uomChanged) {
+      await db.collection("quote_objects").doc(existing.id).update({
+        uom: nextUom,
+        updatedAt: now,
+      });
+      existing.data.uom = nextUom;
+    }
+    if (!alreadyLinked || uomChanged) {
       await doRef.update({
-        quoteObjectDocId: existing.id,
-        objectid,
-        updatedAt: FieldValue.serverTimestamp(),
+        ...(alreadyLinked
+          ? {}
+          : { quoteObjectDocId: existing.id, objectid }),
+        uom: nextUom,
+        updatedAt: now,
       });
     }
-    return "skipped";
+    return uomChanged ? "updated" : "skipped";
   }
 
   const objectname = fields.product?.trim() ? fields.product : fields.productType;
-  const uom = mapSkuUomToQuoteUom(dataObject.uom);
   const categoryForLookup = await ensureObjectCategoryLookup(
     db,
     fields.category,
@@ -167,7 +181,7 @@ export async function prepareQuoteObjectForDataObject(
   const payload = quoteObjectPayloadFromDataObject(
     objectname,
     categoryForLookup,
-    uom,
+    sheetUom,
     objectid,
     sortOrder,
   );
@@ -177,7 +191,7 @@ export async function prepareQuoteObjectForDataObject(
   await doRef.update({
     quoteObjectDocId: ref.id,
     objectid,
-    uom,
+    uom: sheetUom,
     updatedAt: FieldValue.serverTimestamp(),
   });
   return "created";
@@ -201,7 +215,7 @@ export async function syncQuoteObjectFromDataObject(
   });
   const objectKey = buildDataObjectKey(fields);
   const objectname = fields.product?.trim() ? fields.product : fields.productType;
-  const uom = mapSkuUomToQuoteUom(dataObject.uom);
+  const sheetUom = mapSkuUomToQuoteUom(dataObject.uom);
   const categoryForLookup = await ensureObjectCategoryLookup(db, fields.category);
 
   const qoSnap = await db.collection("quote_objects").get();
@@ -213,8 +227,12 @@ export async function syncQuoteObjectFromDataObject(
   const now = FieldValue.serverTimestamp();
 
   if (existing) {
+    const nextUom = resolveExistingObjectUomFromPriceList(
+      String(existing.data.uom ?? ""),
+      sheetUom,
+    );
     await db.collection("quote_objects").doc(existing.id).update({
-      uom,
+      uom: nextUom,
       updatedAt: now,
     });
     const updatedSnap = await db.collection("quote_objects").doc(existing.id).get();
@@ -223,7 +241,7 @@ export async function syncQuoteObjectFromDataObject(
     await doRef.update({
       quoteObjectDocId: existing.id,
       objectid,
-      uom,
+      uom: nextUom,
       updatedAt: now,
     });
     const nextDo = await doRef.get();
@@ -243,7 +261,7 @@ export async function syncQuoteObjectFromDataObject(
   const payload = quoteObjectPayloadFromDataObject(
     objectname,
     categoryForLookup,
-    uom,
+    sheetUom,
     objectid,
     sortOrder,
   );
@@ -255,7 +273,7 @@ export async function syncQuoteObjectFromDataObject(
   await doRef.update({
     quoteObjectDocId: ref.id,
     objectid,
-    uom,
+    uom: sheetUom,
     updatedAt: now,
   });
   const nextDo = await doRef.get();

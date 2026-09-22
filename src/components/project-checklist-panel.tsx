@@ -191,6 +191,7 @@ import {
   parseMarginPercent,
   projectMarginPercent,
 } from "@/lib/settings-margin";
+import { lmRunsRollWidthMFromSettings } from "@/lib/settings-lm-runs-roll-width";
 import { contractLabourRateBySiloProduct, labourSiloCostExcGst } from "@/lib/labour-rate-lookup";
 import {
   LOOKUP_LABOUR_SILO_KEYS,
@@ -778,6 +779,10 @@ export function ProjectChecklistPanel({
   const [projectNotes, setProjectNotes] = useState<ProjectNotePublic[]>([]);
   const [quoteObjects, setQuoteObjects] = useState<QuoteObjectPublic[]>([]);
   const [settings, setSettings] = useState<SettingPublic[]>([]);
+  const lmRunsRollWidthFallback = useMemo(
+    () => lmRunsRollWidthMFromSettings(settings),
+    [settings],
+  );
   const [contractLabourRates, setContractLabourRates] = useState<DataLabourRatePublic[]>([]);
   const [objectLabourRates, setObjectLabourRates] = useState<DataObjectLabourRatePublic[]>([]);
   const [rowSavingId, setRowSavingId] = useState<string | null>(null);
@@ -883,37 +888,39 @@ export function ProjectChecklistPanel({
     });
   }, []);
 
-  const loadAreas = useCallback(async () => {
+  const loadAreas = useCallback(async (signal?: AbortSignal) => {
     const { ok, data } = await catalogJsonGet<{ areas?: AreaPublic[]; error?: string }>(
       "/api/areas",
+      signal ? { signal } : undefined,
     );
     if (!ok) throw new Error(data.error ?? "Failed to load areas");
     setAreas(data.areas ?? []);
   }, []);
 
-  const loadQuoteObjects = useCallback(async () => {
+  const loadQuoteObjects = useCallback(async (signal?: AbortSignal) => {
     const { ok, data } = await catalogJsonGet<{
       quoteObjects?: QuoteObjectPublic[];
       error?: string;
-    }>("/api/quote-objects");
+    }>("/api/quote-objects", signal ? { signal } : undefined);
     if (!ok) throw new Error(data.error ?? "Failed to load quote objects");
     setQuoteObjects(data.quoteObjects ?? []);
   }, []);
 
-  const loadScopes = useCallback(async () => {
+  const loadScopes = useCallback(async (signal?: AbortSignal) => {
     const { ok, data } = await catalogJsonGet<{ scopes?: ScopePublic[]; error?: string }>(
       "/api/scopes",
+      signal ? { signal } : undefined,
     );
     if (!ok) throw new Error(data.error ?? "Failed to load scopes");
     setScopes(data.scopes ?? []);
   }, []);
 
-  const loadCascades = useCallback(async () => {
+  const loadCascades = useCallback(async (signal?: AbortSignal) => {
     try {
       const { ok, data } = await catalogJsonGet<{
         items?: { level: string; style: string; colour: string }[];
         error?: string;
-      }>("/api/cascades");
+      }>("/api/cascades", signal ? { signal } : undefined);
       if (!ok) {
         setCascades([]);
         return;
@@ -930,25 +937,26 @@ export function ProjectChecklistPanel({
     }
   }, []);
 
-  const loadPriceLevels = useCallback(async () => {
+  const loadPriceLevels = useCallback(async (signal?: AbortSignal) => {
     const { ok, data } = await catalogJsonGet<{
       priceLevels?: PriceLevelPublic[];
       error?: string;
-    }>("/api/price-levels");
+    }>("/api/price-levels", signal ? { signal } : undefined);
     if (!ok) throw new Error(data.error ?? "Failed to load price levels");
     setPriceLevels(data.priceLevels ?? []);
   }, []);
 
-  const loadCatalogSkus = useCallback(async () => {
-    const { skus, suppliersBySkuId: suppliers } = await loadCatalogSkuData();
+  const loadCatalogSkus = useCallback(async (signal?: AbortSignal) => {
+    const { skus, suppliersBySkuId: suppliers } = await loadCatalogSkuData(signal);
     setCatalogSkus(skus);
     setSuppliersBySkuId(suppliers);
   }, []);
 
-  const loadBlindsData = useCallback(async () => {
+  const loadBlindsData = useCallback(async (signal?: AbortSignal) => {
     try {
       const { ok, data } = await catalogJsonGet<{ items?: DataBlindPublic[]; error?: string }>(
         "/api/data-blinds",
+        signal ? { signal } : undefined,
       );
       if (!ok) throw new Error(data.error ?? "Failed to load blinds prices");
       setBlindsData(data.items ?? []);
@@ -957,12 +965,12 @@ export function ProjectChecklistPanel({
     }
   }, []);
 
-  const loadBuildingElements = useCallback(async () => {
+  const loadBuildingElements = useCallback(async (signal?: AbortSignal) => {
     try {
       const { ok, data } = await catalogJsonGet<{
         items?: DataBuildingElementPublic[];
         error?: string;
-      }>("/api/building-elements");
+      }>("/api/building-elements", signal ? { signal } : undefined);
       if (!ok) throw new Error(data.error ?? "Failed to load building elements");
       setBuildingElements(data.items ?? []);
     } catch {
@@ -970,12 +978,12 @@ export function ProjectChecklistPanel({
     }
   }, []);
 
-  const loadPaintingElements = useCallback(async () => {
+  const loadPaintingElements = useCallback(async (signal?: AbortSignal) => {
     try {
       const { ok, data } = await catalogJsonGet<{
         items?: DataPaintingElementPublic[];
         error?: string;
-      }>("/api/painting-elements");
+      }>("/api/painting-elements", signal ? { signal } : undefined);
       if (!ok) throw new Error(data.error ?? "Failed to load painting elements");
       setPaintingElements(data.items ?? []);
     } catch {
@@ -1044,10 +1052,11 @@ export function ProjectChecklistPanel({
     setProjectAreas(paData.projectAreas ?? []);
   }, [projectDocId]);
 
-  const reloadProjectAreaAnswers = useCallback(async () => {
+  const reloadProjectAreaAnswers = useCallback(async (signal?: AbortSignal) => {
     if (!projectDocId) return;
     const res = await fetch(
       `/api/projectareaanswers?projectDocId=${encodeURIComponent(projectDocId)}`,
+      signal ? { signal } : undefined,
     );
     const data = (await res.json()) as {
       projectAreaAnswers?: ProjectAreaAnswerPublic[];
@@ -1057,13 +1066,15 @@ export function ProjectChecklistPanel({
     setProjectAreaAnswers(data.projectAreaAnswers ?? []);
   }, [projectDocId]);
 
-  const reloadProjectNotes = useCallback(async () => {
+  const reloadProjectNotes = useCallback(async (signal?: AbortSignal) => {
     if (!projectDocId) return;
+    const fetchInit = signal ? { signal } : undefined;
     if (!CHECKLIST_FAST_BOOT) {
-      await fetch("/api/project-notes/init", { method: "POST" });
+      await fetch("/api/project-notes/init", { method: "POST", ...fetchInit });
     }
     const res = await fetch(
       `/api/project-notes?projectDocId=${encodeURIComponent(projectDocId)}`,
+      fetchInit,
     );
     const data = (await res.json()) as {
       projectNotes?: ProjectNotePublic[];
@@ -1713,6 +1724,7 @@ export function ProjectChecklistPanel({
             scopeMetricValues: metricMap,
             catalogSkus,
             inheritMeasureLocked: scopeInheritMeasureLocked,
+            lmRunsRollWidthFallback,
             skuCalcM2Override: pickedSku
               ? { calcM2: pickedSku.calcM2, calculatedM2: pickedSku.calculatedM2 }
               : null,
@@ -1759,6 +1771,7 @@ export function ProjectChecklistPanel({
       reloadLineItemsForArea,
       scopes,
       colourLookupIndex,
+      lmRunsRollWidthFallback,
     ],
   );
 
@@ -1790,6 +1803,10 @@ export function ProjectChecklistPanel({
   );
 
   useEffect(() => {
+    let cancelled = false;
+    const ac = new AbortController();
+    const { signal } = ac;
+
     async function boot() {
       if (!projectDocId) {
         setLoading(false);
@@ -1806,16 +1823,17 @@ export function ProjectChecklistPanel({
         const loadWorkbenchExtras = mode === "workbench" || !CHECKLIST_FAST_BOOT;
 
         const catalogWave: Promise<void>[] = [
-          loadAreas(),
-          loadQuoteObjects(),
-          loadScopes(),
-          loadCascades(),
-          loadPriceLevels(),
-          loadCatalogSkus(),
-          loadBlindsData(),
+          loadAreas(signal),
+          loadQuoteObjects(signal),
+          loadScopes(signal),
+          loadCascades(signal),
+          loadPriceLevels(signal),
+          loadCatalogSkus(signal),
+          loadBlindsData(signal),
           (async () => {
-            const res = await fetch(`/api/projects/${projectDocId}`);
+            const res = await fetch(`/api/projects/${projectDocId}`, { signal });
             const data = await readApiResponse<{ project?: ProjectPublic; error?: string }>(res);
+            if (cancelled) return;
             if (!res.ok || !data.project) throw new Error(data.error ?? "Failed to load project");
             setProject(data.project);
             setNumericProjectId(
@@ -1826,15 +1844,19 @@ export function ProjectChecklistPanel({
           })(),
         ];
         if (loadWorkbenchExtras) {
-          catalogWave.push(loadBuildingElements(), loadPaintingElements());
+          catalogWave.push(loadBuildingElements(signal), loadPaintingElements(signal));
         } else {
           setBuildingElements([]);
           setPaintingElements([]);
         }
 
         const projectWave = (async () => {
+          const catalogReq = { signal };
           const objectLabourTask = loadWorkbenchExtras
-            ? catalogJsonGet<{ items?: DataObjectLabourRatePublic[] }>("/api/object-labour-rates")
+            ? catalogJsonGet<{ items?: DataObjectLabourRatePublic[] }>(
+                "/api/object-labour-rates",
+                catalogReq,
+              )
             : Promise.resolve({
                 ok: true as const,
                 status: 200,
@@ -1843,13 +1865,24 @@ export function ProjectChecklistPanel({
 
           const [paRes, objRes, settingsResult, labourRatesResult, objectLabourResult, supplierDiscResult] =
             await Promise.all([
-              fetch(`/api/projectareas?projectDocId=${encodeURIComponent(projectDocId)}`),
-              fetch(`/api/projectareaobjects?projectDocId=${encodeURIComponent(projectDocId)}`),
-              catalogJsonGet<{ settings?: SettingPublic[]; error?: string }>("/api/settings"),
-              catalogJsonGet<{ items?: DataLabourRatePublic[] }>("/api/labour-rates"),
+              fetch(`/api/projectareas?projectDocId=${encodeURIComponent(projectDocId)}`, {
+                signal,
+              }),
+              fetch(`/api/projectareaobjects?projectDocId=${encodeURIComponent(projectDocId)}`, {
+                signal,
+              }),
+              catalogJsonGet<{ settings?: SettingPublic[]; error?: string }>(
+                "/api/settings",
+                catalogReq,
+              ),
+              catalogJsonGet<{ items?: DataLabourRatePublic[] }>("/api/labour-rates", catalogReq),
               objectLabourTask,
-              catalogJsonGet<{ items?: DataSupplierDiscountPublic[] }>("/api/supplier-discounts"),
+              catalogJsonGet<{ items?: DataSupplierDiscountPublic[] }>(
+                "/api/supplier-discounts",
+                catalogReq,
+              ),
             ]);
+          if (cancelled) return;
           const paData = (await paRes.json()) as {
             projectAreas?: ProjectAreaPublic[];
             error?: string;
@@ -1883,7 +1916,10 @@ export function ProjectChecklistPanel({
           }
         })();
 
-        const notesAnswersWave = Promise.all([reloadProjectAreaAnswers(), reloadProjectNotes()]);
+        const notesAnswersWave = Promise.all([
+          reloadProjectAreaAnswers(signal),
+          reloadProjectNotes(signal),
+        ]);
 
         if (CHECKLIST_FAST_BOOT) {
           await Promise.all([...catalogWave, projectWave, notesAnswersWave]);
@@ -1893,12 +1929,23 @@ export function ProjectChecklistPanel({
           await notesAnswersWave;
         }
       } catch (e) {
+        if (
+          cancelled ||
+          (e instanceof DOMException && e.name === "AbortError") ||
+          (e instanceof Error && e.name === "AbortError")
+        ) {
+          return;
+        }
         setError(e instanceof Error ? e.message : "Failed to load");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
     void boot();
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
   }, [
     projectDocId,
     loadAreas,
@@ -4079,6 +4126,7 @@ export function ProjectChecklistPanel({
                                   scopeMetrics: scope.scopeMetrics,
                                   scopeMetricValues: scopeMetricValuesMap,
                                   catalogSkus,
+                                  lmRunsRollWidthFallback,
                                 };
                                 const scopeMetricMeasureKey = activeScopeMetrics
                                   .map((m) => `${m.metricid}:${scopeMetricValuesMap.get(m.metricid) ?? ""}`)
@@ -4249,7 +4297,6 @@ export function ProjectChecklistPanel({
                                                   p.id === updatedPa.id ? updatedPa : p,
                                                 ),
                                               );
-                                              void reloadLineItems();
                                             }}
                                             onError={setError}
                                           />
@@ -4578,7 +4625,6 @@ export function ProjectChecklistPanel({
                                                       p.id === updatedPa.id ? updatedPa : p,
                                                     ),
                                                   );
-                                                  void reloadLineItems();
                                                 }}
                                                 onError={setError}
                                               />
@@ -4999,7 +5045,7 @@ export function ProjectChecklistPanel({
                                             quoteObject={qObj}
                                             pa={pa}
                                             project={project}
-                                            scopeMeasureExtras={{ catalogSkus }}
+                                            scopeMeasureExtras={{ catalogSkus, lmRunsRollWidthFallback }}
                                             measureKey={measureKey}
                                             inputClassName={clMeasureInput}
                                             disabled={lineSaving}
@@ -5418,7 +5464,6 @@ export function ProjectChecklistPanel({
                                     ),
                                   );
                                 }}
-                                onRepriced={() => void reloadLineItems()}
                                 onError={setError}
                               />
                             ) : null}
@@ -5573,6 +5618,7 @@ export function ProjectChecklistPanel({
                                 scopeMetricValues: scopeMetricValuesMap,
                                 catalogSkus,
                                 inheritMeasureLocked: scopeInheritMeasureLocked,
+                                lmRunsRollWidthFallback,
                               }
                             : undefined;
                         const effectiveMeasureForRow =

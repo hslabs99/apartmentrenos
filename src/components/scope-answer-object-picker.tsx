@@ -53,7 +53,7 @@ const SCOPE_OBJECT_OPTION_TOOLTIPS = {
   calcTool:
     "Optional calculator icon on the checklist SKU row. M² calculator sums rectangular sections; Wall m² computes area from two wall widths and stud height. The result fills the line measure field.",
   inheritM2:
-    "Default measure source for this object on the checklist. Overrides Setup → Quote Objects when set here. Scope metrics appear when tagged for this answer and UOM-compatible.",
+    "Default measure source for this object on the checklist. Overrides Setup → Quote Objects when set here. Scope metrics tagged for this answer always appear in the list.",
 } as const;
 
 type InlineSelectOption = { value: string; label: string };
@@ -733,7 +733,7 @@ export function ScopeAnswerObjectPicker({
                       title={
                         uomSupportsInheritM2(String(quoteById.get(item.id)?.uom ?? ""))
                           ? SCOPE_OBJECT_OPTION_TOOLTIPS.inheritM2
-                          : `${SCOPE_OBJECT_OPTION_TOOLTIPS.inheritM2} Object UOM is ${quoteById.get(item.id)?.uom || "Unit"} — apartment/area inherit applies for M2 / LM-Runs; scope metrics when UOM matches.`
+                          : `${SCOPE_OBJECT_OPTION_TOOLTIPS.inheritM2} Object UOM is ${quoteById.get(item.id)?.uom || "Unit"} — apartment/area inherit applies for M2 / LM-Runs; tagged scope metrics are always listed.`
                       }
                     >
                       <span className="text-sf-text-weak dark:text-zinc-400">Inherit m²</span>
