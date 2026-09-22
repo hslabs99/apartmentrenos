@@ -165,10 +165,11 @@ export async function POST(req: NextRequest) {
 
     if (defaultAreaDocs.length > 0) {
       const quoteByObjectId = await loadQuoteByObjectIdMap(db);
-      const pl = parsed.data.defaultpricelevelid;
-      const seedPayload = { pricelevelid: pl };
+      // Do not copy project Elevate/Style/Colour onto seeded areas — those fields are
+      // per-area overrides. Line pricing uses the project default via
+      // resolveEffectivePriceLevelId when the area has no override.
       for (const areaDoc of defaultAreaDocs) {
-        await addProjectAreaWithSeed(db, ref.id, areaDoc.id, seedPayload, {
+        await addProjectAreaWithSeed(db, ref.id, areaDoc.id, {}, {
           quoteByObjectId,
         });
       }

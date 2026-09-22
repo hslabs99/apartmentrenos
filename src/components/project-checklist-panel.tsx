@@ -9,6 +9,8 @@ import { ScopeAnswerProgressDialog, type ScopeAnswerProgress } from "@/component
 import {
   ClNonStdTierModal,
   ClNonStdTierOpenButton,
+  clInheritedTierStyleColourForArea,
+  clInheritedTierStyleColourForLine,
   hasClNonStandardTierStyleColour,
   type ClNonStdModalTarget,
 } from "@/components/cl-non-std-tier-style-colour";
@@ -2557,8 +2559,8 @@ export function ProjectChecklistPanel({
   async function addProjectAreaFromTemplate(areaDocId: string) {
     if (!projectDocId) return;
     const inheritedPl = project?.defaultpricelevelid ?? null;
-    const pricelevelid = inheritedPl ?? addAreaPriceLevelId;
-    if (pricelevelid == null) {
+    const areaOverridePl = inheritedPl == null ? addAreaPriceLevelId : null;
+    if (inheritedPl == null && areaOverridePl == null) {
       setError(
         "Select an Elevate for this area. The project has no default Elevate—set one on the project or pick Elevate in the dialog.",
       );
@@ -2578,7 +2580,7 @@ export function ProjectChecklistPanel({
           areanotes2: "",
           aream2: null,
           areafinish: "",
-          pricelevelid,
+          pricelevelid: areaOverridePl,
         }),
       });
       const data = await readApiResponse<{ id?: string; error?: string }>(res);
@@ -3924,7 +3926,10 @@ export function ProjectChecklistPanel({
                               </div>
                               <div className="shrink-0">
                                 <ClNonStdTierOpenButton
-                                  active={hasClNonStandardTierStyleColour(pa)}
+                                  active={hasClNonStandardTierStyleColour(
+                                    pa,
+                                    clInheritedTierStyleColourForArea(project),
+                                  )}
                                   disabled={areaBusy}
                                   label={areaNameForHeading}
                                   onOpen={() =>
@@ -4788,7 +4793,10 @@ export function ProjectChecklistPanel({
                                             <div className={`${clNonStdCellClass} ${clScopeNonStdColClass}`}>
                                               <ClNonStdTierOpenButton
                                                 compact
-                                                active={hasClNonStandardTierStyleColour(lineRow)}
+                                                active={hasClNonStandardTierStyleColour(
+                                                  lineRow,
+                                                  clInheritedTierStyleColourForLine(pa, project),
+                                                )}
                                                 disabled={lineSaving}
                                                 label={objectLabel(lineRow, quoteObjects)}
                                                 onOpen={() =>

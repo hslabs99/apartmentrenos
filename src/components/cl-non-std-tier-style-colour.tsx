@@ -21,15 +21,59 @@ export const CL_CLEAR_TIER_STYLE_COLOUR = {
   colour: null,
 } as const;
 
-export function hasClNonStandardTierStyleColour(entity: {
+export type ClTierStyleColourValues = {
   pricelevelid?: number | null;
   style?: string | null;
   colour?: string | null;
-}): boolean {
+};
+
+function trimText(v: string | null | undefined): string {
+  return v?.trim() ?? "";
+}
+
+/** Project-header Elevate / Style / Colour used when an area does not override. */
+export function clInheritedTierStyleColourForArea(
+  project: ProjectPublic | null,
+): ClTierStyleColourValues {
+  return {
+    pricelevelid: project?.defaultpricelevelid ?? null,
+    style: project?.defaultstyle ?? null,
+    colour: project?.defaultcolour ?? null,
+  };
+}
+
+/** Area (or project) Elevate / Style / Colour used when a line does not override. */
+export function clInheritedTierStyleColourForLine(
+  pa: ProjectAreaPublic,
+  project: ProjectPublic | null,
+): ClTierStyleColourValues {
+  return {
+    pricelevelid: pa.pricelevelid ?? project?.defaultpricelevelid ?? null,
+    style: pa.style?.trim() || project?.defaultstyle || null,
+    colour: pa.colour?.trim() || project?.defaultcolour || null,
+  };
+}
+
+/**
+ * True when stored Elevate / Style / Colour differ from the inherited defaults.
+ * A stored copy of the parent values (e.g. project Elevate copied onto a new area) is not
+ * treated as a manual override.
+ */
+export function hasClNonStandardTierStyleColour(
+  entity: ClTierStyleColourValues,
+  inherited?: ClTierStyleColourValues,
+): boolean {
+  const pl = entity.pricelevelid ?? null;
+  const style = trimText(entity.style);
+  const colour = trimText(entity.colour);
+  if (!inherited) {
+    return pl != null || Boolean(style) || Boolean(colour);
+  }
+  const inheritedPl = inherited.pricelevelid ?? null;
   return (
-    entity.pricelevelid != null ||
-    Boolean(entity.style?.trim()) ||
-    Boolean(entity.colour?.trim())
+    (pl != null && pl !== inheritedPl) ||
+    (Boolean(style) && style !== trimText(inherited.style)) ||
+    (Boolean(colour) && colour !== trimText(inherited.colour))
   );
 }
 
@@ -42,29 +86,38 @@ type TierDraft = {
   colour: string;
 };
 
-function draftFromEntity(entity: {
-  pricelevelid?: number | null;
-  style?: string | null;
-  colour?: string | null;
-}): TierDraft {
+function draftFromEntity(
+  entity: ClTierStyleColourValues,
+  inherited: ClTierStyleColourValues,
+): TierDraft {
+  const pl = entity.pricelevelid ?? null;
+  const inheritedPl = inherited.pricelevelid ?? null;
+  const style = trimText(entity.style);
+  const colour = trimText(entity.colour);
   return {
-    pricelevelid: entity.pricelevelid ?? null,
-    style: entity.style?.trim() ?? "",
-    colour: entity.colour?.trim() ?? "",
+    pricelevelid: pl != null && pl !== inheritedPl ? pl : null,
+    style: style && style !== trimText(inherited.style) ? style : "",
+    colour: colour && colour !== trimText(inherited.colour) ? colour : "",
   };
 }
 
-function draftToPatch(draft: TierDraft): Record<string, unknown> {
-  const hasOverride =
-    draft.pricelevelid != null ||
-    Boolean(draft.style.trim()) ||
-    Boolean(draft.colour.trim());
-  if (!hasOverride) return { ...CL_CLEAR_TIER_STYLE_COLOUR };
-  return {
-    pricelevelid: draft.pricelevelid,
-    style: draft.style.trim() ? draft.style.trim() : null,
-    colour: draft.colour.trim() ? draft.colour.trim() : null,
-  };
+function draftToPatch(
+  draft: TierDraft,
+  inherited: ClTierStyleColourValues,
+): Record<string, unknown> {
+  const inheritedPl = inherited.pricelevelid ?? null;
+  const inheritedStyle = trimText(inherited.style);
+  const inheritedColour = trimText(inherited.colour);
+  const pricelevelid =
+    draft.pricelevelid != null && draft.pricelevelid !== inheritedPl
+      ? draft.pricelevelid
+      : null;
+  const styleTrim = draft.style.trim();
+  const colourTrim = draft.colour.trim();
+  const style = styleTrim && styleTrim !== inheritedStyle ? styleTrim : null;
+  const colour = colourTrim && colourTrim !== inheritedColour ? colourTrim : null;
+  if (pricelevelid == null && !style && !colour) return { ...CL_CLEAR_TIER_STYLE_COLOUR };
+  return { pricelevelid, style, colour };
 }
 
 export type ClNonStdModalTarget =
@@ -80,35 +133,14 @@ function priceLevelLabel(
   return hit?.pricelevel?.trim() || `#${pricelevelid}`;
 }
 
-function inheritedPriceLevelId(
+function inheritedFields(
   target: ClNonStdModalTarget,
   pa: ProjectAreaPublic,
   project: ProjectPublic | null,
-): number | null {
-  if (target.kind === "area") return project?.defaultpricelevelid ?? null;
-  return pa.pricelevelid ?? project?.defaultpricelevelid ?? null;
-}
-
-function inheritedStyle(
-  target: ClNonStdModalTarget,
-  pa: ProjectAreaPublic,
-  project: ProjectPublic | null,
-): string {
-  if (target.kind === "area") {
-    return project?.defaultstyle?.trim() || "—";
-  }
-  return pa.style?.trim() || project?.defaultstyle?.trim() || "—";
-}
-
-function inheritedColour(
-  target: ClNonStdModalTarget,
-  pa: ProjectAreaPublic,
-  project: ProjectPublic | null,
-): string {
-  if (target.kind === "area") {
-    return project?.defaultcolour?.trim() || "—";
-  }
-  return pa.colour?.trim() || project?.defaultcolour?.trim() || "—";
+): ClTierStyleColourValues {
+  return target.kind === "area"
+    ? clInheritedTierStyleColourForArea(project)
+    : clInheritedTierStyleColourForLine(pa, project);
 }
 
 type ClNonStdTierOpenButtonProps = {
@@ -177,17 +209,27 @@ export function ClNonStdTierModal({
   onSave,
 }: ClNonStdTierModalProps) {
   const entity = target.kind === "area" ? pa : line!;
-  const [draft, setDraft] = useState<TierDraft>(() => draftFromEntity(entity));
+  const inherited = inheritedFields(target, pa, project);
+  const [draft, setDraft] = useState<TierDraft>(() => draftFromEntity(entity, inherited));
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setDraft(draftFromEntity(entity));
-  }, [entity.id, entity.pricelevelid, entity.style, entity.colour, target.kind]);
+    setDraft(draftFromEntity(entity, inherited));
+  }, [
+    entity.id,
+    entity.pricelevelid,
+    entity.style,
+    entity.colour,
+    target.kind,
+    inherited.pricelevelid,
+    inherited.style,
+    inherited.colour,
+  ]);
 
-  const defaultPriceLevelId = inheritedPriceLevelId(target, pa, project);
+  const defaultPriceLevelId = inherited.pricelevelid ?? null;
   const defaultElevateLabel = priceLevelLabel(priceLevels, defaultPriceLevelId);
-  const defaultStyleLabel = inheritedStyle(target, pa, project);
-  const defaultColourLabel = inheritedColour(target, pa, project);
+  const defaultStyleLabel = trimText(inherited.style) || "—";
+  const defaultColourLabel = trimText(inherited.colour) || "—";
 
   const effectiveStyle =
     draft.style.trim() ||
@@ -223,7 +265,7 @@ export function ClNonStdTierModal({
   const handleSave = async () => {
     setSaving(true);
     try {
-      await onSave(draftToPatch(draft));
+      await onSave(draftToPatch(draft, inherited));
       onClose();
     } finally {
       setSaving(false);
@@ -295,7 +337,6 @@ export function ClNonStdTierModal({
               cascades={cascades}
               priceLevels={priceLevels}
               priceLevelId={draft.pricelevelid}
-              projectFinish={project?.projectfinish}
               onChange={({ priceLevelId }) =>
                 setDraft((prev) => ({ ...prev, pricelevelid: priceLevelId }))
               }
