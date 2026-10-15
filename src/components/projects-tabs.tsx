@@ -19,20 +19,23 @@ function projectQuerySuffix(searchParams: Pick<URLSearchParams, "get">, keys: st
 function ProjectsTabsInner() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { canViewProjectWorkbench } = useViewMode();
+  const { canViewProjectWorkbench, isManagementMode } = useViewMode();
   const onProjectChecklist = pathname.startsWith("/projects/project/checklist");
   const onProjectWorkbench = pathname.startsWith("/projects/project/workbench");
   const onProjectNotes = pathname.startsWith("/projects/project/notes");
+  const onProjectAudit = pathname.startsWith("/projects/project/audit");
   const onProjectEditor =
     pathname.startsWith("/projects/project") &&
     !onProjectChecklist &&
     !onProjectWorkbench &&
-    !onProjectNotes;
+    !onProjectNotes &&
+    !onProjectAudit;
 
   const projectHref = `/projects/project${projectQuerySuffix(searchParams, ["id"])}`;
   const checklistHref = `/projects/project/checklist${projectQuerySuffix(searchParams, ["id", "line"])}`;
   const workbenchHref = `/projects/project/workbench${projectQuerySuffix(searchParams, ["id", "line"])}`;
   const notesHref = `/projects/project/notes${projectQuerySuffix(searchParams, ["id"])}`;
+  const auditHref = `/projects/project/audit${projectQuerySuffix(searchParams, ["id"])}`;
 
   return (
     <div className="bg-sf-brand shadow-md">
@@ -55,6 +58,11 @@ function ProjectsTabsInner() {
         <Link href={notesHref} className={sfUnderlineTabClass(onProjectNotes)} role="tab" aria-selected={onProjectNotes}>
           Project Notes
         </Link>
+        {isManagementMode ? (
+          <Link href={auditHref} className={sfUnderlineTabClass(onProjectAudit)} role="tab" aria-selected={onProjectAudit}>
+            Project Audit
+          </Link>
+        ) : null}
       </div>
     </div>
   );

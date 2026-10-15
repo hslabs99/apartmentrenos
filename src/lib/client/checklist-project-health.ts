@@ -1,4 +1,5 @@
 import { isBlindsSystemLine } from "@/lib/blinds/blinds-data-utils";
+import { isPaintingSiteFeeLine } from "@/lib/painting-site-fee";
 import { isLabourChecklistLine } from "@/lib/client/labour-checklist-line";
 import { partitionAreaLines } from "@/lib/client/partition-area-lines";
 import {
@@ -121,7 +122,12 @@ export function collectChecklistProjectHealthIssues(args: {
 
     const byObject = new Map<string, ProjectAreaObjectPublic[]>();
     for (const line of topLevel) {
-      if (isBlindsSystemLine(line) || isLabourChecklistLine(line, quoteObjects)) continue;
+      if (
+        isBlindsSystemLine(line) ||
+        isPaintingSiteFeeLine(line) ||
+        isLabourChecklistLine(line, quoteObjects)
+      )
+        continue;
       const key = `${line.scopeDocId ?? ""}:${line.scopeInstanceId ?? ""}:${line.objectid}`;
       const list = byObject.get(key) ?? [];
       list.push(line);
@@ -129,7 +135,12 @@ export function collectChecklistProjectHealthIssues(args: {
     }
 
     for (const line of topLevel) {
-      if (isBlindsSystemLine(line) || isLabourChecklistLine(line, quoteObjects)) continue;
+      if (
+        isBlindsSystemLine(line) ||
+        isPaintingSiteFeeLine(line) ||
+        isLabourChecklistLine(line, quoteObjects)
+      )
+        continue;
       if (isOrphanQuoteObjectLine(line, quoteObjects)) {
         issues.push({
           id: `orphan-object:${line.id}`,

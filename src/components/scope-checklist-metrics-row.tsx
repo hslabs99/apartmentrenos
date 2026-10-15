@@ -15,6 +15,8 @@ type Props = {
   metrics: ScopeMetricPublic[];
   disabled?: boolean;
   onProjectAreaUpdated: (pa: ProjectAreaPublic) => void;
+  /** After the metric is saved and inheriting lines have been repriced. */
+  onLinesRecalculated?: () => void | Promise<void>;
   onError: (message: string) => void;
 };
 
@@ -32,6 +34,7 @@ export function ScopeChecklistMetricsRow({
   metrics,
   disabled = false,
   onProjectAreaUpdated,
+  onLinesRecalculated,
   onError,
 }: Props) {
   const [savingMetricId, setSavingMetricId] = useState<string | null>(null);
@@ -67,6 +70,7 @@ export function ScopeChecklistMetricsRow({
         }>(res);
         if (!res.ok) throw new Error(data.error ?? "Failed to save scope metric");
         if (data.projectArea) onProjectAreaUpdated(data.projectArea);
+        await onLinesRecalculated?.();
       } catch (e) {
         onProjectAreaUpdated(snapshot);
         onError(e instanceof Error ? e.message : "Failed to save scope metric");
@@ -74,7 +78,7 @@ export function ScopeChecklistMetricsRow({
         setSavingMetricId(null);
       }
     },
-    [pa, scopeDocId, scopeInstanceId, onProjectAreaUpdated, onError],
+    [pa, scopeDocId, scopeInstanceId, onProjectAreaUpdated, onLinesRecalculated, onError],
   );
 
   if (metrics.length === 0) return null;

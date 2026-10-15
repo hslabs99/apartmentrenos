@@ -14,9 +14,20 @@ function moneyOrBlank(n: number | null | undefined): string {
   return formatMoney(n).replace(/^\$/, "");
 }
 
-function TradeDraftTag({ label, value }: { label: string; value: string }) {
+function TradeDraftTag({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+}) {
   return (
-    <div className="flex flex-col items-start gap-0 rounded border border-sf-border/70 bg-sf-page px-2 py-1.5 dark:border-zinc-600 dark:bg-zinc-900/60">
+    <div
+      className="flex flex-col items-start gap-0 rounded border border-sf-border/70 bg-sf-page px-2 py-1.5 dark:border-zinc-600 dark:bg-zinc-900/60"
+      title={title}
+    >
       <span className="text-[8px] font-medium uppercase tracking-wider text-sf-text-weak dark:text-zinc-500">
         {label}
       </span>
@@ -108,9 +119,14 @@ function WbFinSummaryBlocks({
   const { isAdminMode } = useViewMode();
   const tradeTotal = tradeTotalFrom(labourCostBySilo, showPainting ? paintingExcGst : 0);
 
-  const tradeTags: { label: string; value: number | null | undefined }[] = [];
+  const tradeTags: { label: string; value: number | null | undefined; title?: string }[] = [];
   if (showPainting) {
-    tradeTags.push({ label: "PAINTING", value: paintingExcGst });
+    tradeTags.push({
+      label: "PAINTING",
+      value: paintingExcGst,
+      title:
+        "Painting site fee on the General area. Already included in the line, area, and project totals.",
+    });
   }
   for (const { key, label } of WB_WORKBENCH_LABOUR_SILO_HEADERS) {
     tradeTags.push({
@@ -144,7 +160,7 @@ function WbFinSummaryBlocks({
     >
       <div className="flex flex-wrap items-end gap-1">
         {tradeTags.map((t) => (
-          <TradeDraftTag key={t.label} label={t.label} value={moneyOrBlank(t.value)} />
+          <TradeDraftTag key={t.label} label={t.label} value={moneyOrBlank(t.value)} title={t.title} />
         ))}
       </div>
       <div className="mx-0.5 w-px self-stretch bg-sf-border dark:bg-zinc-600" aria-hidden />

@@ -4,7 +4,7 @@ import type { ScopeToolBenchSection, ScopeToolWallMm } from "@/lib/scope-tools";
 export type ProjectAreaObjectLineSource = "default" | "scope" | "manual" | "manual2" | "bundled";
 
 /** Built-in system object lines (not catalog quote_objects). */
-export type ProjectAreaObjectSystemKind = "blinds";
+export type ProjectAreaObjectSystemKind = "blinds" | "paintingSiteFee";
 
 export type ProjectAreaObjectPublic = {
   id: string;

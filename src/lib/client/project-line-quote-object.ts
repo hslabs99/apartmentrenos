@@ -1,4 +1,5 @@
 import { isBlindsSystemLine } from "@/lib/blinds/blinds-data-utils";
+import { isPaintingSiteFeeLine, PAINTING_SITE_FEE_PRODUCT } from "@/lib/painting-site-fee";
 import type { DataSkuPublic } from "@/types/data-sku-public";
 import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 import type { QuoteObjectPublic } from "@/types/quote-object";
@@ -11,7 +12,7 @@ export function quoteObjectForProjectLine(
   row: ProjectAreaObjectPublic,
   quoteObjects: QuoteObjectPublic[],
 ): QuoteObjectPublic | undefined {
-  if (isBlindsSystemLine(row)) return undefined;
+  if (isBlindsSystemLine(row) || isPaintingSiteFeeLine(row)) return undefined;
   return quoteObjects.find((o) => o.objectid === row.objectid);
 }
 
@@ -19,7 +20,7 @@ export function isOrphanQuoteObjectLine(
   row: ProjectAreaObjectPublic,
   quoteObjects: QuoteObjectPublic[],
 ): boolean {
-  if (isBlindsSystemLine(row)) return false;
+  if (isBlindsSystemLine(row) || isPaintingSiteFeeLine(row)) return false;
   return quoteObjectForProjectLine(row, quoteObjects) === undefined;
 }
 
@@ -42,6 +43,7 @@ export function projectLineObjectLabel(
   if (isBlindsSystemLine(row)) {
     return "Blinds";
   }
+  if (isPaintingSiteFeeLine(row)) return PAINTING_SITE_FEE_PRODUCT;
   const q = quoteObjectForProjectLine(row, quoteObjects);
   const live = q?.objectname?.trim();
   if (live) return live;

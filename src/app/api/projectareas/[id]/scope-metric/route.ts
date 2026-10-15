@@ -1,4 +1,4 @@
-import { after, NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getAdminFirestore } from "@/lib/firebase/admin";
 import { isProjectAreasMetaDocument } from "@/lib/firestore/projectareas-collection";
@@ -72,8 +72,8 @@ export async function POST(req: NextRequest, context: RouteContext) {
     const scopeDocId = parsed.data.scopeDocId.trim();
     const scopeInstanceId = parsed.data.scopeInstanceId ?? null;
     const metricid = parsed.data.metricid;
-    after(() => {
-      void repriceScopeInstanceLines(
+    try {
+      await repriceScopeInstanceLines(
         db,
         id,
         scopeDocId,
@@ -81,10 +81,10 @@ export async function POST(req: NextRequest, context: RouteContext) {
         scopeMetrics,
         nextValues,
         { metricid, paData: { ...paData, scopeMetricValues: nextValues }, scopeData },
-      ).catch((e) => {
-        console.error("[scope-metric] background reprice failed", e);
-      });
-    });
+      );
+    } catch (e) {
+      console.error("[scope-metric] reprice failed", e);
+    }
 
     return NextResponse.json({
       projectArea: projectAreaDocToPublic(id, { ...paData, scopeMetricValues: nextValues }),

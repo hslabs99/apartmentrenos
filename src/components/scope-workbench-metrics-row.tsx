@@ -12,6 +12,8 @@ type Props = {
   entries: ScopeMetricAreaEntry[];
   disabled?: boolean;
   onProjectAreaUpdated: (pa: ProjectAreaPublic) => void;
+  /** After the metric is saved and inheriting lines have been repriced. */
+  onLinesRecalculated?: () => void | Promise<void>;
   onError: (message: string) => void;
 };
 
@@ -27,6 +29,7 @@ export function ScopeWorkbenchMetricsRow({
   entries,
   disabled = false,
   onProjectAreaUpdated,
+  onLinesRecalculated,
   onError,
 }: Props) {
   const [savingKey, setSavingKey] = useState<string | null>(null);
@@ -65,6 +68,7 @@ export function ScopeWorkbenchMetricsRow({
         }>(res);
         if (!res.ok) throw new Error(data.error ?? "Failed to save scope metric");
         if (data.projectArea) onProjectAreaUpdated(data.projectArea);
+        await onLinesRecalculated?.();
       } catch (e) {
         onProjectAreaUpdated(snapshot);
         onError(e instanceof Error ? e.message : "Failed to save scope metric");
@@ -72,7 +76,7 @@ export function ScopeWorkbenchMetricsRow({
         setSavingKey(null);
       }
     },
-    [pa, onProjectAreaUpdated, onError],
+    [pa, onProjectAreaUpdated, onLinesRecalculated, onError],
   );
 
   if (entries.length === 0) return null;

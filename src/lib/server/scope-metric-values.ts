@@ -6,7 +6,11 @@ import {
   resolveScopeLineInheritMeasureSource,
   resolveScopeMetricIdFromInherit,
 } from "@/lib/inherit-m2-source";
-import { scopeMetricValuesMap } from "@/lib/inherit-m2-source";
+import { scopeMetricValuesMapForInstance } from "@/lib/scope-metrics";
+import {
+  loadAllObjectLabourRates,
+  recalcLookupLabourHoursOnLine,
+} from "@/lib/server/labour-hours";
 import {
   effectiveMeasureForLinePricing,
   numOrNull,
@@ -175,13 +179,18 @@ export async function repriceScopeInstanceLines(
   );
 
   const areaM2 = numOrNull(pa.aream2);
-  const [projDims, projSnap, lmRunsRollWidthFallback] = await Promise.all([
+  const [projDims, projSnap, lmRunsRollWidthFallback, objectLabourRates] = await Promise.all([
     loadProjectDimensionsByProjectId(db, projectid),
     db.collection("projects").where("projectid", "==", projectid).limit(1).get(),
     loadLmRunsRollWidthMFromDb(db),
+    loadAllObjectLabourRates(db),
   ]);
   const areaPl = effectivePriceLevelIdFromData(pa, projSnap.docs[0]?.data());
-  const metricMap = scopeMetricValuesMap(scopeMetricValues);
+  const metricMap = scopeMetricValuesMapForInstance(
+    scopeMetricValues,
+    scopeDocId.trim(),
+    scopeInstanceId,
+  );
 
   let updated = 0;
   const batch = db.batch();
@@ -241,8 +250,19 @@ export async function repriceScopeInstanceLines(
     } else {
       totalprice = pricing.totalprice;
     }
+    const lineUom = String(data.customuom ?? pricing.customuom ?? "");
+    const objectName = String((q ? q.objectname : data.objectname) ?? "").trim();
+    const labour = recalcLookupLabourHoursOnLine(
+      data,
+      objectName,
+      objectLabourRates,
+      measureForPricing,
+      lineUom,
+      String(data.skuProduct ?? "").trim() || null,
+    );
     const patch: Record<string, unknown> = {
       totalprice,
+      ...labour.patch,
       updatedAt: FieldValue.serverTimestamp(),
     };
     if (
@@ -251,6 +271,8 @@ export async function repriceScopeInstanceLines(
         scopeInheritMeasureLocked,
       )
     ) {
+      // Drop a stored quantity (template default, or a previous metric value) so the
+      // checklist resolves M2 / LM / LM-Runs from the metric on the next change too.
       patch.custommeasure = null;
     }
     if (customumprice != null && numOrNull(data.customumprice) == null && skuId) {

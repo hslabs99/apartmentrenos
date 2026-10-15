@@ -13,6 +13,36 @@ import type { ProjectAreaObjectPublic } from "@/types/project-area-object";
 
 export const PAINTING_SITE_FEE_PRODUCT_TYPE = "Painting";
 export const PAINTING_SITE_FEE_PRODUCT = "Painting Site Fee";
+export const PAINTING_SITE_FEE_KIND = "paintingSiteFee" as const;
+
+export function isPaintingSiteFeeLine(row: {
+  systemObjectKind?: string | null;
+}): boolean {
+  return row.systemObjectKind === PAINTING_SITE_FEE_KIND;
+}
+
+/** Pre-margin amount on a General-area painting site fee line. */
+export function paintingSiteFeeLineBaseExcGst(row: {
+  included?: boolean;
+  totalprice?: number | null;
+  custommeasure?: number | null;
+  customumprice?: number | null;
+}): number {
+  if (row.included === false) return 0;
+  const total = row.totalprice;
+  if (typeof total === "number" && Number.isFinite(total)) return total;
+  const measure = row.custommeasure;
+  const price = row.customumprice;
+  if (
+    typeof measure === "number" &&
+    Number.isFinite(measure) &&
+    typeof price === "number" &&
+    Number.isFinite(price)
+  ) {
+    return measure * price;
+  }
+  return 0;
+}
 
 function normKey(s: string): string {
   return s.trim().toLowerCase();

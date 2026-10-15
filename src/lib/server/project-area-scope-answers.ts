@@ -474,13 +474,8 @@ async function collectScopeLineSpecsForAnswer(
       const quotes = await quoteDocById();
       const data = quotes.get(trimmed);
       if (!data) return;
-      const areaTagIds = data.areaTagIds;
-      const areaTags = Array.isArray(areaTagIds)
-        ? areaTagIds.filter((x): x is string => typeof x === "string" && x.length > 0)
-        : [];
-      if (areaTags.length > 0 && (!templateAreaDocId || !areaTags.includes(templateAreaDocId))) {
-        return;
-      }
+      // Explicitly attached objects are included in every room that selects this answer.
+      // Area tags still filter category and object-name attachment, not this list.
       const objectid = integerObjectId(data.objectid);
       if (objectid === undefined || processedObjectIds.has(objectid)) return;
       processedObjectIds.add(objectid);
@@ -525,11 +520,15 @@ async function collectScopeLineSpecsForAnswer(
           }
         }
       } else {
-        const resolved = await resolveSkuForQuoteObject(db, data, filters);
-        if (!resolved && skipZeroSku) return;
+        // Exactly one match is auto-selected. Several matches (including Elevate/style/colour
+        // `All`) still create the line with no SKU so the checklist can show the dropdown.
+        // Suppress 0 SKU Rows drops the line only when nothing matches.
+        const matches = await resolveAllSkusForQuoteObject(db, data, filters);
+        if (matches.length === 0 && skipZeroSku) return;
+        const only = matches.length === 1 ? matches[0] : null;
         lineSpecs.push({
           ...seed,
-          sku: resolved ? { skuId: resolved.skuId, product: resolved.product } : null,
+          sku: only ? { skuId: only.skuId, product: only.product } : null,
           scopeShowAllSku: false,
           ...lineFlags,
         });

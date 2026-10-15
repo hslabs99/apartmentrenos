@@ -185,11 +185,11 @@ export function ChecklistMeasureInput({
   return (
     <>
       <input
-        key={`${measureKey}-${refreshToken}`}
+        key={`${measureKey}-${displayValue}-${refreshToken}`}
         type="text"
         inputMode="decimal"
         className={inputClassName}
-        defaultValue={displayValue}
+        {...(measureLocked ? { value: displayValue } : { defaultValue: displayValue })}
         disabled={inputDisabled}
         readOnly={measureLocked}
         title={measureTooltip}

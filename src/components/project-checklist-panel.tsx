@@ -262,9 +262,8 @@ import {
   type WbPurchasingListReportData,
 } from "@/lib/workbench-purchasing-list-report";
 import {
-  paintingSiteFeeExcGst,
-  paintingSiteFeeWithMarginExcGst,
-  projectHasPaintConsumption,
+  isPaintingSiteFeeLine,
+  paintingSiteFeeLineBaseExcGst,
 } from "@/lib/painting-site-fee";
 import { WorkbenchTradeReportWindow } from "@/components/workbench-trade-report-window";
 import { WorkbenchPurchasingListReportWindow } from "@/components/workbench-purchasing-list-report-window";
@@ -1988,6 +1987,33 @@ export function ProjectChecklistPanel({
     };
   }, [loading, healthFocusLineId, allObjects.length, projectAreas.length, mode]);
 
+  /**
+   * Paint consumption used to add the site fee only on the workbench header.
+   * On open, store that fee as a General-area line so every total includes it once.
+   */
+  useEffect(() => {
+    if (loading || !projectDocId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectDocId}/painting-site-fee`, {
+          method: "POST",
+        });
+        const data = (await res.json()) as { created?: boolean; error?: string };
+        if (!res.ok) throw new Error(data.error ?? "Failed to add painting site fee");
+        if (cancelled || !data.created) return;
+        await reloadProjectAreas();
+        await reloadLineItems();
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Failed to add painting site fee");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, projectDocId, reloadLineItems, reloadProjectAreas]);
+
   const workbenchLookupLabourSyncingRef = useRef(false);
   const workbenchLookupLabourQueuedRef = useRef(false);
   const allObjectsRef = useRef(allObjects);
@@ -2717,33 +2743,23 @@ export function ProjectChecklistPanel({
     [paintingElements],
   );
 
-  const workbenchPaintingSiteFeeExcGst = useMemo(() => {
-    if (mode !== "workbench") return 0;
-    const hasConsumption = projectHasPaintConsumption({
-      objects: allObjects,
-      catalogSkus,
-      paintingElementBySkuName,
-      suppliersBySkuId,
-      supplierDiscountByKey,
-    });
-    if (!hasConsumption) return 0;
-    return paintingSiteFeeExcGst(contractLabourRates) ?? 0;
-  }, [
-    mode,
-    allObjects,
-    catalogSkus,
-    paintingElementBySkuName,
-    suppliersBySkuId,
-    supplierDiscountByKey,
-    contractLabourRates,
-  ]);
+  const paintingReportedExcGst = useMemo(
+    () =>
+      allObjects.reduce(
+        (sum, row) =>
+          isPaintingSiteFeeLine(row) ? sum + paintingSiteFeeLineBaseExcGst(row) : sum,
+        0,
+      ),
+    [allObjects],
+  );
 
-  const grandTotal = grandLineTotal + workbenchPaintingSiteFeeExcGst;
+  const grandTotal = grandLineTotal;
 
   /** Material-only (ex labour) — Excel-style Line Sub Total in the page header summary. */
   const projectMaterialTotal = useMemo(
     () =>
       allObjects.reduce((sum, row) => {
+        if (isPaintingSiteFeeLine(row)) return sum;
         const b = lineFinalPriceBreakdown(
           row,
           0,
@@ -2768,16 +2784,11 @@ export function ProjectChecklistPanel({
   }, [projectLoadTotals, contractLabourRates]);
 
   const grandFinalTotal = useMemo(() => {
-    const linesFinal = allObjects.reduce((sum, row) => {
+    return allObjects.reduce((sum, row) => {
       const f = lineFinalPrice(row, marginPct, undefined, undefined, undefined, contractLabourRates);
       return sum + (f != null ? f : 0);
     }, 0);
-    const feeFinal =
-      workbenchPaintingSiteFeeExcGst > 0
-        ? paintingSiteFeeWithMarginExcGst(workbenchPaintingSiteFeeExcGst, marginPct)
-        : 0;
-    return linesFinal + feeFinal;
-  }, [allObjects, marginPct, workbenchPaintingSiteFeeExcGst, contractLabourRates]);
+  }, [allObjects, marginPct, contractLabourRates]);
 
   const clScrollContextAreas = useMemo((): ClScrollContextArea[] => {
     if (mode === "workbench") return [];
@@ -3716,7 +3727,7 @@ export function ProjectChecklistPanel({
                         </div>
                         <WbProjectSummary
                           lineSubTotal={projectMaterialTotal}
-                          paintingExcGst={workbenchPaintingSiteFeeExcGst}
+                          paintingExcGst={paintingReportedExcGst}
                           labourCostBySilo={projectLabourCostBySilo}
                           netTotal={grandTotal}
                           marginPct={marginPct}
@@ -4307,6 +4318,7 @@ export function ProjectChecklistPanel({
                                                 ),
                                               );
                                             }}
+                                            onLinesRecalculated={() => reloadLineItemsForArea(pa.id)}
                                             onError={setError}
                                           />
                                         ) : null}
@@ -4635,6 +4647,7 @@ export function ProjectChecklistPanel({
                                                     ),
                                                   );
                                                 }}
+                                                onLinesRecalculated={() => reloadLineItemsForArea(pa.id)}
                                                 onError={setError}
                                               />
                                             ) : null}
@@ -5476,6 +5489,7 @@ export function ProjectChecklistPanel({
                                     ),
                                   );
                                 }}
+                                onLinesRecalculated={() => reloadLineItemsForArea(pa.id)}
                                 onError={setError}
                               />
                             ) : null}

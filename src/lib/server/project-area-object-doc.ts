@@ -61,7 +61,9 @@ function readBundledAppendSlot(v: unknown): 1 | 2 | 3 | null {
 function readSystemObjectKind(
   data: DocumentData,
 ): ProjectAreaObjectPublic["systemObjectKind"] {
-  return data.systemObjectKind === "blinds" ? "blinds" : null;
+  if (data.systemObjectKind === "blinds") return "blinds";
+  if (data.systemObjectKind === "paintingSiteFee") return "paintingSiteFee";
+  return null;
 }
 
 /**
