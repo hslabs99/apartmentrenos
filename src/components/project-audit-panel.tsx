@@ -465,9 +465,9 @@ export function ProjectAuditPanel() {
 
             <SummaryTable report={report} />
             <p className="text-xs text-sf-text-weak dark:text-zinc-500">
-              Workbench line sum includes the painting site fee with margin. Area totals do not.
               A line&apos;s &quot;shows&quot; price is the figure on the row. &quot;In total&quot; is
-              the amount that row adds to the area and project totals.
+              the amount that row adds to the area and project totals. The painting site fee is a
+              line in General, so it is already inside those totals.
             </p>
 
             <div className="rounded-lg border border-sf-border bg-sf-surface px-4 py-3 text-sm dark:border-zinc-700 dark:bg-zinc-900/40">
@@ -487,8 +487,9 @@ export function ProjectAuditPanel() {
               </p>
               {report.paintingSiteFeeExcGst > 0 ? (
                 <p className="mt-1 text-sf-text-secondary dark:text-zinc-400">
-                  Painting site fee <Money n={report.paintingSiteFeeExcGst} /> ex GST,{" "}
-                  <Money n={report.paintingSiteFeeWithMargin} /> in the workbench grand total.
+                  Painting site fee <Money n={report.paintingSiteFeeExcGst} /> ex GST (
+                  <Money n={report.paintingSiteFeeWithMargin} /> with margin) is the General area
+                  line. It is included once in the checklist and workbench totals.
                 </p>
               ) : null}
             </div>

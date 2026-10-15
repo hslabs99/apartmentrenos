@@ -2,7 +2,10 @@ import { checklistInheritedMeasureForRow, checklistMeasureLockedByScopeMetric } 
 import { formatMoney } from "@/lib/client/format-money";
 import { lineFinalPrice, lineFinalPriceBreakdown } from "@/lib/client/line-final-price";
 import { partitionAreaLines } from "@/lib/client/partition-area-lines";
-import { buildPaintingElementIndex } from "@/lib/client/painting-element-index";
+import {
+  isPaintingSiteFeeLine,
+  paintingSiteFeeLineBaseExcGst,
+} from "@/lib/painting-site-fee";
 import { projectLineObjectLabel, quoteObjectForScopeLine } from "@/lib/client/project-line-quote-object";
 import { resolveScopeLineSkuUnitPriceExcGst } from "@/lib/client/scope-line-sku-match";
 import type { SupplierDiscountByKey } from "@/lib/client/supplier-discount-price";
@@ -19,11 +22,6 @@ import {
   labourSiloCostExcGst,
 } from "@/lib/labour-rate-lookup";
 import { LOOKUP_LABOUR_SILO_KEYS } from "@/lib/labour-silo";
-import {
-  paintingSiteFeeExcGst,
-  paintingSiteFeeWithMarginExcGst,
-  projectHasPaintConsumption,
-} from "@/lib/painting-site-fee";
 import { projectAreaHeading } from "@/lib/project-area-display-name";
 import { compareProjectAreasDisplayOrder } from "@/lib/project-area-display-order";
 import { compareProjectAreaLineOrder } from "@/lib/project-area-line-order";
@@ -41,7 +39,6 @@ import type { QuoteObjectPublic } from "@/types/quote-object";
 import type { ScopePublic } from "@/types/scope";
 
 const ORPHAN_AREA_ID = "__audit_orphan__";
-const PAINTING_FEE_AREA_ID = "__painting_site_fee__";
 
 export type ProjectAuditLine = {
   id: string;
@@ -95,11 +92,11 @@ export type ProjectAuditReport = {
   paintingSiteFeeWithMargin: number;
   checklistProjectTotal: number;
   checklistLinesSum: number;
-  /** Sum of workbench area Final amounts, before the painting site fee. */
+  /** Sum of workbench area Final amounts. The painting site fee is inside General. */
   workbenchAreasSum: number;
   workbenchProjectTotal: number;
   workbenchLinesSum: number;
-  /** Workbench line prices plus the painting site fee with margin. */
+  /** Sum of workbench line prices. Same as the project total when every line sits on an area. */
   workbenchLinesPlusFee: number;
   cards: ProjectAuditCards;
   areas: ProjectAuditArea[];
@@ -443,7 +440,7 @@ function siloTradeTotal(
 
 function materialSum(rows: ProjectAreaObjectPublic[], rates: DataLabourRatePublic[]): number {
   const raw = rows.reduce((sum, row) => {
-    if (row.included === false) return sum;
+    if (row.included === false || isPaintingSiteFeeLine(row)) return sum;
     const material = lineFinalPriceBreakdown(
       row,
       0,
@@ -460,8 +457,8 @@ function materialSum(rows: ProjectAreaObjectPublic[], rates: DataLabourRatePubli
 /**
  * Checklist vs workbench totals for one project.
  * Checklist numbers match Check List Total Price (saved line totals × margin).
- * Workbench numbers match area Final and project Grand Total, including the
- * labour-rate sync the workbench applies on open and the painting site fee.
+ * Workbench numbers match area Final and project Grand Total. The painting site
+ * fee is a General-area line, so it is already inside those totals.
  * Line columns match the price each screen shows on the row.
  */
 export function buildProjectAudit(input: ProjectAuditInput): ProjectAuditReport {
@@ -599,30 +596,27 @@ export function buildProjectAudit(input: ProjectAuditInput): ProjectAuditReport 
   const workbenchLinesSum = sumMoney(areas.map((area) => area.workbenchLinesSum));
   const workbenchCountedSum = sumMoney(areas.map((area) => area.workbenchTotal));
 
-  const paintingOn = projectHasPaintConsumption({
-    objects: workbenchLines,
-    catalogSkus: input.catalogSkus,
-    paintingElementBySkuName: buildPaintingElementIndex(input.paintingElements),
-    suppliersBySkuId: input.suppliersBySkuId,
-    supplierDiscountByKey: input.supplierDiscountByKey,
-  });
-  const paintingSiteFee = paintingOn ? (paintingSiteFeeExcGst(rates) ?? 0) : 0;
-  const paintingWithMargin =
-    paintingSiteFee > 0 ? paintingSiteFeeWithMarginExcGst(paintingSiteFee, marginPct) : 0;
-  const workbenchProjectTotal = sumMoney([workbenchCountedSum, paintingWithMargin]);
-  const workbenchLinesPlusFee = sumMoney([workbenchLinesSum, paintingWithMargin]);
+  const paintingSiteFee = sumMoney(
+    input.lines.map((row) =>
+      isPaintingSiteFeeLine(row) ? paintingSiteFeeLineBaseExcGst(row) : 0,
+    ),
+  );
+  const paintingWithMargin = sumMoney(
+    input.lines.map((row) =>
+      isPaintingSiteFeeLine(row) ? priceLine(row, marginPct, rates, {}) : 0,
+    ),
+  );
+  const workbenchProjectTotal = workbenchCountedSum;
+  const workbenchLinesPlusFee = workbenchLinesSum;
 
   const lineSubTotal = materialSum(workbenchLines, rates);
   const tradeTotal = siloTradeTotal(workbenchLines, rates, paintingSiteFee);
-  const netFromLines = sumMoney(
-    workbenchLines.map((row) => priceLine(row, 0, rates, {})),
-  );
-  const netTotal = sumMoney([netFromLines, paintingSiteFee]);
+  const netFromLines = sumMoney(workbenchLines.map((row) => priceLine(row, 0, rates, {})));
   const cards: ProjectAuditCards = {
     lineSubTotal,
     tradeTotal,
     partsSum: sumMoney([lineSubTotal, tradeTotal]),
-    netTotal,
+    netTotal: netFromLines,
     grandTotal: workbenchProjectTotal,
   };
 
@@ -636,20 +630,14 @@ export function buildProjectAudit(input: ProjectAuditInput): ProjectAuditReport 
   if (!sameMoney(workbenchProjectTotal, workbenchLinesPlusFee)) {
     findings.push({
       tone: "bad",
-      text: `Workbench grand total is ${formatMoney(workbenchProjectTotal)}. Adding the workbench line prices${paintingWithMargin > 0 ? " and the painting site fee" : ""} gives ${formatMoney(workbenchLinesPlusFee)} (${signedMoney(gap(workbenchLinesPlusFee, workbenchProjectTotal))}).`,
+      text: `Workbench grand total is ${formatMoney(workbenchProjectTotal)}. Adding the workbench line prices gives ${formatMoney(workbenchLinesPlusFee)} (${signedMoney(gap(workbenchLinesPlusFee, workbenchProjectTotal))}).`,
     });
   }
   if (!sameMoney(checklistProjectTotal, workbenchProjectTotal)) {
     const projectGap = gap(workbenchProjectTotal, checklistProjectTotal);
-    const feeExplains =
-      paintingWithMargin > 0 &&
-      sameMoney(projectGap, paintingWithMargin) &&
-      sameMoney(workbenchCountedSum, checklistProjectTotal);
     findings.push({
       tone: "bad",
-      text: feeExplains
-        ? `Checklist total is ${formatMoney(checklistProjectTotal)}. Workbench grand total is ${formatMoney(workbenchProjectTotal)}. The area totals add up to ${formatMoney(checklistProjectTotal)} on both screens, so the areas match the checklist and not the workbench. The workbench adds a painting site fee of ${formatMoney(paintingSiteFee)} ex GST (${formatMoney(paintingWithMargin)} with ${marginPct}% margin) that is not on any area and not on the checklist.`
-        : `Checklist project total is ${formatMoney(checklistProjectTotal)}. Workbench grand total is ${formatMoney(workbenchProjectTotal)} (${signedMoney(projectGap)}).${paintingWithMargin > 0 ? ` Painting site fee with margin is ${formatMoney(paintingWithMargin)}; ${formatMoney(Math.abs(gap(projectGap, paintingWithMargin)))} is still unexplained.` : ""}`,
+      text: `Checklist project total is ${formatMoney(checklistProjectTotal)}. Workbench grand total is ${formatMoney(workbenchProjectTotal)} (${signedMoney(projectGap)}).`,
     });
   }
   if (!sameMoney(cards.partsSum, cards.netTotal)) {
@@ -672,24 +660,7 @@ export function buildProjectAudit(input: ProjectAuditInput): ProjectAuditReport 
       text: `${outsideCount} line${outsideCount === 1 ? " is" : "s are"} in the project total and not on an area total, so the areas do not add up to the project.`,
     });
   }
-  if (paintingWithMargin > 0) {
-    areas.push({
-      id: PAINTING_FEE_AREA_ID,
-      name: "Painting site fee",
-      checklistTotal: 0,
-      checklistLinesSum: 0,
-      workbenchTotal: paintingWithMargin,
-      workbenchLinesSum: paintingWithMargin,
-      notes: [
-        `Not a project area. Labour rates add ${formatMoney(paintingSiteFee)} ex GST, ${formatMoney(paintingWithMargin)} with margin, to the workbench grand total only.`,
-      ],
-      lines: [],
-      hasMismatch: true,
-    });
-  }
-  const areaMismatchCount = areas.filter(
-    (area) => area.hasMismatch && area.id !== PAINTING_FEE_AREA_ID,
-  ).length;
+  const areaMismatchCount = areas.filter((area) => area.hasMismatch).length;
   const lineMismatchCount = areas.reduce(
     (sum, area) => sum + area.lines.filter((line) => line.reasons.length > 0).length,
     0,
